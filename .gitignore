@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# HF / model caches
+.cache/
+
+# Test corpus — regenerable from a fixed seed via scripts/build_dataset.py.
+# Remove this line if you'd rather commit a frozen copy (note: CC BY-SA content).
+dataset/
