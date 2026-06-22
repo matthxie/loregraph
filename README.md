@@ -22,8 +22,15 @@ pip install -r requirements.txt
 python -m kg ingest --reset && python -m kg communities
 python -m kg query "what are the main themes across the collection"
 python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector
+python -m kg serve       # browser viewer: watch the graph build + trace queries
 python -m pytest -q
 ```
+
+A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the object
+graph, animates it **being built** in ingestion order, and **traces the path a query
+takes** through the graph (seeds → tag/entity hubs → ranked results, with BFS hops
+animated). `python -m kg serve` for live typed queries, or `python -m kg viz --query
+"…" --out kg_viz.html` for a self-contained file.
 
 ## Decided stack
 

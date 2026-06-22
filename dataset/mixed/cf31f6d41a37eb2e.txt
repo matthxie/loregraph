@@ -1,0 +1,203 @@
+HiWish is a program created by NASA so that anyone can suggest a place for the HiRISE camera on the Mars Reconnaissance Orbiter to photograph.  It was started in January 2010. In the first few months of the program 3000 people signed up to use HiRISE.  The first images were released in April 2010.  Over 12,000 suggestions were made by the public; suggestions were made for targets in each of the 30 quadrangles of Mars.  Selected images released were used for three talks at the 16th Annual International Mars Society Convention.  Below are some of the over 4,224 images that have been released from the HiWish program as of March 2016.
+
+Glacial features
+
+Some landscapes look just like glaciers moving out of mountain valleys on Earth.  Some have a hollowed-out appearance, looking like a glacier after almost all the ice has disappeared.  What is left are the moraines—the dirt and debris carried by the glacier.  The center is hollowed out because the ice is mostly gone.   These supposed alpine glaciers have been called glacier-like forms (GLF) or glacier-like flows (GLF).   Glacier-like forms are a later and maybe more accurate term because we cannot be sure the structure is currently moving.
+
+ ,
+
+|
+
+Possible pingos
+
+The radial and concentric cracks visible here are common when forces penetrate a brittle layer, such as a rock thrown through a glass window. These particular fractures were probably created by something emerging from below the brittle Martian surface. Ice may have accumulated under the surface in a lens shape; thus making these cracked mounds.  Ice being less dense than rock, pushed upwards on the surface and generated these spider web-like patterns. A similar process creates similar sized mounds in arctic tundra on Earth.  Such features are called "pingos," an Inuit word.  Pingos would contain pure water ice; thus they could be sources of water for future colonists of Mars.  Many features that look like the pingos on the Earth are found in Utopia Planitia (~35-50° N; ~80-115° E).
+
+Ancient rivers and streams
+
+There is great deal of evidence that water once flowed in river valleys on Mars.  Pictures from orbit show winding valleys, branched valleys, and even meanders with oxbow lakes.  Some are visible in the pictures below.
+
+Streamlined shapes
+Streamlined shapes represent more evidence of past flowing water on Mars.  Water shaped features into streamlined shapes.
+
+New Crater
+
+Sand dunes
+
+Many locations on Mars have sand dunes. The dunes are covered by a seasonal carbon dioxide frost that forms in early autumn and remains until late spring.  Many martian dunes strongly resemble terrestrial dunes but images acquired by the High-Resolution Imaging Science Experiment on the Mars Reconnaissance Orbiter have shown that martian dunes in the north polar region are subject to modification via grainflow triggered by seasonal  sublimation, a process not seen on Earth. Many dunes are black because they are derived from the dark volcanic rock basalt. Extraterrestrial sand seas such as those found on Mars are referred to as "undae" from the Latin for waves.
+
+Landing site
+
+Some of the targets suggested became possible sites for a Rover Mission in 2020.  The targets were in Firsoff (crater) and Holden Crater.  These locations were picked as two of 26 locations considered for a mission that will look for signs of life and gather samples for a later return to Earth.
+
+Landscape features
+
+Dark slope streaks
+
+Recurrent slope lineae
+
+Recurrent slope lineae are small dark streaks on slopes that elongate in warm seasons.  They may be evidence of liquid water.  However, there remains debate about whether water or much water is needed.
+
+Layers
+Many places on Mars show rocks arranged in layers. Rock can form layers in a variety of ways.  Volcanoes, wind, or water can produce layers.  Layers can be hardened by the action of groundwater.  ,
+
+This group of layers that are found in a crater all come from the Arabia quadrangle.
+
+This next group of layered terrain comes from the Louros Valles in the Coprates quadrangle.
+
+Layers in Ice Cap
+
+Gullies
+Martian gullies are small, incised networks of narrow channels and their associated downslope sediment deposits, found on the planet of Mars. They are named for their resemblance to terrestrial gullies. First discovered on images from Mars Global Surveyor, they occur on steep slopes, especially on the walls of craters. Usually, each gully has a dendritic alcove at its head, a fan-shaped apron at its base, and a single thread of incised channel linking the two, giving the whole gully an hourglass shape. They are believed to be relatively young because they have few, if any craters. 
+On the basis of their form, aspects, positions, and location amongst and apparent interaction with features thought to be rich in water ice, many researchers believed that the processes carving the gullies involve liquid water. However, this remains a topic of active research.  ,
+
+|
+
+Latitude dependent mantle
+
+Much of the Martian surface is covered with a thick ice-rich, mantle layer that has fallen from the sky a number of times in the past.   In some places a number of layers are visible in the mantle.
+
+It fell as snow and ice-coated dust.  There is good evidence that this mantle is ice-rich.  The shapes of the polygons common on many surfaces suggest ice-rich soil.  High levels of hydrogen (probably from water) have been found with Mars Odyssey.  Thermal measurements from orbit suggest ice.  The Phoenix (spacecraft) discovered water ice with made direct observations since it landed in a field of polygons.  In fact, its landing rockets exposed pure ice.  Theory had predicted that ice would be found under a few cm of soil.  This mantle layer is called "latitude dependent mantle" because its occurrence is related to the latitude.  It is this mantle that cracks and then forms polygonal ground. This cracking of ice-rich ground is predicted based on physical processes. 
+
+ ,
+
+Polygonal patterned ground
+
+Polygonal, patterned ground is quite common in some regions of Mars.  It is commonly believed to be caused by the sublimation of ice from the ground. Sublimation is the direct change of solid ice to a gas.  This is similar to what happens to dry ice on the Earth.  Places on Mars that display polygonal ground may indicate where future colonists can find water ice.  Patterned ground forms in a mantle layer, called latitude dependent mantle, that fell from the sky when the climate was different.
+
+,
+
+Complex polygonal patterned ground
+
+Exposed Ice Sheets
+
+HiRISE images taken under the HiWish program found triangular shaped depressions in Milankovic Crater that researchers found contain vast amounts of ice that are found under only 1–2 meters of soil.
+These depressions contain water ice in the straight wall that faces the pole, according to the study published in the journal Science.  Eight sites were found with Milankovic Crater being the only one in the northern hemisphere.  Research was conducted with instruments on board the Mars Reconnaissance Orbiter (MRO).
+
+The following images are ones referred to in this study of subsurface ice sheets.
+
+These triangular depressions are similar to those in scalloped terrain.   However scalloped terrain, displays  a gentle equator-facing slope and is rounded.  Scarps discussed here have a steep pole-facing side and have been found between 55 and 59 degrees north and south latitude  Scalloped topography is common in the mid-latitudes of Mars, between 45° and 60° north and south.
+
+Scalloped topography
+
+Scalloped topography is common in the mid-latitudes of Mars, between 45° and 60° north and south. It is particularly prominent in the region of Utopia Planitia in the northern hemisphere and in the region of Peneus and Amphitrites Patera in the southern hemisphere. Such topography consists of shallow, rimless depressions with scalloped edges, commonly referred to as "scalloped depressions" or simply "scallops". Scalloped depressions can be isolated or clustered and sometimes seem to coalesce. A typical scalloped depression displays a gentle equator-facing slope and a steeper pole-facing scarp. This topographic asymmetry is probably due to differences in insolation. Scalloped depressions are believed to form from the removal of subsurface material, possibly interstitial ice, by sublimation. This process may still be happening at present.
+
+On November 22, 2016, NASA reported finding a large amount of underground ice in the Utopia Planitia region of Mars. The volume of water detected has been estimated to be equivalent to the volume of water in Lake Superior.
+The volume of water ice in the region were based on measurements from the ground-penetrating radar instrument on Mars Reconnaissance Orbiter, called SHARAD.  From the data obtained from SHARAD, "dielectric permittivity", or the dielectric constant was determined. The dielectric constant value was consistent with a large concentration of water ice.
+
+,
+
+Pedestal Craters
+A pedestal crater is a crater with its ejecta sitting above the surrounding terrain and thereby forming a raised platform (like a pedestal). They form when an impact crater ejects material which forms an erosion-resistant layer, thus causing the immediate area to erode more slowly than the rest of the region. Some pedestals have been accurately measured to be hundreds of meters above the surrounding area. This means that hundreds of meters of material were eroded away. The result is that both the crater and its ejecta blanket stand above the surroundings. Pedestal craters were first observed during the Mariner missions.
+
+Ring mold craters
+
+Ring mold craters are believed to be formed from asteroid impacts into ground that has an underlying layer of ice.  The impact produces an rebound of the ice layer to form a "ring-mold" shape.  ,
+
+Halo Craters
+
+Boulders
+
+Dust devil tracks
+
+Dust devil tracks can be very pretty.  They are caused by giant dust devils removing bright colored dust from the Martian surface; thereby exposing a dark layer.  Dust devils on Mars have been photographed both from the ground and high overhead from orbit. They have even blown dust off the solar panels of two Rovers on Mars, thereby greatly extending their useful lifetime. The pattern of the tracks has been shown to change every few months.  A study that combined data from the High Resolution Stereo Camera (HRSC) and the Mars Orbiter Camera (MOC) found that some large dust devils on Mars have a diameter of  and last at least 26 minutes.
+
+Yardangs
+
+Yardangs are common in some regions on Mars, especially in what's called the "Medusae Fossae Formation." This formation is found in the Amazonis quadrangle and near the equator.  They are formed by the action of wind on sand sized particles; hence they often point in the direction that the winds were blowing when they were formed. Because they exhibit very few impact craters they are believed to be relatively young.
+
+,
+
+Plumes and spiders
+At certain times in the Martian, dark eruptions of gas and dust occur.  Wind often blows the material into a fan or a tail-like shape.  During the winter, much frost accumulates.  It freezes out directly onto the surface of the permanent polar cap, which is made of water ice covered with layers of dust and sand.  The deposit begins as a layer of dusty  frost. Over the winter, it recrystallizes and becomes denser. The dust and sand particles caught in the frost slowly sink. By the time temperatures rise in the spring, the frost layer has become a slab of semi-transparent ice about 3 feet thick, lying on a substrate of dark sand and dust.  This dark material absorbs light and causes the ice to sublimate (turn directly into a gas).  Eventually much gas accumulates and becomes pressurized.  When it finds a weak spot, the gas escapes and blows out the dust.  Speeds can reach 100 miles per hour.  Calculations show that the plumes are 20–80 meters high. Dark channels can sometimes be seen; they are called "spiders."  The surface appears covered with dark spots when this process is occurring.
+
+Many ideas have been advanced to explain these features.  These features can be seen in some of the pictures below.
+
+Upper Plains Unit
+
+Remnants of a 50-100 meter thick mantling, called the upper plains unit, has been discovered in the mid-latitudes of Mars.  First investigated in the Deuteronilus Mensae (Ismenius Lacus quadrangle) region, but it occurs in other places as well.  The remnants consist of sets of dipping layers in craters and along mesas. Sets of dipping layers may be of various sizes and shapes—some look like Aztec pyramids from Central America
+
+This unit also degrades into brain terrain.  Brain terrain is a region of maze-like ridges 3–5 meters high.  Some ridges may consist of an ice core, so they may be sources of water for future colonists.
+
+Some regions of the upper plains unit display large fractures and troughs with raised rims; such regions are called ribbed upper plains.  Fractures are believed to have started with small cracks from stresses.  Stress is suggested to initiate the fracture process since ribbed upper plains are common when debris aprons come together or near the edge of debris aprons—such sites would generate compressional stresses.  Cracks exposed more surfaces, and consequently more ice in the material sublimates into the planet's thin atmosphere.  Eventually, small cracks become large canyons or troughs.
+
+Small cracks often contain small pits and chains of pits; these are thought to be from sublimation (phase transition)  of ice in the ground.
+Large areas of the Martian surface are loaded with ice that is protected by a meters thick layer of dust and other material.  However, if cracks appear, a fresh surface will expose ice to the thin atmosphere.  In a short time, the ice will disappear into the cold, thin atmosphere in a process called sublimation (phase transition).  Dry ice behaves in a similar fashion on the Earth.  On Mars sublimation has been observed when the Phoenix lander uncovered chunks of ice that disappeared in a few days.  In addition, HiRISE has seen fresh craters with ice at the bottom.  After a time, HiRISE saw the ice deposit disappear.
+
+The upper plains unit is thought to have fallen from the sky.  It drapes various surfaces, as if it fell evenly.  As is the case for other mantle deposits, the upper plains unit has layers, is fine-grained, and is ice-rich. It is widespread; it does not seem to have a point source.  The surface appearance of some regions of Mars is due to how this unit has degraded.  It is a major cause of the surface appearance of lobate debris aprons.
+The layering of the upper plains mantling unit and other mantling units are believed to be caused by major changes in the planet's climate.  Models predict that the obliquity or tilt of the rotational axis has varied from its present 25 degrees to maybe over 80 degrees over geological time.  Periods of high tilt will cause the ice in the polar caps to be redistributed and change the amount of dust in the atmosphere.
+
+Linear Ridge Networks
+
+Linear ridge networks are found in various places on Mars in and around craters.   Ridges often appear as mostly straight segments that intersect in a lattice-like manner.  They are hundreds of meters long, tens of meters high, and several meters wide.  It is thought that impacts created fractures in the surface, these fractures later acted as channels for fluids.  Fluids cemented the structures.  With the passage of time, surrounding material was eroded away, thereby leaving hard ridges behind.
+Since the ridges occur in locations with clay, these formations could serve as a marker for clay which requires water for its formation.  Water here could have supported life.
+
+Fractured ground
+Some places on Mars break up with large fractures that created a terrain with mesas and valleys.  Some of these can be quite pretty.
+
+Mesas
+
+Mesas formed by ground collapse
+
+Volcanoes under ice
+
+There is evidence that volcanoes sometimes erupt under ice, as they do on Earth at times.  What seems to happen it that much ice melts, the water escapes, and then the surface cracks and collapses.  These exhibit concentric fractures and large pieces of ground that seemed to have been pulled apart.  Sites like this may have recently had held liquid water, hence they may be fruitful places to search for evidence of life.
+
+Fractures forming blocks
+In places large fractures break up surfaces.  Sometimes straight edges are formed and large cubes are created by the fractures.
+
+Lava flows
+
+Rootless Cones
+So-called "Rootless cones" are caused by explosions of lava with ground ice under the flow.  The ice melts and turns into a vapor that expands in an explosion that produces a cone or ring. Featureslike these are found in Iceland, when lavas cover water-saturated substrates.
+
+Mud volcanoes
+Some features look like volcanoes.  Some of them may be mud volcanoes where pressurized mud is forced upward forming cones.  These features may be places to look for life as they bring to the surface possible life that has been protected from radiation.
+
+Hellas floor features
+Strange terrain was discovered on parts of the floor of Hellas Planitia.  Scientists are not sure of how it formed.
+
+Exhumed craters
+
+Exhumed craters seem to be in the process of being uncovered.  It is believed that they formed, were covered over, and now are being exhumed as material is being eroded.  When a crater forms, it will destroy what's under it.  In the example below, only part of the crater is visible.  if the crater came after the layered feature, it would have removed part of the feature and we would see the entire crater.
+
+How to suggest image
+
+To suggest a location for HiRISE to image visit the site at http://www.uahirise.org/hiwish
+
+In the sign up process you will need to come up with an ID and a password.  When you choose a target to be imaged, you have to pick an exact location on a map and write about why the image should be taken.  If your suggestion is accepted, it may take 3 months or more to see your image.  You will be sent an email telling you about your images.  The emails usually arrive on the first Wednesday of the month in the late afternoon.
+
+See also
+ Climate of Mars
+ Common surface features of Mars
+ Geology of Mars
+ Glaciers
+ Glaciers on Mars
+ Barchan
+ Groundwater on Mars
+ Martian gullies
+ Mud volcano
+ Linear ridge networks
+ Yardangs on Mars
+
+References
+
+Further reading
+Lorenz, R.  2014.  The Dune Whisperers.  The Planetary Report: 34, 1, 8-14
+Lorenz, R., J. Zimbelman.  2014.  Dune Worlds:  How Windblown Sand Shapes Planetary Landscapes. Springer Praxis Books / Geophysical Sciences.
+ Grotzinger, J. and R. Milliken (eds.).  2012.  Sedimentary Geology of Mars.  SEPM.
+
+External links 
+ HiRISE images from HiWish Program
+ /0:48  Zooming in on Mars with HiRISE images from HiWish program
+ Features of Mars with HiRISE under HiWish program  Shows nearly all major features discovered on Mars.  This would be good for teachers covering Mars.
+ A trip to Mars with Hubble, Viking, and HiRISE
+ Mars through HiRISE under the HiWish program
+ Beautiful Mars as seen by HiRISE under HiWish program
+ Martian Ice - Jim Secosky - 16th Annual International Mars Society Convention
+ Martian Geology - Jim Secosky - 16th Annual International Mars Society Convention
+ Walks on Mars - Jim Secosky - 16th Annual International Mars Society Convention
+ How to Explore Mars without Leaving Your Chair - Jim Secosky - 23rd Annual Mars Society Convention
+
+Spaceflight
+Astronomy projects
+Mars Reconnaissance Orbiter

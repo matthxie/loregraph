@@ -62,6 +62,29 @@ python -m pytest -q                       # 26 offline tests
 
 Use `--extractor haiku --embedder st` on `ingest` for the full-quality pipeline.
 
+## Viewer (plain HTML)
+
+A dependency-free browser viewer (`kg/viz.py` + `kg/serve.py`; vanilla JS + SVG, no
+CDN) does two things:
+
+- **Watch the graph build** — the object-level graph (200 object nodes + the derived
+  object↔object edges), with a *Play build* animation that reveals nodes in ingestion
+  order. Articles and images visibly form separate clusters — a direct read on §9's
+  open question about whether image nodes integrate or island.
+- **Trace a query's traversal** — enter a query and see the focused subgraph it
+  retrieves over: seed nodes (gold), the tag/entity **hubs the traversal hops
+  through**, and the ranked result objects (red, numbered), with the BFS expansion
+  animated hop-by-hop. The ranked list is in the sidebar.
+
+```bash
+python -m kg serve                       # http://127.0.0.1:8000 — live typed queries
+python -m kg viz --query "Canadian football Grey Cup champion" --out kg_viz.html
+```
+
+Note: retrieval here is graph diffusion (PPR) or BFS, not an LLM literally walking —
+the BFS/“seen”-flag path is the design's explainability view (§5), and that is what
+the traversal animation shows.
+
 ## Results — the thesis ablation
 
 Recall@8 / MRR over auto-generated ground-truth questions on the 100-article corpus

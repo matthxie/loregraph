@@ -401,6 +401,31 @@ def test_eval_metrics():
 # --------------------------------------------------------------------------- #
 # corpus loader (uses the real frozen dataset on disk)
 # --------------------------------------------------------------------------- #
+def test_viz_payloads_and_html():
+    from kg.viz import graph_payload, query_trace, render_html
+    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g.ingest(sample_items())
+    gp = graph_payload(g.store)
+    assert gp["nodes"] and len(gp["build_order"]) == len(gp["nodes"])
+    assert all("x" in n and "y" in n for n in gp["nodes"])
+    tr = query_trace(g, "cryptography Bletchley codebreaking", mode="bfs")
+    assert tr["mode"] == "bfs"
+    assert tr["nodes"] and isinstance(tr["ranked"], list)
+    assert all(0.0 <= n["x"] <= 1.0 for n in tr["nodes"])
+    html = render_html(gp, trace=tr, server=False)
+    assert "/*__DATA__*/" not in html and "<svg" in html
+
+
+def test_viz_global_query_has_no_traversal():
+    from kg.viz import query_trace
+    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g.ingest(sample_items())
+    g.build_communities()
+    tr = query_trace(g, "what are the main themes", mode="auto")
+    # community/global queries have no node-level path to draw
+    assert tr["nodes"] == [] and "note" in tr
+
+
 def test_corpus_loads_from_disk():
     arts = load_articles(limit=5)
     imgs = load_images(limit=5)

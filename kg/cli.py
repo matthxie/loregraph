@@ -94,6 +94,27 @@ def cmd_inspect(args):
               f"conf={data.get('confidence', 0.0):.2f} prov={data.get('provenance','?')}")
 
 
+def cmd_viz(args):
+    from .viz import graph_payload, query_trace, render_html
+    g = _open(args)
+    graph = graph_payload(g.store)
+    trace = None
+    if args.query:
+        trace = query_trace(g, args.query, mode=args.mode)
+    html = render_html(graph, trace=trace, server=False)
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"wrote {args.out}  ({graph['stats']['by_node_type'].get('object', 0)} objects). "
+          f"Open it in a browser.")
+    if not args.query:
+        print("tip: `python -m kg serve` for live, typed queries with traversal animation.")
+
+
+def cmd_serve(args):
+    from .serve import serve
+    serve(args.store, port=args.port, config=_config(args))
+
+
 def cmd_eval(args):
     from .evaluate import (cross_article_questions, evaluate, load_questions,
                            single_article_questions)
@@ -146,6 +167,16 @@ def build_parser() -> argparse.ArgumentParser:
     pn = sub.add_parser("inspect", help="dump a node + neighbours")
     pn.add_argument("node_id")
     pn.set_defaults(func=cmd_inspect)
+
+    pv = sub.add_parser("viz", help="write a self-contained HTML graph viewer")
+    pv.add_argument("--out", default="kg_viz.html")
+    pv.add_argument("--query", default=None, help="embed a query's traversal trace")
+    pv.add_argument("--mode", default="bfs", choices=["bfs", "ppr", "vector"])
+    pv.set_defaults(func=cmd_viz)
+
+    pse = sub.add_parser("serve", help="live graph viewer with typed queries")
+    pse.add_argument("--port", type=int, default=8000)
+    pse.set_defaults(func=cmd_serve)
 
     pe = sub.add_parser("eval", help="recall@k / MRR ablation")
     pe.add_argument("--k", type=int, default=8)

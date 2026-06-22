@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kg-viewer",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "kg", "serve", "--port", "8731"],
+      "port": 8731
+    }
+  ]
+}

@@ -17,3 +17,6 @@ __pycache__/
 store/
 *.db
 .pytest_cache/
+
+# Generated HTML viewer
+kg_viz.html

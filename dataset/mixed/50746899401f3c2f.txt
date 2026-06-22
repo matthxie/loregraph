@@ -1,0 +1,168 @@
+Jha is the ninth consonant of Indic abugidas. In modern Indic scripts, jha is derived from the early "Ashoka" Brahmi letter  after having gone through the Gupta letter .
+
+Āryabhaṭa numeration
+
+Aryabhata used Devanagari letters for numbers, very similar to the Greek numerals, even after the invention of Indian numerals. The values of the different forms of झ are: 
+झ  = 9 (९)
+झि  = 900 (९००)
+झु  = 90,000 (९० ०००)
+झृ  = 9,000,000 (९० ०० ०००)
+झॢ  = 9 (९×८०८)
+झे  = 9 (९×८०१०)
+झै  = 9 (९×८०१२)
+झो  = 9 (९×८०१४)
+झौ  = 9 (९×८०१६)
+
+Historic Jha
+There are three different general early historic scripts - Brahmi and its variants, Kharoṣṭhī, and Tocharian, the so-called slanting Brahmi. Jha as found in standard Brahmi,  was a simple geometric shape, with variations toward more flowing forms in later times. The Tocharian Jha  did not have an alternate Fremdzeichen form. There is no evidence of a Jha in the corpus of Kharoṣṭhī texts currently known.
+
+Brahmi Jha
+The Brahmi letter , Jha, is probably derived from the altered Aramaic Zayin , and is thus related to the modern Latin and Greek Z. A couple of identifiable styles of writing the Brahmi Jha can be found, most associated with a specific set of inscriptions from an artifact or diverse records from an historic period. As the earliest and most geometric style of Brahmi, the letters found on the Edicts of Ashoka and other records from around that time are normally the reference form for Brahmi letters, with vowel marks not attested until later forms of Brahmi back-formed to match the geometric writing style.
+
+Tocharian Jha
+The Tocharian letter  is derived from the Brahmi , but does not have an alternate Fremdzeichen form.
+
+Devanagari script
+
+Jha (झ, ) is the ninth consonant of the Devanagari abugida.  is a variant of झ that also in use, particularly in older texts. It ultimately arose from the Brahmi letter . Letters that derive from it are the Gujarati letter ઝ and the Modi letter 𑘖.
+
+Devanagari Ža 
+
+Ža (झ़) is the character jha (झ) combined with a nuqta. It is used to transcribe the voiced patalal fricative  from Urdu (ژ) and English. Ža (झ़) should not be confused with za (ज़), which is used to denote the voiced alveolar sibilant  from Urdu, English, and other languages. Ža (झ़) should also not be confused zha (ॹ), which is used in Devanagari transcriptions of the Avestan letter zhe (𐬲) to denote the voiced post-alveolar fricative . An equivalent sound, in some Slavic languages, is ž, ż or ж ("zh").
+
+Devanagari-using Languages
+In many languages, झ is pronounced as  or  when appropriate. In Marathi, झ is sometimes pronounced as  or  in addition to  or . Therefore, loanwords having /z/ use this letter for the sound in Marathi. Like all Indic scripts, Devanagari uses vowel marks attached to the base consonant to override the inherent /ə/ vowel:
+
+Conjuncts with झ
+
+Devanagari exhibits conjunct ligatures, as is common in Indic scripts. In modern Devanagari texts, most conjuncts are formed by reducing the letter shape to fit tightly to the following letter, usually by dropping a character's vertical stem, sometimes referred to as a "half form". Some conjunct clusters are always represented by a true ligature, instead of a shape that can be broken into constituent independent letters. Vertically stacked conjuncts are ubiquitous in older texts, while only a few are still used routinely in modern Devanagari texts. The use of ligatures and vertical conjuncts may vary across languages using the Devanagari script, with Marathi in particular preferring the use of half forms where texts in other languages would show ligatures and vertical stacks.
+
+Ligature conjuncts of झ
+True ligatures are quite rare in Indic scripts. The most common ligated conjuncts in Devanagari are in the form of a slight mutation to fit in context or as a consistent variant form appended to the adjacent characters. Those variants include Na and the Repha and Rakar forms of Ra. Nepali and Marathi texts use the "eyelash" Ra half form  for an initial "R" instead of repha.
+ Repha र् (r) + झ (jʰa) gives the ligature rjʰa र्झ: 
+
+ Eyelash र् (r) + झ (jʰa) gives the ligature rjʰa र्‍झ:
+
+ झ् (jʰ) + rakar र (ra) gives the ligature jʰra झ्र:
+
+ झ् (jʰ) + न (na) gives the ligature jʰna झ्न:
+
+Stacked conjuncts of झ
+Vertically stacked ligatures are the most common conjunct forms found in Devanagari text. Although the constituent characters may need to be stretched and moved slightly in order to stack neatly, stacked conjuncts can be broken down into recognizable base letters, or a letter and an otherwise standard ligature.
+ छ্ (cʰ) + झ (jʰa) gives the ligature cʰjʰa:
+
+ ढ্ (ḍʱ) + झ (jʰa) gives the ligature ḍʱjʰa:
+
+ ड্ (ḍ) + झ (jʰa) gives the ligature ḍjʰa:
+
+ द্ (d) + झ (jʰa) gives the ligature djʰa:
+
+ झ্ (jʰ) + ब (ba) gives the ligature jʰba:
+
+ झ্ (jʰ) + च (ca) gives the ligature jʰca:
+
+ झ্ (jʰ) + ड (ḍa) gives the ligature jʰḍa:
+
+ झ্ (jʰ) + ज (ja) gives the ligature jʰja:
+
+ झ্ (jʰ) + ज্ (j) + ञ (ña) gives the ligature jʰjña:
+
+ झ্ (jʰ) + ल (la) gives the ligature jʰla:
+
+ झ্ (jʰ) + ङ (ŋa) gives the ligature jʰŋa:
+
+ झ্ (jʰ) + ञ (ña) gives the ligature jʰña:
+
+ झ্ (jʰ) + व (va) gives the ligature jʰva:
+
+ ख্ (kʰ) + झ (jʰa) gives the ligature kʰjʰa:
+
+ ङ্ (ŋ) + झ (jʰa) gives the ligature ŋjʰa:
+
+ ठ্ (ṭʰ) + झ (jʰa) gives the ligature ṭʰjʰa:
+
+ ट্ (ṭ) + झ (jʰa) gives the ligature ṭjʰa:
+
+Bengali script
+The Bengali script ঝ is derived from the Siddhaṃ , and is marked by a similar horizontal head line, but less geometric shape, than its Devanagari counterpart, झ. The inherent vowel of Bengali consonant letters is /ɔ/, so the bare letter ঝ will sometimes be transliterated as "jho" instead of "jha". Adding okar, the "o" vowel mark, gives a reading of /d͡ʒʱo/.
+Like all Indic consonants, ঝ can be modified by marks to indicate another (or no) vowel than its inherent "a".
+
+ঝ in Bengali-using languages
+ঝ is used as a basic consonant character in all of the major Bengali script orthographies, including Bengali and Assamese.
+
+Conjuncts with ঝ
+Bengali ঝ exhibits conjunct ligatures, as is common in Indic scripts, but has significantly fewer conjunct ligatures than most other Bengali letters.
+ জ্ (j) + ঝ (jʰa) gives the ligature jjʰa:
+
+ ঞ্ (ñ) + ঝ (jʰa) gives the ligature ñjʰa:
+
+ র্ (r) + ঝ (jʰa) gives the ligature rjʰa, with the repha prefix:
+
+Gujarati Jha
+
+Jha (ઝ) is the ninth consonant of the Gujarati abugida. It is possibly derived from a variant of 16th century Devanagari Jha  with the top bar (shiro rekha) removed, and ultimately the Brahmi letter .
+
+Gujarati-using Languages
+The Gujarati script is used to write the Gujarati and Kutchi languages. In both languages, ઝ is pronounced as  or  when appropriate. Like all Indic scripts, Gujarati uses vowel marks attached to the base consonant to override the inherent /ə/ vowel:
+
+Conjuncts with ઝ
+Gujarati ઝ exhibits conjunct ligatures, much like its parent Devanagari Script. While most Gujarati conjuncts can only be formed by reducing the letter shape to create a "half form" that fits tightly to following letter, Jha does not have a half form. A few conjunct clusters can be represented by a true ligature, instead of a shape that can be broken into constituent independent letters, and vertically stacked conjuncts can also be found in Gujarati, although much less commonly than in Devanagari. Lacking a half form, Jha will normally use an explicit virama when forming conjuncts without a true ligature.
+True ligatures are quite rare in Indic scripts. The most common ligated conjuncts in Gujarati are in the form of a slight mutation to fit in context or as a consistent variant form appended to the adjacent characters. Those variants include Na and the Repha and Rakar forms of Ra.
+ ર્ (r) + ઝ (jʰa) gives the ligature RJha:
+
+ ઝ્ (jʰa) + ર (r) gives the ligature JhRa:
+
+Gurmukhi script 
+Chajaa  (ਝ) is the fourteenth letter of the Gurmukhi alphabet. Its name is [t͡ʃə̀d͡ʒːɑ] and pronounced as /t͡ʃə̀/. To differentiate between consonants, the Punjabi tonal consonant t͡ʃə̀ is often transliterated in the way of the Hindi voiced aspirate consonants jha although Punjabi does not have this sound. It is derived from the Laṇḍā letter jha, and ultimately from the Brahmi jha. Gurmukhi chajaa does not have a special pairin or addha (reduced) form for making conjuncts, and in modern Punjabi texts do not take a half form or halant to indicate the bare consonant /t͡ʃ/, although Gurmukhi Sanskrit texts may use an explicit halant.
+
+Burmese script
+Za Myin zwe(ဈ) is the 19th letter of the Burmese script. Zay(ဈေး) means bazzar. Zan (ဈာန်) means intense connection of mind.
+
+Telugu Jha
+
+Jha (ఝ) is a consonant of the Telugu abugida. It ultimately arose from the Brahmi letter . It is closely related to the Kannada letter ಝ. Most Telugu consonants contain a v-shaped headstroke that is related to the horizontal headline found in other Indic scripts, although headstrokes do not connect adjacent letters in Telugu. The headstroke is normally lost when adding vowel matras.
+Telugu conjuncts are created by reducing trailing letters to a subjoined form that appears below the initial consonant of the conjunct. Many subjoined forms are created by dropping their headline, with many extending the end of the stroke of the main letter body to form an extended tail reaching up to the right of the preceding consonant. This subjoining of trailing letters to create conjuncts is in contrast to the leading half forms of Devanagari and Bengali letters. Ligature conjuncts are not a feature in Telugu, with the only non-standard construction being an alternate subjoined form of Ṣa (borrowed from Kannada) in the KṢa conjunct.
+
+Malayalam Jha
+
+Jha (ഝ) is a consonant of the Malayalam abugida. It ultimately arose from the Brahmi letter , via the Grantha letter  Jha. Like in other Indic scripts, Malayalam consonants have the inherent vowel "a", and take one of several modifying vowel signs to represent syllables with another vowel or no vowel at all.
+
+Conjuncts of ഝ
+As is common in Indic scripts, Malayalam joins letters together to form conjunct consonant clusters. There are several ways in which conjuncts are formed in Malayalam texts: using a post-base form of a trailing consonant placed under the initial consonant of a conjunct, a combined ligature of two or more consonants joined together, a conjoining form that appears as a combining mark on the rest of the conjunct, the use of an explicit candrakkala mark to suppress the inherent "a" vowel, or a special consonant form called a "chillu" letter, representing a bare consonant without the inherent "a" vowel. Jha does not form ligatures or other combining forms, and jha conjuncts can only be formed with post-base forms of other letters and explicit candrakkala. Texts written with the modern reformed Malayalam orthography, put̪iya lipi, may favor more regular conjunct forms than older texts in paḻaya lipi, due to changes undertaken in the 1970s by the Government of Kerala.
+
+Thai script 
+Cho choe (ฌ) is the twelfth letter of the Thai script. It falls under the low class of Thai consonants. In IPA, cho choe is pronounced as [tɕʰ] at the beginning of a syllable and may not be used to close a syllable. The eighth letter of the alphabet, cho chan (จ), is also named cho but represents a different initial consonant sound and falls under the middle class of Thai consonants. The ninth letter of the alphabet, cho ching (ฉ), is also named cho and falls under the high class of Thai consonants. The tenth letter of the alphabet, cho chang (ช), is also named cho and falls under the low class of Thai consonants. Unlike many Indic scripts, Thai consonants do not form conjunct ligatures, and use the pinthu—an explicit virama with a dot shape—to indicate bare consonants. In the acrophony of the Thai script, choe (เฌอ) means ‘tree’. Cho choe corresponds to the Sanskrit character ‘झ’.
+
+Odia Jha
+
+Jha (ଝ) is a consonant of the Odia abugida. It ultimately arose from the Brahmi letter , via the Siddhaṃ letter  Jha. Like in other Indic scripts, Odia consonants have the inherent vowel "a", and take one of several modifying vowel signs to represent syllables with another vowel or no vowel at all.
+
+Conjuncts of ଝ 
+As is common in Indic scripts, Odia joins letters together to form conjunct consonant clusters. The most common conjunct formation is achieved by using a small subjoined form of trailing consonants. Most consonants' subjoined forms are identical to the full form, just reduced in size, although a few drop the curved headline or have a subjoined form not directly related to the full form of the consonant. The second type of conjunct formation is through pure ligatures, where the constituent consonants are written together in a single graphic form. This ligature may be recognizable as being a combination of two characters or it can have a conjunct ligature unrelated to its constituent characters.
+ ଞ୍ (ñ) +  ଝ (jʰa) gives the ligature ñjʰa:
+
+Kaithi Jha
+
+Jha (𑂕) is a consonant of the Kaithi abugida. It ultimately arose from the Brahmi letter , via the Siddhaṃ letter  Jha. Like in other Indic scripts, Kaithi consonants have the inherent vowel "a", and take one of several modifying vowel signs to represent syllables with another vowel or no vowel at all.
+
+Conjuncts of 𑂕 
+As is common in Indic scripts, Kaithi joins letters together to form conjunct consonant clusters. The most common conjunct formation is achieved by using a half form of preceding consonants, although several consonants use an explicit virama. Most half forms are derived from the full form by removing the vertical stem. As is common in most Indic scripts, conjucts of  ra are indicated with a repha or rakar mark attached to the rest of the consonant cluster. In addition, there are a few vertical conjuncts that can be found in Kaithi writing, but true ligatures are not used in the modern Kaithi script.
+
+ 𑂩୍ (r) + 𑂕 (jʰa) gives the ligature rjʰa:
+
+Comparison of Jha
+The various Indic scripts are generally related to each other through adaptation and borrowing, and as such the glyphs for cognate letters, including Jha, are related as well.  Exceptionally, the glyph of the Lao character used for Jha is a modification of Ja.
+
+Character encodings of Jha
+Most Indic scripts are encoded in the Unicode Standard, and as such the letter Jha in those scripts can be represented in plain text with unique codepoint. Jha from several modern-use scripts can also be found in legacy encodings, such as ISCII.
+
+References
+
+ Kurt Elfering: Die Mathematik des Aryabhata I. Text, Übersetzung aus dem Sanskrit und Kommentar. Wilhelm Fink Verlag, München, 1975, 
+ Georges Ifrah: The Universal History of Numbers. From Prehistory to the Invention of the Computer. John Wiley & Sons, New York, 2000, .
+ B. L. van der Waerden: Erwachende Wissenschaft. Ägyptische, babylonische und griechische Mathematik. Birkhäuser-Verlag, Basel Stuttgart, 1966, 
+ 
+ 
+ Conjuncts are identified by IAST transliteration, except aspirated consonants are indicated with a superscript "h" to distinguish from an unaspirated consonant + Ha, and the use of the IPA "ŋ" and "ʃ" instead of the less dinstinctive "ṅ" and "ś".
+
+Indic letters
