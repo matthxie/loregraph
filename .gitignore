@@ -10,6 +10,5 @@ __pycache__/
 # HF / model caches
 .cache/
 
-# Test corpus — regenerable from a fixed seed via scripts/build_dataset.py.
-# Remove this line if you'd rather commit a frozen copy (note: CC BY-SA content).
-dataset/
+# Test corpus is committed (frozen copy) — regenerable via scripts/build_dataset.py.
+# Note: CC BY-SA content (Wikipedia text + COCO images); keep attribution.
