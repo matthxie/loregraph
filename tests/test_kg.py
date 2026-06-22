@@ -5,15 +5,17 @@ needs no API key, no model download, and no network. Run: python -m pytest -q
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
+import types
 
 import numpy as np
 import pytest
 
 from kg import Config, KnowledgeGraph
 from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
-                             normalize_relation)
+                             normalize_relation, relation_merge_vetoed)
 from kg.corpus import CorpusItem, load_articles, load_images
 from kg.embedders import HashingEmbedder, get_embedder
 from kg.extractors import HeuristicExtractor, get_extractor
@@ -185,6 +187,114 @@ def test_relation_synonym_merges_but_antonym_and_inverse_dont():
     assert canon.resolve_relation("is_enemy_of") != a
     # passive inverse ("by" is preserved as a direction marker) must NOT merge
     assert canon.resolve_relation("manages") != canon.resolve_relation("managed_by")
+
+
+# --------------------------------------------------------------------------- #
+# L3 selective tie-breaker (offline: veto + fake client)
+# --------------------------------------------------------------------------- #
+def test_relation_merge_vetoed():
+    # passive/inverse asymmetry: exactly one side carries the "_by" marker
+    assert relation_merge_vetoed("manages", "managed_by")
+    assert relation_merge_vetoed("founded", "founded_by")
+    assert relation_merge_vetoed("employs", "employed_by")
+    # known opposites compared on content lemmas
+    assert relation_merge_vetoed("is_friend_of", "is_enemy_of")
+    assert relation_merge_vetoed("parent_of", "child_of")
+    assert relation_merge_vetoed("predecessor_of", "successor_of")
+    # genuine synonyms are NOT vetoed (they remain eligible to merge)
+    assert not relation_merge_vetoed("works_with", "collaborates_with")
+    assert not relation_merge_vetoed("founded", "established")
+    assert not relation_merge_vetoed("works_with", "works_with")
+
+
+class _FakeL3Client:
+    """Stand-in anthropic client: messages.create returns a fixed verdict so the L3
+    plumbing can be exercised offline with no API key."""
+    def __init__(self, verdict: str):
+        self._verdict = verdict
+        self.calls: list[dict] = []
+        self.messages = self
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        text = json.dumps({"verdict": self._verdict, "reason": "test"})
+        return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=text)])
+
+
+def _l3_canon(verdict: str):
+    c = cfg()
+    c.l3_enabled = True
+    store = GraphStore(c)
+    canon = Canonicalizer(store, get_embedder(c), c)
+    canon._l3_client = _FakeL3Client(verdict)   # inject; bypass lazy init / API key
+    return store, canon
+
+
+def test_l3_adjudicate_merges_on_existing_id():
+    store, canon = _l3_canon("placeholder")
+    rid = canon.resolve_relation("works_with")
+    canon._l3_client = _FakeL3Client(rid)        # vote to merge into the existing node
+    out = canon._l3_adjudicate("relation", "collaborates_with", [(rid, 0.92)])
+    assert out == rid
+    assert canon.l3_log[-1]["verdict"] == rid
+
+
+def test_l3_adjudicate_new_is_under_merge_default():
+    store, canon = _l3_canon("NEW")
+    rid = canon.resolve_relation("works_with")
+    # a NEW verdict (or any id not in the candidate set) → mint new, i.e. return None
+    assert canon._l3_adjudicate("relation", "reports_to", [(rid, 0.92)]) is None
+
+
+def test_l3_relation_veto_blocks_inverse_before_llm():
+    store, canon = _l3_canon("placeholder")
+    rid = canon.resolve_relation("manages")
+    fake = _FakeL3Client(rid)
+    canon._l3_client = fake
+    # managed_by is the passive inverse of manages → vetoed → the LLM is never consulted
+    assert canon._l3_relation("managed_by", [(rid, 0.92)]) is None
+    assert fake.calls == []
+
+
+def test_l3_disabled_by_default_leaves_resolution_deterministic():
+    # default cfg has l3_enabled False → the adjudicator is a no-op even with candidates
+    store = GraphStore(cfg())
+    canon = Canonicalizer(store, get_embedder(cfg()), cfg())
+    rid = canon.resolve_relation("works_with")
+    assert canon._l3_adjudicate("relation", "collaborates_with", [(rid, 0.92)]) is None
+    assert canon.l3_log == []
+
+
+# --------------------------------------------------------------------------- #
+# extract-dump + eval-canon (offline)
+# --------------------------------------------------------------------------- #
+def test_extract_dump_runs_and_summarizes():
+    from kg.extract_dump import extract_corpus, summarize
+    ext = HeuristicExtractor(cfg())
+    records, errors = extract_corpus(ext, sample_items(), cfg())
+    assert len(records) == 4 and not errors
+    s = summarize(records, "heuristic")
+    assert s["items"] == 4 and s["unique_tags"] > 0 and s["entity_types"]
+    img = next(r for r in records if r["modality"] == "image")
+    assert img["tags"] and img["description"]
+
+
+def test_extract_text_sectioned_unions_sections():
+    from kg.extractors import extract_text_sectioned
+    ext = HeuristicExtractor(cfg())
+    long = "Alan Turing worked at Bletchley Park on cryptography and the Enigma. " * 200
+    merged = extract_text_sectioned(ext, long, "Turing", long_doc_chars=500, max_sections=4)
+    assert merged.tags and merged.entities  # produced a unioned extraction across sections
+
+
+def test_eval_canon_gate_passes_offline():
+    from kg.eval_canon import run_gate
+    rep = run_gate(cfg())   # heuristic + hashing, L3 disabled
+    assert rep["gate_pass"] is True
+    assert rep["relation"]["wrong_antonym_inverse_merges"] == 0
+    assert rep["entity"]["false_merges"] == 0
+    # L1 content-key still consolidates the inflectional synonym pair
+    assert rep["relation"]["counts"]["tp"] >= 1
 
 
 def test_idf_weight_monotonic():

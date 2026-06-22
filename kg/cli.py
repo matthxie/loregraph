@@ -1,11 +1,13 @@
 """Command-line interface:  python -m kg <command> [options]
 
-    ingest       build the graph from dataset/ (or re-ingest; cache skips unchanged)
-    communities  detect communities + summaries (Path B / breadth queries)
-    query        retrieve for a question (auto-routes local↔global)
-    stats        print node/edge counts
-    inspect      dump one node + its neighbours
-    eval         recall@k / MRR ablation across retrieval modes
+    ingest         build the graph from dataset/ (or re-ingest; cache skips unchanged)
+    extract-dump   dump per-item extractions for one extractor/model (no graph build)
+    eval-canon     canonicalization gate (synonyms merge; antonyms/inverses must not)
+    communities    detect communities + summaries (Path B / breadth queries)
+    query          retrieve for a question (auto-routes local↔global)
+    stats          print node/edge counts
+    inspect        dump one node + its neighbours
+    eval           recall@k / MRR ablation across retrieval modes
 """
 from __future__ import annotations
 
@@ -26,6 +28,11 @@ def _config(args) -> Config:
         cfg.extractor = args.extractor
     if getattr(args, "embedder", None):
         cfg.embedder = args.embedder
+    if getattr(args, "model", None):          # override the LLM model (extractor + L3)
+        cfg.llm_model = args.model
+        cfg.l3_model = args.model
+    if getattr(args, "l3", False):            # enable the L3 canonicalization tie-breaker
+        cfg.l3_enabled = True
     return cfg
 
 
@@ -49,6 +56,36 @@ def cmd_ingest(args):
         print("notes:", *report.notes[:5], sep="\n  ")
     g.save()
     print("saved.", json.dumps(g.stats(), indent=2))
+
+
+def cmd_extract_dump(args):
+    from .extract_dump import extract_corpus, summarize, write_dump
+    from .extractors import get_extractor
+    cfg = _config(args)
+    ext = get_extractor(cfg)
+    items = []
+    if not args.no_text and args.n_text != 0:          # n==0 means "none of this modality"
+        items += load_articles(limit=args.n_text)
+    if not args.no_images and args.n_image != 0:       # (the loader treats limit=0 as "all")
+        items += load_images(limit=args.n_image)
+    label = args.label or (cfg.llm_model if ext.name == "haiku" else ext.name)
+    print(f"extracting {len(items)} items  (extractor={ext.name}, model={cfg.llm_model}, "
+          f"label={label!r}) ...")
+    records, errors = extract_corpus(ext, items, cfg)
+    summary = summarize(records, label)
+    write_dump(records, summary, args.out)
+    if errors:
+        print(f"  ⚠ {len(errors)} extraction error(s); first: {errors[0]}")
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(f"wrote {args.out}  (+ {args.out}.summary.json)")
+
+
+def cmd_eval_canon(args):
+    from .eval_canon import run_gate
+    report = run_gate(_config(args))
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    print("\nGATE:", "PASS ✅" if report["gate_pass"] else "FAIL ❌",
+          "(no antonym/inverse or distinct-sense false-merges)")
 
 
 def cmd_communities(args):
@@ -157,8 +194,34 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--no-images", action="store_true")
     pi.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
     pi.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pi.add_argument("--model", default=None,
+                    help="override the LLM extractor model id (e.g. claude-sonnet-4-6)")
+    pi.add_argument("--l3", action="store_true",
+                    help="enable the L3 LLM canonicalization tie-breaker (needs a key; off by default)")
     pi.add_argument("--reset", action="store_true", help="delete the store first")
     pi.set_defaults(func=cmd_ingest)
+
+    pd = sub.add_parser("extract-dump",
+                        help="dump per-item extractions for an extractor/model (no graph build)")
+    pd.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
+    pd.add_argument("--model", default=None,
+                    help="LLM model id to extract with, e.g. claude-haiku-4-5-20251001 / claude-sonnet-4-6")
+    pd.add_argument("--n-text", type=int, default=20)
+    pd.add_argument("--n-image", type=int, default=0)
+    pd.add_argument("--no-text", action="store_true")
+    pd.add_argument("--no-images", action="store_true")
+    pd.add_argument("--label", default=None, help="name for this mode in the summary")
+    pd.add_argument("--out", default=os.path.join("store", "extract_dump.jsonl"))
+    pd.set_defaults(func=cmd_extract_dump)
+
+    pg = sub.add_parser("eval-canon",
+                        help="canonicalization gate: synonyms merge, antonyms/inverses must NOT")
+    pg.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="heuristic")
+    pg.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pg.add_argument("--model", default=None, help="L3 adjudicator model (with --l3)")
+    pg.add_argument("--l3", action="store_true",
+                    help="exercise the L3 LLM tie-breaker during the gate (needs a key)")
+    pg.set_defaults(func=cmd_eval_canon)
 
     pc = sub.add_parser("communities", help="detect communities + summaries")
     pc.set_defaults(func=cmd_communities)
