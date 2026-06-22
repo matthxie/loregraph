@@ -4,6 +4,8 @@
 
 A concrete design for an LLM-traversable, bidirectional knowledge graph over multimodal content, synthesized from 10 sources.
 
+> **Revision 2 (2026-06-21):** (a) **No summary step** — extract tags/entities *directly* from raw content; the object's raw text (not a generated summary) is the primary embedding/retrieval surface. Images are the exception (no text → the vision model still emits tags + a one-line description as its only searchable text). (b) **Per-node timestamps** `created_at` / `last_modified`, plus a `valid` / `superseded_by` soft-invalidation flag. (c) Refinements adopted from production frameworks (cognee, mem0, graphiti) — see new **§10** and [FRAMEWORKS.md](FRAMEWORKS.md). Sections below are updated in place; older summary-first prose is superseded by §10 and this banner.
+
 ---
 
 ## 0. Decided stack (locked 2026-06-21)
@@ -12,15 +14,17 @@ These choices override the option menus in §4 and §7 below.
 
 | Concern | Decision | Notes |
 |---|---|---|
-| **Pipeline LLM** (summary, tag/entity extraction, image captioning) | **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) | Vision-capable; cheapest tier for the 100-article batch. Needs `ANTHROPIC_API_KEY`. |
+| **Pipeline LLM** (tag/entity extraction, image description) | **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) | Vision-capable; cheapest tier for the batch. **API key** auth (`ANTHROPIC_API_KEY`, Console pay-per-token) — full corpus costs ~$1 (§ cost note). `ant auth login` OAuth/subscription is the alt; don't pass `output_config.effort` (400s on Haiku). |
 | **Embeddings** | **Local `sentence-transformers`** | Default model `BAAI/bge-small-en-v1.5` (384-dim, strong quality/size); `all-MiniLM-L6-v2` as a lighter fallback (what A-MEM used). Fully offline, no API key. |
-| **Embedding grain** | **Summary embeddings = primary** retrieval surface; tag/entity-string embeddings = synonymy linking only | Per §4; bare-tag embeddings alone are too lossy. |
+| **Embedding grain** | **Raw object-text embeddings = primary** retrieval surface (no summary step); tag/entity-string embeddings = synonymy linking only | Per §4 (rev 2). Articles: embed the raw text (lead section for very long docs). Images: embed the VLM's one-line description. Bare-tag embeddings alone are too lossy. |
+| **No summary** | Extract tags/entities **directly** from raw content | rev 2. Drops one LLM call + a failure point. The summary was only a proxy for the text — embed the text instead. |
+| **Timestamps + validity** | Every node carries `created_at`, `last_modified`; nodes/edges carry `valid` + `superseded_by` | rev 2. Re-ingestion *supersedes* (soft) rather than overwriting/duplicating (graphiti-lite). |
 | **Graph store** | **NetworkX** in-memory, persisted to disk | PageRank/BFS/Leiden out of the box. Migration target if it outgrows memory: Kùzu. |
 | **Vector store** | **NumPy brute-force cosine** to start | ~100 articles → milliseconds. Add `sqlite-vec`/FAISS only if it grows. |
 | **Metadata/cache** | **SQLite** (stdlib) | SHA256 content-hash cache + node metadata. |
 | **Python** | **3.14 (system, native)** | Verified: `torch` 2.12.1 ships a macOS arm64 `cp314` wheel and `sentence-transformers` 5.6 supports ≥3.10 — no 3.12 venv required. Still use a project venv for isolation. |
 | **Drift control scope (MVP)** | L1 hash + L2 embedding synonymy **link** (not merge); L3 batch reconciliation deferred | Per §3; bias toward linking near-duplicates over hard-merging. |
-| **Test corpus** | **`wikimedia/wit_base`** (HF, streamed) — ~100 deduped page nodes, text + embedded image bytes, CC BY-SA 4.0 | Replaces live Wikipedia scraping. See [DATASET.md](DATASET.md). Consequence: **no free hyperlink/category edges** — edges are *derived* from shared tags/entities + embedding kNN (optional offline API enrichment for ground-truth edges). |
+| **Test corpus** | **Decoupled (rev): 100 full Wikipedia articles** (`wikimedia/wikipedia`, text) **+ 100 random COCO photos** (`detection-datasets/coco`, images) — text and images are *not* paired | Built & on disk via `scripts/build_dataset.py` → `dataset/`. Consequence: **no free hyperlink/category edges** — edges are *derived* from shared tags/entities + embedding kNN (optional offline API enrichment). See [DATASET.md](DATASET.md). |
 
 ---
 
@@ -36,7 +40,7 @@ These choices override the option menus in §4 and §7 below.
 
 3. **Don't over-engineer hard tag normalization; semantic consolidation is what matters.** GraphRAG uses naive exact-string entity matching and lets clustering/summarization absorb duplicates. HippoRAG keeps near-duplicates as *distinct nodes linked by synonymy edges* rather than merging. A-MEM and TnT-LLM re-harmonize tags semantically (LLM evolution / a maintained taxonomy) rather than relying on a string hash. A hash table is a cheap *first* layer, not the load-bearing solution.
 
-A fourth, weaker consensus: **summarize-first.** TnT-LLM, RAPTOR, A-MEM, and Graphify all reduce each object to an LLM summary *before* extraction, because the summary normalizes length and noise. Your pipeline already does this — keep it.
+A fourth, weaker consensus the literature offered — **summarize-first** (TnT-LLM, RAPTOR, A-MEM, Graphify reduce each object to a summary before extraction to normalize length/noise) — has been **dropped in rev 2.** At ~200 clean docs the noise-normalization benefit is marginal and not worth an extra LLM call + failure point; extract tags directly from raw text and embed the raw text. (Re-introduce summaries only if you later scale to a large/noisy corpus.)
 
 ---
 
@@ -46,8 +50,8 @@ A fourth, weaker consensus: **summarize-first.** TnT-LLM, RAPTOR, A-MEM, and Gra
 
 | Node type | Source / object | Notes |
 |---|---|---|
-| **ObjectNode** | one per ingested item (article, link, photo, file) | Holds raw ref, LLM summary, content hash (SHA256), modality. The "document" unit. |
-| **EntityNode** | named entities/concepts extracted from the summary | Typed (person, place, org, concept…). The traversal backbone. |
+| **ObjectNode** | one per ingested item (article, link, photo, file) | Holds raw ref + raw text (the embedding surface), content hash (SHA256), modality, `created_at`, `last_modified`, `valid`/`superseded_by`. Images also store a one-line VLM description (their only text). The "document" unit. *(No `summary` field — rev 2.)* |
+| **EntityNode** | named entities/concepts extracted **directly from the raw content** (rev 2) | Typed (person, place, org, concept…). The traversal backbone. |
 | **TagNode** | canonical tags from the taxonomy | First-class nodes (see below). |
 | **CommunityNode** *(phase 3)* | Leiden communities | Holds a precomputed cluster summary for breadth queries. |
 
@@ -62,6 +66,12 @@ A fourth, weaker consensus: **summarize-first.** TnT-LLM, RAPTOR, A-MEM, and Gra
 - `HYPERLINKS_TO` (ObjectNode → ObjectNode) — *optional enrichment*: deterministic Wikipedia links/categories fetched offline per `page_url` (the `wit_base` corpus does not include them; see [DATASET.md](DATASET.md))
 
 **Tag the edges, not just nodes.** Per **Graphify** and **Chain-of-Layer**, every extracted edge stores `provenance ∈ {EXTRACTED, INFERRED, SIMILAR}` and a `confidence ∈ [0,1]`. This lets the LLM weight or discard low-confidence relationships during traversal and is your single best hallucination-control lever. Validate each edge before commit (Chain-of-Layer's per-layer filter; A-MEM's LLM link gate).
+
+**Constrain the relation vocabulary (rev 2 — cognee/graphiti lesson).** Don't let the LLM invent free-form relation names — all three production frameworks found free-form relations collapse into a vague `RELATED_TO`. Give extraction a **small fixed enum** of relation types (e.g. `part_of`, `located_in`, `created_by`, `instance_of`, `causes`, `mentions`, `related_to` as the catch-all) so the graph stays rich and traversable.
+
+**Provenance back-pointer (rev 2 — graphiti lesson).** Every EntityNode/TagNode and extracted edge stores a pointer back to the ObjectNode (and char span where cheap) it came from. Enables audit ("why is this tag here?") and re-extraction.
+
+**Node validity (rev 2).** Beyond the `seen` debug flag, nodes/edges carry a real-data `valid` flag + optional `superseded_by`. Re-ingesting a changed object soft-invalidates the old node/edges instead of overwriting or duplicating — graphiti's edge-invalidation idea without the bi-temporal quad (unjustified for a stable Wikipedia snapshot).
 
 ### Tags: first-class nodes vs attributes
 
@@ -78,7 +88,7 @@ Represent every edge **once, undirected-in-effect**. Concretely: store a directe
 
 ### Multimodal (image) nodes
 
-Images become **ObjectNodes with modality=image**. Per Graphify (Claude Vision) and the unanimous text-only papers' gap: **caption-then-treat-as-text.** A VLM (Claude with vision) produces a summary/caption; from there the image flows through the *identical* extraction → tag → embed path as text. The image's semantics are only as good as the captioner (RAPTOR's caution about the captioner being the ceiling). Store the original image ref and the generated caption on the node.
+Images become **ObjectNodes with modality=image**. An image has no text, so the VLM (Claude Haiku 4.5 with vision) is the *only* way to get a textual handle — this is the one place a description survives the rev-2 "no summary" rule. The VLM emits **tags/entities directly + one short description line** in a single structured call; the description is the image's embedding/retrieval surface (you can't embed a photo as text otherwise), and the tags flow through the identical canonicalization path as text tags. The image's semantics are only as good as the VLM (RAPTOR's caution: the describer is the ceiling). Store the original image ref + the one-line description on the node.
 
 ---
 
@@ -134,15 +144,15 @@ Add **node specificity (HippoRAG): weight each tag/entity by inverse document-fr
 
 ### Concrete recommendation
 
-**Embed two things, at two granularities:**
+**Embed two things, at two granularities:** *(rev 2 — no summary)*
 
-1. **Summary embeddings (primary retrieval surface).** Embed each ObjectNode's LLM summary. This is your main query→seed entry index (RAPTOR, A-MEM). Optionally embed `summary + canonical_tags` concatenated to inject symbolic signal.
+1. **Raw object-text embeddings (primary retrieval surface).** Embed each ObjectNode's **raw text directly** (for very long docs, the lead/first section — Wikipedia leads are already summary-like). For images, embed the VLM's one-line description. This is your main query→seed entry index. *Why this is safe without a summary:* the summary was only ever a length-normalized proxy for the text; at ~200 clean docs, embedding the text itself loses almost nothing and removes an LLM call + a failure point. The summary's real benefit (noise normalization) matters at scale, not here. Optionally embed `text + canonical_tags` to inject symbolic signal.
 2. **Tag/entity string embeddings (for synonymy + linking only).** Embed canonical TagNode/EntityNode strings purely to power the L2 synonymy gate and tag→node linking (HippoRAG). Not the primary query path.
 
 **Do not** rely on embeddings for whole-corpus/"what are the themes" questions — GraphRAG showed those need the **community-summary layer** (Section 5), not vector search.
 
 **Granularity & model family:**
-- Use **summary-level** as the retrieval grain (cleaner than raw chunks for ~100 articles; chunks optional later for fine recall).
+- Use **object-text level** as the retrieval grain (raw text / lead section; chunks optional later for fine recall on long docs).
 - **Model:** a strong general sentence-embedding model. For a solo prototype, pick *one* and move on: `text-embedding-3-small` (OpenAI, hosted, trivial) **or** a local `bge`/`gte`/`all-MiniLM` family model if you want zero API cost (A-MEM used `all-MiniLM-L6-v2`; RAPTOR used `multi-qa-mpnet`). For ~100 articles either is instant. **Use cosine / normalize to unit length** (TaxoCom: spherical/vMF aligns training with usage and supports softmax membership scoring).
 - You likely get TaxoGen's "local discrimination" benefit *for free* from modern contextual embeddings — skip per-subtree re-embedding.
 
@@ -160,12 +170,12 @@ Add **node specificity (HippoRAG): weight each tag/entity by inverse document-fr
 ### Recommended traversal for THIS design (a 2-path retriever)
 
 **Path A — Local/specific queries (default):**
-1. Embed query → cosine over **summary embeddings** → top-k **seed nodes** (the entry-point index, *not* the answer).
+1. Seed by **fused signals (rev 2)**: embed query → cosine over **object-text embeddings**, *and* run **BM25/keyword** over the raw text (mem0 v3 + graphiti both fuse lexical + semantic) → union into top-k **seed nodes** (the entry-point index, *not* the answer).
 2. Also extract query entities → link to EntityNodes/TagNodes as additional seeds (HippoRAG).
-3. Run **Personalized PageRank** seeded at those nodes over the bidirectional graph (`RELATED_TO` + `SIMILAR_TO` + `HYPERLINKS_TO` edges), seeds reweighted by **node specificity (IDF)**. Weight edges by their `confidence`; downweight/skip `INFERRED` low-confidence edges.
-4. Take the top-ranked nodes' ObjectNodes as the minimal subgraph; hand summaries (+ raw content on demand) to the LLM to answer.
+3. Run **Personalized PageRank** seeded at those nodes over the bidirectional graph (`RELATED_TO` + `SIMILAR_TO` + `SHARED_TAG` (+ optional `HYPERLINKS_TO`) edges), seeds reweighted by **node specificity (IDF)**. Weight edges by their `confidence`; downweight/skip `INFERRED` low-confidence and `valid=false` superseded edges.
+4. **Rerank** the PPR-scored nodes with MMR (diversity) + node-distance-to-seed (query-anchored relevance) — graphiti's rerankers on top of raw scores. Take the top nodes' ObjectNodes as the minimal subgraph; hand their **raw text** (on demand) to the LLM to answer.
 
-This makes **graph diffusion the primary path and embeddings the seed index** — the unanimous lesson. PPR over a ~100-article graph is milliseconds (`networkx.pagerank` with `personalization=`). It's far cheaper and more robust than LLM hop-by-hop.
+This makes **graph diffusion the primary path and embeddings the seed index** — the unanimous lesson. PPR over a ~200-node graph is milliseconds (`networkx.pagerank` with `personalization=`). **PPR is one mode, not the only path (rev 2):** none of cognee/mem0/graphiti use PPR (they use vector+BM25+BFS), so make the retriever pluggable and **A/B PPR-spread vs. plain BFS** — prove PPR earns its place at this scale before relying on it.
 
 **Path B — Global/breadth queries** ("main themes across everything"):
 Route to the **GraphRAG community-summary layer** (Section 6 / phase 3): Leiden communities, each with a precomputed summary, map-reduced. Detect breadth queries with a cheap classifier or an LLM router prompt.
@@ -188,39 +198,51 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
 ### Step-by-step for one object
 
 ```
-1. INTAKE        Accept text / link / image / file. Compute SHA256(content).
-2. CACHE CHECK   If hash in cache → skip (Graphify incremental rebuild). Else continue.
-3. NORMALIZE     Links → fetch + extract main text. Files → extract text. Images → step 4.
-4. SUMMARIZE     LLM (vision-capable for images) → concise summary.
-                 Images: Claude Vision caption, then identical downstream path.
-5. EXTRACT       From the SUMMARY (not raw text — TnT-LLM): LLM emits
-                 entities (typed), concepts, candidate tags, and typed
-                 relations between entities. Use a "gleaning" 2nd pass
-                 ("did you miss any?") to lift recall (GraphRAG).
-6. DERIVED EDGES Corpus = wit_base (no free wikilinks/categories — see
-                 DATASET.md). Derive edges instead: shared tags/entities
+1. INTAKE        Accept text / link / image / file. Compute SHA256(content),
+                 stamp created_at.
+2. CACHE CHECK   If hash in cache → skip (Graphify incremental rebuild).
+                 If same id but changed content → soft-invalidate old node
+                 (valid=false, set superseded_by), bump last_modified.
+3. NORMALIZE     Links → fetch + extract main text. Files → extract text.
+                 Keep the raw text (it IS the embedding surface — no summary).
+4. EXTRACT       DIRECTLY from raw content (rev 2 — no summary step), in ONE
+                 structured-output call (cognee): Haiku returns a typed
+                 {entities[], tags[], relations[]} object — relations chosen
+                 from a FIXED enum (§2), not free-form. Each item carries a
+                 provenance back-pointer to this object. Images: vision call
+                 emits tags/entities + one description line in the same shot.
+                 Then ONE reflexion pass ("did you miss any concept?") to lift
+                 recall (graphiti) — cheaper than a separate summarize call.
+5. DERIVED EDGES Corpus = wit_base (no free wikilinks/categories — see
+                 DATASET.md). Derive edges: shared tags/entities
                  (overlap-weighted) + embedding-kNN SIMILAR_TO. OPTIONAL:
-                 one-time offline Wikipedia API call per page_url to fetch
+                 one-time offline Wikipedia API call per page_url for
                  real categories/links as ground-truth deterministic edges.
-7. CANONICALIZE  Each candidate tag → L1 hash → L2 embedding synonymy gate
-                 (Section 3). Link or merge. Update doc_frequency.
-8. EMBED         Summary embedding (primary). Tag/entity-string embeddings
-                 (for synonymy/linking).
-9. WRITE GRAPH   Create ObjectNode; create/link EntityNodes & TagNodes;
-                 insert edges with {provenance, confidence}, both directions.
-                 Gate each LLM-inferred edge (A-MEM LLM link gate / CoL filter).
-10. CACHE        Store hash → node id.
+6. CANONICALIZE  Each candidate tag → L1 hash → L2 embedding synonymy gate
+                 (§3), with an entropy guard so short/common tags ("AI","US")
+                 aren't wrongly merged (graphiti). Ambiguous-only → LLM
+                 ADD/UPDATE/MERGE/NOOP tie-breaker (mem0). Update doc_frequency.
+7. EMBED         Raw object-text embedding (primary; lead section if long).
+                 Tag/entity-string embeddings (synonymy/linking). Images:
+                 embed the VLM description line.
+8. WRITE GRAPH   Create ObjectNode (created_at, last_modified, valid=true);
+                 create/link EntityNodes & TagNodes with provenance pointers;
+                 insert edges with {provenance, confidence, relation∈enum},
+                 both directions. Gate each LLM-inferred edge (A-MEM/CoL filter).
+9. CACHE         Store hash → node id.
 ```
 
-(Defer A-MEM-style "memory evolution" rewrites of neighbors — it's O(k) LLM calls per insert and causes non-deterministic drift. Use batch L3 reconciliation instead.)
+Run ingestion under a **bounded-concurrency semaphore** (graphiti's `SEMAPHORE_LIMIT`) — the per-object Haiku calls fan out, so cap parallelism to avoid 429s.
+
+(Defer A-MEM-style "memory evolution" rewrites of neighbors — it's O(k) LLM calls per insert and causes non-deterministic drift. Use batch L3 reconciliation instead. The mem0 tie-breaker in step 6 is the *selective* alternative — only on ambiguous merges, not every write.)
 
 ### Test corpus & harness
 
-- **Corpus:** ~100 deduped page nodes from **`wikimedia/wit_base`** (HF, streamed) — each with text (page summary + section context) and an embedded image, CC BY-SA 4.0. Frozen + reproducible, bytes-in-hand, no scraping. **Tradeoff:** image-anchored (not full-article) text and **no free hyperlink/category edges** — edges are derived (shared tags/entities + embedding kNN), with optional offline Wikipedia-API enrichment per `page_url` for ground-truth edges. Full rationale, loader, and caveats in [DATASET.md](DATASET.md).
+- **Corpus (decoupled, rev):** **100 full Wikipedia articles** (`wikimedia/wikipedia` `20231101.en`, streamed, seed 42) **+ 100 random COCO photos** (`detection-datasets/coco`), text and images **not paired**. Already built on disk in `dataset/` via `scripts/build_dataset.py` (reproducible). **No free hyperlink/category edges** — edges are derived (shared tags/entities + embedding kNN), with optional offline Wikipedia-API enrichment for ground-truth edges. Full rationale, loader, caveats in [DATASET.md](DATASET.md).
 - **Eval, two tiers:**
   1. **Retrieval correctness (objective):** author ~30-50 questions — a mix of single-article, multi-hop cross-article, and 2-3 global/theme questions. For multi-hop, you know the ground-truth article set, so measure **recall@k of the retrieved subgraph**. Reuse GraphRAG's **Claimify claim-extraction + clustering** for comprehensiveness/diversity if you want rigor.
   2. **Answer quality (subjective):** **LLM-as-judge head-to-head** on comprehensiveness/diversity/empowerment with a **directness control** to catch verbosity bias (GraphRAG's exact protocol — directly reusable).
-- **Baselines to beat:** (a) flat chunk-embedding RAG, (b) summary-embedding top-k with no graph. Showing the graph/PPR path wins on multi-hop is the whole thesis.
+- **Baselines to beat:** (a) flat chunk-embedding RAG, (b) raw-text-embedding top-k with no graph. Showing the graph/PPR path wins on multi-hop is the whole thesis.
 - **Ablations worth running:** PPR vs. naive 1-hop expansion (HippoRAG predicts PPR wins); with vs. without `HYPERLINKS_TO` deterministic edges; with vs. without node-specificity reweighting.
 
 ---
@@ -249,23 +271,23 @@ Justification for a solo prototype at ~100 nodes (low thousands of nodes/edges):
 Each milestone is independently shippable and demoable.
 
 **Phase 0 — Skeleton + ingestion (MVP-of-MVP).**
-- `wit_base` loader (stream ~100 page nodes: text + embedded image → `corpus/`). See [DATASET.md](DATASET.md).
+- Load corpus from `dataset/` (100 article texts + 100 images, decoupled — see [DATASET.md](DATASET.md)). *(Done: `scripts/build_dataset.py`.)*
 - SHA256 cache. NetworkX graph + SQLite (metadata) + NumPy cosine (vectors).
-- Claude Haiku 4.5 summarize (vision for the image) → extract entities/tags (single pass, no gleaning yet).
-- L1 hash normalization only. Write ObjectNodes + TagNodes + `TAGGED_AS` + derived `SHARED_TAG` edges.
-- **Ship:** "ingest 100 nodes, dump the graph, eyeball it in a notebook."
+- Claude Haiku 4.5 **structured-output extraction directly from raw content** (no summary; rev 2): typed `{entities[], tags[], relations∈enum[]}` in one call (+ vision call for images → tags + description). Provenance back-pointers.
+- L1 hash normalization only. Write ObjectNodes (with `created_at`/`last_modified`/`valid`) + TagNodes + `TAGGED_AS` + derived `SHARED_TAG` edges. Bounded-concurrency semaphore.
+- **Ship:** "ingest 200 nodes, dump the graph, eyeball it in a notebook."
 
 **Phase 1 — Drift control + edges.**
-- L2 embedding synonymy gate (`SIMILAR_TO`). Node specificity (IDF).
-- Typed `RELATED_TO` extraction with `{provenance, confidence}`; LLM link gate on inferred edges.
-- Gleaning second-pass for recall.
-- **Ship:** "tags no longer drift; edges carry confidence."
+- L2 embedding synonymy gate (`SIMILAR_TO`) **+ entropy guard** for short/common tags. Node specificity (IDF).
+- Typed (enum) relation extraction with `{provenance, confidence}`; LLM link gate on inferred edges; **reflexion pass** for recall.
+- **Selective LLM tie-breaker** (ADD/UPDATE/MERGE/NOOP) only on ambiguous merges. **Soft-invalidation** (`valid`/`superseded_by`) on re-ingest.
+- **Ship:** "tags no longer drift; edges carry confidence; re-ingest supersedes cleanly."
 
 **Phase 2 — Embeddings + retrieval (the core thesis).**
-- Summary embeddings as the seed index; tag/entity embeddings for linking.
-- **PPR seed-and-spread retriever** (Path A): query → embed → seed → personalized PageRank → minimal subgraph → LLM answers.
+- Raw object-text embeddings as the seed index; tag/entity embeddings for linking. **BM25 keyword index** as a parallel seed signal.
+- **PPR seed-and-spread retriever** (Path A) **+ MMR/node-distance reranking** — but make it pluggable and **A/B against plain BFS** to justify PPR at 200 nodes (rev 2).
 - "Seen" flag + bulk-clear wired into an optional BFS/LLM-walk debug path.
-- **Ship:** "ask multi-hop questions, get cross-article answers."
+- **Ship:** "ask multi-hop questions, get cross-article answers — with numbers comparing PPR vs BFS."
 
 **Phase 3 — Communities + breadth queries.**
 - Leiden (graspologic, **not** Louvain — connectivity guarantee) over the tag/entity graph. CommunityNodes + precomputed community summaries.
@@ -288,9 +310,9 @@ Each milestone is independently shippable and demoable.
 
 2. **Does PPR actually beat LLM-walking on YOUR corpus?** HippoRAG's gains were largest on *entity-centric* data (2WikiMultiHop) and weaker on HotpotQA's "concept-context tradeoff." Wikipedia is mixed. This is the central empirical bet — the Phase 4 ablation answers it. If PPR underperforms, fall back to RAPTOR-style collapsed-tree flat retrieval before reaching for expensive LLM traversal.
 
-3. **Image semantics ceiling.** Every image's value is capped by the VLM caption quality (RAPTOR). Wikipedia images are often decorative/captioned-already. *Open question:* are images even worth ingesting as full nodes, or just as attributes on their article's ObjectNode? Cheap experiment: try both, measure if image nodes ever appear in correct retrieval subgraphs.
+3. **Image semantics ceiling.** Every image's value is capped by the VLM description quality (RAPTOR). The corpus is now **decoupled** — 100 standalone COCO photos, not article-attached — so images are independent ObjectNodes whose only handle is the VLM's tags + one-line description. *Open question:* do these image nodes connect into the same graph as the text nodes via shared tags (e.g. a "dog" photo linking to a dog article), or do they form an isolated island? Cheap experiment: check whether image nodes ever appear in correct cross-modal retrieval subgraphs; if not, the image path is a separate demo, not integrated memory.
 
-4. **Extraction quality on long articles** is the dominant error source (HippoRAG, Chain-of-Layer's ~80-entity ceiling). Wikipedia articles are long. *Mitigation:* extract from the *summary* not raw text (already planned), use gleaning, and possibly section-wise summarization for very long articles.
+4. **Extraction quality on long articles** is the dominant error source (HippoRAG, Chain-of-Layer's ~80-entity ceiling). Wikipedia articles are long. *Mitigation (rev 2 — no summary):* extract directly from raw text with a reflexion pass; for very long docs, extract section-by-section (per-section extract, union the tags) rather than truncating. This replaces the old "extract from the summary" mitigation.
 
 5. **Hallucinated `INFERRED` edges** persist as "facts" in a stored graph (RAPTOR: ~4% build-time hallucination *ossifies*). Confidence tags *surface* but don't *fix* this, and you have no human-review loop (Graphify's AMBIGUOUS assumes one). *Decision:* set a confidence floor below which inferred edges are dropped, or stored-but-excluded-from-traversal.
 
@@ -299,3 +321,28 @@ Each milestone is independently shippable and demoable.
 7. **Determinism.** Leiden is stochastic (seed-dependent cluster IDs). Pin the seed if you need reproducible community IDs across runs.
 
 **Things the literature does *not* cover (you own them):** all multimodal/image handling (every paper except Graphify is text-only), incremental updates for most methods, and concurrent/scalable storage. These are extensions, not solved problems you can lift.
+
+---
+
+## 10. Refinements from production frameworks (cognee · mem0 · graphiti)
+
+Three production memory frameworks were reviewed *after* the original paper-based design — full analysis in [FRAMEWORKS.md](FRAMEWORKS.md). They **confirmed the foundation** (local NetworkX+SQLite+local-embeddings stack, summarize-or-text-first→tags, layered cheap-first dedup, append+batch-reconcile over per-write mutation, no-LLM-at-query-time retrieval). They did **not** change the architecture — they refined three stages. **Build-vs-borrow verdict: keep building on NetworkX, borrow patterns, vendor none** — NetworkX uniquely gives free PPR (none of the three implement it), every borrowed idea is a ~10–50 line pattern not a subsystem, and mem0 v3 itself *removed* its graph as questionable ROI.
+
+**Adopted (folded into §2/§4/§5/§6/§8 above):**
+
+| Refinement | Stage | Source | Effort |
+|---|---|---|---|
+| Structured-output extraction (typed `Node[]/Edge[]`, not free-text parse) | extraction §6.4 | cognee | cheap |
+| Fixed relation-type enum (no free-form relations) | graph model §2 | cognee/graphiti | cheap |
+| Provenance back-pointer (tag/edge → source node) | graph model §2 | graphiti | cheap |
+| Reflexion self-critique pass after extraction | extraction §6.4 | graphiti | cheap |
+| Entropy guard so short/common tags aren't mis-merged | dedup §6.6 | graphiti | cheap |
+| `valid`/`superseded_by` soft-invalidation + `created_at`/`last_modified` | graph model §2 | graphiti/mem0 | cheap |
+| Per-node/edge `confidence` for trust-filtered retrieval | graph model §2 | cognee | cheap |
+| Bounded-concurrency semaphore during ingest | pipeline §6 | graphiti | cheap |
+| Selective LLM tie-breaker (ADD/UPDATE/MERGE/NOOP) on ambiguous merges only | dedup §6.6 | mem0 | medium |
+| BM25 keyword seed fused with embedding seed | retrieval §5 | graphiti/mem0 v3 | medium |
+| MMR + node-distance reranking on PPR scores | retrieval §5 | graphiti | medium |
+| PPR as one *comparable* mode, A/B vs BFS (prove it at 200 nodes) | retrieval §5 | all three (none use PPR) | medium |
+
+**Explicitly NOT adopted:** cognee's full RDF/OWL ontology engine and DataPoint "type-hints become edges" magic (schema rigidity, real maintenance — take the confidence flag + constrained relations instead); mem0's per-write LLM reconciliation as the default (expensive; mem0 removed it in v3 — selective tie-breaker only); hard-delete on LLM-judged contradiction (always soft-invalidate); graphiti's full bi-temporal quad + LLM date-parsing (unjustified for a stable snapshot — take the soft-invalidation flag, not the quad); a server graph DB (Neo4j/FalkorDB) — loses free PPR; `difflib`-fuzzy in place of embedding synonymy (weaker). Borrow patterns, not dependency weight.

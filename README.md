@@ -28,6 +28,8 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
   embeddings, traversal/retrieval, ingestion pipeline, storage choice, phased build plan.
 - [docs/LITERATURE.md](docs/LITERATURE.md) — per-source notes (GraphRAG, HippoRAG, RAPTOR,
   A-MEM, Graphify, TnT-LLM, Chain-of-Layer, TaxoGen, TaxoCom, Leiden).
+- [docs/FRAMEWORKS.md](docs/FRAMEWORKS.md) — review of production memory frameworks
+  (cognee, mem0, graphiti): where they confirm the design, what to adopt, and a build-vs-borrow call.
 
 ## Core design bets (from the literature)
 
