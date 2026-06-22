@@ -9,8 +9,21 @@ similarity alone. Embeddings exist mainly as an **entry-point index** to find se
 
 ## Status
 
-Early — design locked, no code yet. The design is grounded in a literature review of 10
-GraphRAG / graph-retrieval / taxonomy-induction sources — see the docs below.
+**MVP built** — the `kg/` package implements the design end-to-end (ingestion → typed
+bidirectional graph → 2-path retrieval → communities → eval). It runs fully offline by
+default (pluggable backends fall back when no API key / model is present) and upgrades to
+Claude Haiku 4.5 + `bge-small` embeddings when they are. See [docs/MVP.md](docs/MVP.md)
+for the feature→design map, run commands, and the thesis-validating eval results. The
+design is grounded in a literature review of 10 GraphRAG / graph-retrieval /
+taxonomy-induction sources — see the docs below.
+
+```bash
+pip install -r requirements.txt
+python -m kg ingest --reset && python -m kg communities
+python -m kg query "what are the main themes across the collection"
+python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector
+python -m pytest -q
+```
 
 ## Decided stack
 

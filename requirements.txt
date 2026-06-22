@@ -1,0 +1,16 @@
+# Core graph + retrieval
+networkx>=3.6          # graph store, PageRank, BFS, communities
+numpy>=2.0            # brute-force cosine vector index
+rank-bm25>=0.2.2      # BM25 lexical seed signal
+scikit-learn>=1.5     # cosine helpers / label-propagation fallbacks
+
+# LLM pipeline (optional at runtime — falls back to offline heuristics)
+anthropic>=0.40       # Claude Haiku 4.5 structured-output extraction + vision
+
+# Local embeddings (optional at runtime — falls back to a hashing embedder)
+sentence-transformers>=5.0  # BAAI/bge-small-en-v1.5
+torch>=2.6
+
+# Corpus building (already run; see scripts/build_dataset.py)
+datasets>=2.18
+pillow>=10

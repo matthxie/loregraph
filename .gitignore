@@ -12,3 +12,8 @@ __pycache__/
 
 # Test corpus is committed (frozen copy) — regenerable via scripts/build_dataset.py.
 # Note: CC BY-SA content (Wikipedia text + COCO images); keep attribution.
+
+# Generated graph store
+store/
+*.db
+.pytest_cache/
