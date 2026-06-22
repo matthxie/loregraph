@@ -15,7 +15,9 @@ specificity / inverse document frequency (HippoRAG).
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
 from collections import Counter
 
@@ -38,6 +40,89 @@ _REL_SEP = re.compile(r"[\s\-]+")
 _REL_FUNCTION_WORDS = frozenset(
     "is are am was were be been being a an the of with to from in on at for as "
     "that who whom which into onto and".split())
+
+
+# Opposite content lemmas (compared AFTER relation_content_key, so already function-
+# word-stripped + singularized) that the L3 tie-breaker must NEVER merge, even though
+# they sit close in embedding space — the exact hazard resolve_relation's merge-only
+# 0.95 bar exists to avoid. Symmetric pairs.
+_ANTONYM_LEMMAS = (
+    frozenset({"friend", "enemy"}), frozenset({"ally", "enemy"}),
+    frozenset({"ally", "rival"}), frozenset({"parent", "child"}),
+    frozenset({"ancestor", "descendant"}), frozenset({"predecessor", "successor"}),
+    frozenset({"buyer", "seller"}), frozenset({"teacher", "student"}),
+    frozenset({"employer", "employee"}), frozenset({"leader", "follower"}),
+    frozenset({"owner", "owned"}), frozenset({"love", "hate"}),
+)
+
+
+def relation_merge_vetoed(a: str, b: str) -> bool:
+    """Deterministic guard run BEFORE any relation pair reaches the L3 LLM: force the
+    two predicates to stay DISTINCT (never even offered as a merge option) when they are
+    passive/inverse voices or known opposites. This guarantees a model slip can't produce
+    a wrong relation merge — the whole reason resolve_relation is merge-only-no-link."""
+    na, nb = normalize_relation(a), normalize_relation(b)
+    if not na or not nb:
+        return True
+    # passive/inverse asymmetry: exactly one side carries the "_by" direction marker
+    if na.endswith("_by") != nb.endswith("_by"):
+        return True
+    ka = set(relation_content_key(a).split("_"))
+    kb = set(relation_content_key(b).split("_"))
+    for pair in _ANTONYM_LEMMAS:
+        ia, ib = pair & ka, pair & kb
+        if ia and ib and ia != ib:
+            return True
+    return False
+
+
+# --- L3 adjudication prompts (only used when config.l3_enabled and a key is present) ---
+_L3_SYS = (
+    "You are a careful knowledge-graph curator. Decide whether a NEW label is the SAME "
+    "as one of a few EXISTING canonical labels, or genuinely new. The golden rule is "
+    "UNDER-MERGE: when in doubt, answer NEW. A wrong merge corrupts the graph and is hard "
+    "to undo; keeping two near-synonyms separate is cheap and recoverable. Reply with ONLY "
+    "a JSON object and nothing else."
+)
+_L3_REL_PROMPT = (
+    "Decide whether this NEW relationship predicate means the SAME directed relationship "
+    "as one of the existing canonical predicates.\n\n"
+    "MERGE only true synonyms of the same directed relationship (e.g. works_with ≈ "
+    "collaborates_with; founded ≈ established; located_in ≈ situated_in).\n"
+    "Answer NEW if it is merely related, narrower, or broader (e.g. manages vs leads; "
+    "works_with vs reports_to).\n\n"
+    "NEW predicate: {surface}\n"
+    "Existing canonical predicates (most distinctive first):\n{candidates}\n\n"
+    'Reply: {{"verdict": "<existing id from the list, or NEW>", "reason": "<one short clause>"}}'
+)
+_L3_ENT_PROMPT = (
+    "Decide whether this NEW name refers to the SAME real-world {kind} as one of the "
+    "existing canonical {kind}s.\n\n"
+    "MERGE only clear aliases of one and the same thing (e.g. USA ≈ United States of "
+    "America; NLP ≈ natural language processing).\n"
+    "Answer NEW for things that merely share a word, an acronym, or a surname, and for a "
+    "specific instance vs a broader category (e.g. Apple Inc. vs apple the fruit; Paris, "
+    "Texas vs Paris, France).\n\n"
+    "NEW {kind}: {surface}\n"
+    "Existing canonical {kind}s (most distinctive first):\n{candidates}\n\n"
+    'Reply: {{"verdict": "<existing id from the list, or NEW>", "reason": "<one short clause>"}}'
+)
+
+_L3_UNSET = object()
+
+
+def _extract_json(text: str) -> dict | None:
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    m = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 def _singularize(w: str) -> str:
@@ -114,6 +199,8 @@ class Canonicalizer:
         self._relation_keys: dict[str, str] = {}  # normalized key -> relation-tag id
         self._emb_cache: dict[str, np.ndarray] = {}  # surface -> embedding (batch primed)
         self._next = Counter()
+        self._l3_client = _L3_UNSET                   # lazy anthropic client (L3 tie-breaker)
+        self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
         self._reindex()
 
     def prime_embeddings(self, surfaces: list[str]) -> None:
@@ -181,6 +268,67 @@ class Canonicalizer:
         return (len(key) >= self.config.entropy_min_chars
                 and char_entropy(key) >= self.config.entropy_min_bits)
 
+    # ------------------------------------------------------------ L3 tie-breaker
+    def _l3(self):
+        """Lazy anthropic client for the L3 adjudicator, or None if disabled / no key
+        (offline parity: with no key the whole L3 path is skipped and resolve_* keep
+        their deterministic under-merge default)."""
+        if not self.config.l3_enabled:
+            return None
+        if self._l3_client is _L3_UNSET:
+            self._l3_client = None
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                try:
+                    import anthropic
+                    self._l3_client = anthropic.Anthropic()
+                except Exception:  # noqa: BLE001 — missing dep / bad env → stay disabled
+                    self._l3_client = None
+        return self._l3_client
+
+    def _node_name(self, node_id: str) -> str:
+        n = self.store.get_node(node_id)
+        return n.name if n else node_id
+
+    def _l3_adjudicate(self, kind: str, surface: str,
+                       cands: list[tuple[str, float]]) -> str | None:
+        """Ask the LLM whether `surface` MERGEs into one of the gray-band candidates.
+        Returns an existing node id to merge into, or None (mint a new node — the safe
+        under-merge default on any uncertainty, parse failure, or error)."""
+        client = self._l3()
+        if client is None or not cands:
+            return None
+        # IDF-rank so the most discriminative existing labels sit at the primacy
+        # position (fights lost-in-the-middle); cap at 5.
+        cands = sorted(cands, key=lambda c: self.idf_weight(c[0]), reverse=True)[:5]
+        ids = {cid for cid, _ in cands}
+        lines = "\n".join(f"  [{cid}] {self._node_name(cid)}" for cid, _ in cands)
+        if kind == "relation":
+            prompt = _L3_REL_PROMPT.format(surface=normalize_relation(surface), candidates=lines)
+        else:
+            prompt = _L3_ENT_PROMPT.format(kind=kind, surface=surface, candidates=lines)
+        verdict, reason = "NEW", ""
+        try:
+            msg = client.messages.create(
+                model=self.config.l3_model, max_tokens=300, temperature=0,
+                system=_L3_SYS, messages=[{"role": "user", "content": prompt}])
+            text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
+            data = _extract_json(text) or {}
+            verdict = str(data.get("verdict", "NEW")).strip()
+            reason = str(data.get("reason", ""))[:200]
+        except Exception as e:  # noqa: BLE001 — any failure → under-merge (NEW)
+            verdict, reason = "NEW", f"error: {e!r}"
+        chosen = verdict if verdict in ids else None
+        self.l3_log.append({"kind": kind, "surface": surface,
+                            "candidates": [(cid, round(s, 3)) for cid, s in cands],
+                            "verdict": chosen or "NEW", "reason": reason})
+        return chosen
+
+    def _l3_relation(self, surface: str, hits: list[tuple[str, float]]) -> str | None:
+        """Gray-band relation candidates, minus any vetoed inverse/antonym pair."""
+        cands = [(cid, s) for cid, s in hits
+                 if not relation_merge_vetoed(surface, self._node_name(cid))]
+        return self._l3_adjudicate("relation", surface, cands)
+
     # -------------------------------------------------------------------- tags
     def resolve_tag(self, surface: str) -> str | None:
         surface = (surface or "").strip()
@@ -198,10 +346,17 @@ class Canonicalizer:
         # single global cosine threshold; TaxoCom's local-neighborhood thresholding
         # (§3) is an accepted MVP simplification at ~1k tags.
         if self._entropy_ok(surface):
-            hits = self.store.vectors.search("tag", vec, k=1,
-                                            floor=self.config.syn_merge_threshold)
-            if hits:
+            hits = self.store.vectors.search("tag", vec, k=5,
+                                            floor=self.config.syn_link_threshold)
+            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
                 tid = hits[0][0]
+                self._add_alias(tid, surface)
+                self._tag_keys[key] = tid
+                return tid
+            # L3: gray band [syn_link, syn_merge) → ask the LLM merge-or-new (no-op if disabled)
+            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
+            tid = self._l3_adjudicate("tag", surface, gray)
+            if tid:
                 self._add_alias(tid, surface)
                 self._tag_keys[key] = tid
                 return tid
@@ -231,10 +386,15 @@ class Canonicalizer:
             return self._entity_keys[key]
         vec = self._embed(name)
         if self._entropy_ok(name):
-            hits = self.store.vectors.search("entity", vec, k=1,
-                                            floor=self.config.syn_merge_threshold)
-            if hits:
+            hits = self.store.vectors.search("entity", vec, k=5,
+                                            floor=self.config.syn_link_threshold)
+            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
                 eid = hits[0][0]
+                self._entity_keys[key] = eid
+                return eid
+            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
+            eid = self._l3_adjudicate("entity", name, gray)
+            if eid:
                 self._entity_keys[key] = eid
                 return eid
         eid = self._new_id("entity")
@@ -279,10 +439,18 @@ class Canonicalizer:
             return rid
         vec = self._embed(surface)
         if self._entropy_ok(surface):                  # L2 high-bar merge only
-            hits = self.store.vectors.search("relation", vec, k=1,
-                                            floor=self.config.rel_syn_merge_threshold)
-            if hits:
+            hits = self.store.vectors.search("relation", vec, k=5,
+                                            floor=self.config.rel_gray_floor)
+            if hits and hits[0][1] >= self.config.rel_syn_merge_threshold:  # L2 hard merge
                 rid = hits[0][0]
+                self._add_relation_alias(rid, display)
+                self._relation_keys[key] = rid
+                return rid
+            # L3: gray band [rel_gray_floor, rel_syn_merge_threshold), AFTER the
+            # deterministic antonym/inverse/passive veto (no-op if L3 disabled)
+            gray = [(c, s) for c, s in hits if s < self.config.rel_syn_merge_threshold]
+            rid = self._l3_relation(surface, gray)
+            if rid:
                 self._add_relation_alias(rid, display)
                 self._relation_keys[key] = rid
                 return rid

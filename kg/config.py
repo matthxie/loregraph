@@ -40,6 +40,19 @@ class Config:
     rel_syn_merge_threshold: float = 0.95
     max_relation_labels: int = 3      # cap labels carried by one connection
 
+    # ---- L3 selective LLM canonicalization tie-breaker (§3 L3 — SHIP DISABLED) ----
+    # Fires ONLY on the residual ambiguous band the deterministic L1/L2 tiers can't
+    # confidently resolve, and (for relations) ONLY behind the deterministic antonym/
+    # inverse/passive veto in canonicalize.py. Decided INSIDE resolve_* before a node is
+    # minted (sequential, main-thread), so a MERGE just returns the existing id — no
+    # provisional node, no edge rewrite. Default OFF and auto-skipped with no
+    # ANTHROPIC_API_KEY, so the offline path is byte-for-byte unchanged. Enable only
+    # after `python -m kg eval-canon` shows zero antonym/inverse false-merges. See CLAUDE.md.
+    l3_enabled: bool = False
+    l3_model: str = "claude-haiku-4-5-20251001"  # pinned adjudicator model (temperature=0)
+    rel_gray_floor: float = 0.90      # relation gray band = [rel_gray_floor, rel_syn_merge_threshold)
+    # entity/tag gray band reuses [syn_link_threshold, syn_merge_threshold) = [0.85, 0.93)
+
     # ---- derived edges (§2 / §6.5) ------------------------------------------
     object_knn_k: int = 6             # SIMILAR_TO neighbours per object
     object_knn_floor: float = 0.55    # min cosine for an object↔object SIMILAR_TO edge
