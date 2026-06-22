@@ -1,0 +1,2 @@
+Technology
+OPUS 3.x was written in PHP 4. The current version, OPUS 4, is developed in PHP (version 5.3) and is based on the Zend Framework and the search engine Solr. Data are stored in a MySQL database. Both versions are designed for LAMP environments.

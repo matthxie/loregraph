@@ -1,0 +1,8 @@
+Functionality
+ OPUS is a simple repository system for various types of objects and formats. These can be deposited, managed and provided with descriptive information (metadata) via a web interface. The objects themselves are not processed on the server side except for full-text search. Metadata can be harvested by different search engines (e.g OAI service providers, Google Scholar, WorldCat).
+ OPUS supports Uniform Resource Names (URN) for persistent identification of objects.
+ OPUS has a license module; various types of licenses (Digital Peer Publishing, Creative Commons, etc.) can be set up.
+ OPUS supports OAI-PMH 2.0 protocol.
+ OPUS supports XmetaDiss, the metadata set of the German National Library for online dissertations and post-doctoral theses.
+ OPUS supports XmetaDissPlus, the metadata set of the Library Service Center Baden-Württemberg for online dissertations and post-doctoral theses
+ OPUS uses checksums to ensure data integrity

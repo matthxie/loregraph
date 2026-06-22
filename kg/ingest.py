@@ -171,7 +171,10 @@ class Ingestor:
     # ------------------------------------------------------------------- write
     def _write_object(self, item: CorpusItem, h: str, obj_id: str,
                       supersedes: str | None, ext: Extraction, vec) -> None:
-        ts = now_iso()
+        # honour the corpus item's own time (mixed temporal stream) so the node's
+        # created_at/last_modified reflect the synthetic timeline; fall back to the
+        # wall clock for sources that don't carry a timestamp.
+        ts = item.created_at or now_iso()
         modality = Modality.IMAGE if item.modality == "image" else Modality.TEXT
         raw = None if item.modality == "image" else item.text
         node = object_node(obj_id, modality=modality, source_ref=item.source_ref,

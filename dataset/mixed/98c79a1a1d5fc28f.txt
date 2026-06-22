@@ -1,0 +1,2 @@
+Character encodings of Jha
+Most Indic scripts are encoded in the Unicode Standard, and as such the letter Jha in those scripts can be represented in plain text with unique codepoint. Jha from several modern-use scripts can also be found in legacy encodings, such as ISCII.

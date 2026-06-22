@@ -16,7 +16,7 @@ import json
 import os
 
 from .config import Config
-from .corpus import load_articles, load_images
+from .corpus import load_articles, load_images, load_mixed
 from .graph import KnowledgeGraph
 
 DEFAULT_STORE = os.path.join("store", "kg.db")
@@ -45,10 +45,14 @@ def cmd_ingest(args):
         os.remove(args.store)
     g = _open(args)
     items = []
-    if not args.no_text:
-        items += load_articles(limit=args.n_text)
-    if not args.no_images:
-        items += load_images(limit=args.n_image)
+    if args.mixed:
+        # per-paragraph temporal stream: each item carries its own created_at
+        items = load_mixed(limit=args.limit)
+    else:
+        if not args.no_text:
+            items += load_articles(limit=args.n_text)
+        if not args.no_images:
+            items += load_images(limit=args.n_image)
     print(f"ingesting {len(items)} items into {args.store} ...")
     report = g.ingest(items)
     print(report)
@@ -192,6 +196,11 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--n-image", type=int, default=None)
     pi.add_argument("--no-text", action="store_true")
     pi.add_argument("--no-images", action="store_true")
+    pi.add_argument("--mixed", action="store_true",
+                    help="ingest the per-paragraph temporal stream from dataset/mixed/ "
+                         "(each item carries its own created_at)")
+    pi.add_argument("--limit", type=int, default=None,
+                    help="cap the number of items when using --mixed")
     pi.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
     pi.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
     pi.add_argument("--model", default=None,

@@ -1,0 +1,28 @@
+Ligature conjuncts of झ
+True ligatures are quite rare in Indic scripts. The most common ligated conjuncts in Devanagari are in the form of a slight mutation to fit in context or as a consistent variant form appended to the adjacent characters. Those variants include Na and the Repha and Rakar forms of Ra. Nepali and Marathi texts use the "eyelash" Ra half form  for an initial "R" instead of repha.
+ Repha र् (r) + झ (jʰa) gives the ligature rjʰa र्झ:
+Eyelash र् (r) + झ (jʰa) gives the ligature rjʰa र्‍झ:
+झ् (jʰ) + rakar र (ra) gives the ligature jʰra झ्र:
+झ् (jʰ) + न (na) gives the ligature jʰna झ्न:
+Stacked conjuncts of झ
+Vertically stacked ligatures are the most common conjunct forms found in Devanagari text. Although the constituent characters may need to be stretched and moved slightly in order to stack neatly, stacked conjuncts can be broken down into recognizable base letters, or a letter and an otherwise standard ligature.
+ छ্ (cʰ) + झ (jʰa) gives the ligature cʰjʰa:
+ढ্ (ḍʱ) + झ (jʰa) gives the ligature ḍʱjʰa:
+ड্ (ḍ) + झ (jʰa) gives the ligature ḍjʰa:
+द্ (d) + झ (jʰa) gives the ligature djʰa:
+झ্ (jʰ) + ब (ba) gives the ligature jʰba:
+झ্ (jʰ) + च (ca) gives the ligature jʰca:
+झ্ (jʰ) + ड (ḍa) gives the ligature jʰḍa:
+झ্ (jʰ) + ज (ja) gives the ligature jʰja:
+झ্ (jʰ) + ज্ (j) + ञ (ña) gives the ligature jʰjña:
+झ্ (jʰ) + ल (la) gives the ligature jʰla:
+झ্ (jʰ) + ङ (ŋa) gives the ligature jʰŋa:
+झ্ (jʰ) + ञ (ña) gives the ligature jʰña:
+झ্ (jʰ) + व (va) gives the ligature jʰva:
+ख্ (kʰ) + झ (jʰa) gives the ligature kʰjʰa:
+ङ্ (ŋ) + झ (jʰa) gives the ligature ŋjʰa:
+ठ্ (ṭʰ) + झ (jʰa) gives the ligature ṭʰjʰa:
+ट্ (ṭ) + झ (jʰa) gives the ligature ṭjʰa:
+Bengali script
+The Bengali script ঝ is derived from the Siddhaṃ , and is marked by a similar horizontal head line, but less geometric shape, than its Devanagari counterpart, झ. The inherent vowel of Bengali consonant letters is /ɔ/, so the bare letter ঝ will sometimes be transliterated as "jho" instead of "jha". Adding okar, the "o" vowel mark, gives a reading of /d͡ʒʱo/.
+Like all Indic consonants, ঝ can be modified by marks to indicate another (or no) vowel than its inherent "a".

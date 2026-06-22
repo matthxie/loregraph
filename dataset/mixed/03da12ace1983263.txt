@@ -1,0 +1,11 @@
+Āryabhaṭa numeration
+Aryabhata used Devanagari letters for numbers, very similar to the Greek numerals, even after the invention of Indian numerals. The values of the different forms of झ are: 
+झ  = 9 (९)
+झि  = 900 (९००)
+झु  = 90,000 (९० ०००)
+झृ  = 9,000,000 (९० ०० ०००)
+झॢ  = 9 (९×८०८)
+झे  = 9 (९×८०१०)
+झै  = 9 (९×८०१२)
+झो  = 9 (९×८०१४)
+झौ  = 9 (९×८०१६)

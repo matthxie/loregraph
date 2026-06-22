@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Secrets — real key lives here, never commit it (see .env.example for the template)
+.env
+
 # Python
 .venv/
 __pycache__/
