@@ -181,14 +181,45 @@ def _parse_tool_payload(payload: dict) -> Extraction:
 class HaikuExtractor:
     name = "haiku"
 
+    # The system prompt + GRAPH_TOOL are kept STATIC and BLIND (no live graph
+    # vocabulary is ever injected) — extraction never diffs against existing state;
+    # that is a separate downstream concern (canonicalize.py + the L3 tie-breaker).
+    # The predicate list below is a FROZEN soft hint, not the growing vocabulary.
+    # (No cache_control is set: the prefix is ~1K tokens, under Haiku 4.5's 4096-token
+    # minimum cacheable prefix, so it would silently no-op today. Keeping it static
+    # makes it cache-eligible if it ever grows past that minimum — e.g. with few-shots.)
     _SYS = (
-        "You extract a knowledge graph from content. Identify the salient named "
-        "entities (with a type), 5-12 lowercase topical tags, and the key DIRECTED "
-        "relationships between entities. For each relationship give 1-3 short "
-        "lowercase labels read source→target (e.g. 'founded', 'works_with', "
-        "'member_of', 'located_in', 'parent_of'); order matters, so pick source and "
-        "target so the labels read correctly. Use natural predicate names — do not "
-        "force a fixed vocabulary; similar labels are consolidated automatically. "
+        "You extract a knowledge graph from a single piece of content. Work in this order.\n\n"
+        "1) ENTITIES. List the salient, nameable entities, each with a type:\n"
+        "   - person  — an individual human (e.g. Marie Curie)\n"
+        "   - place   — a geographic location (e.g. Paris, the Pacific Ocean)\n"
+        "   - org     — an organisation, company, institution, team, or group\n"
+        "   - concept — an idea, field, method, material, or abstract thing (e.g. radioactivity)\n"
+        "   - work    — a named created work (book, film, song, paper, artwork, product)\n"
+        "   - event   — a time-bounded happening (a war, election, discovery, ceremony)\n"
+        "   - other   — a real entity that fits none of the above\n"
+        "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
+        "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
+        "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
+        "(themes, not entities).\n\n"
+        "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
+        "   - Both source and target MUST be entities from step 1, using the EXACT SAME "
+        "surface string you wrote there. Never relate something you did not name.\n"
+        "   - Each relationship has 1-3 short lowercase labels that read SOURCE then TARGET. "
+        "Order matters. Example: Marie Curie discovered polonium → source \"Marie Curie\", "
+        "target \"polonium\", label \"discovered\" (NOT the reverse).\n"
+        "   - Keep voice as written: \"X founded by Y\" may be source \"Y\" target \"X\" label "
+        "\"founded\", OR source \"X\" target \"Y\" label \"founded_by\" — but never silently flip "
+        "a label's voice. \"founded\" and \"founded_by\" are different and both are fine.\n"
+        "   - For a mutually symmetric relationship (works_with, married_to, sibling_of) emit "
+        "it once, in one direction only.\n"
+        "   - Use natural predicate names. Prefer one of these common forms when it genuinely "
+        "fits, otherwise coin your own short lowercase predicate — this list is a HINT, NOT a "
+        "fixed vocabulary: founded, founded_by, works_with, member_of, located_in, part_of, "
+        "parent_of, child_of, created, created_by, discovered, employed_by, succeeded_by, "
+        "influenced_by. Similar labels are consolidated automatically downstream, so do not "
+        "try to match any canonical form yourself.\n"
+        "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "Call emit_graph exactly once."
     )
 
@@ -201,6 +232,10 @@ class HaikuExtractor:
         msg = self.client.messages.create(
             model=self.config.llm_model,
             max_tokens=1500,
+            temperature=0,   # reproducibility: the API default is 1.0. temperature is a
+                             # valid param on Haiku 4.5 / Sonnet 4.6 (only removed on
+                             # Opus 4.7+/Fable 5). The canonicalized topology is what's
+                             # reproducible; the raw LLM output is still not bit-exact.
             system=self._SYS,
             tools=[GRAPH_TOOL],
             tool_choice={"type": "tool", "name": "emit_graph"},
@@ -214,12 +249,19 @@ class HaikuExtractor:
     def _reflexion(self, text: str, first: Extraction) -> Extraction:
         if not self.config.reflexion:
             return first
-        have = ", ".join(t for t in first.tags) or "(none)"
+        tags = ", ".join(first.tags) or "(none)"
+        ents = ", ".join(e.name for e in first.entities) or "(none)"
         prompt = (
             f"Content:\n{text[:4000]}\n\n"
-            f"Tags already found: {have}\n"
-            "Did you miss any important entity, concept, or tag? "
-            "Call emit_graph again with ONLY the missed items (empty arrays if none)."
+            f"First pass found these tags: {tags}\n"
+            f"and these entities: {ents}.\n\n"
+            "Now do a focused recall check. List ONLY items you OMITTED:\n"
+            "- any salient entity in the content missing above (with its type),\n"
+            "- any important topical tag not already emitted,\n"
+            "- any clearly-stated directed relationship between entities you missed "
+            "(source and target must be named entities; labels read source→target).\n\n"
+            "Do not repeat anything already found. If you omitted nothing, return empty "
+            "arrays. Call emit_graph exactly once with only the missed items."
         )
         try:
             extra = self._call([{"type": "text", "text": prompt}])
@@ -321,6 +363,23 @@ class HeuristicExtractor:
         entities = [ExtractedEntity(name=l, type=EntityType.CONCEPT) for l in labels]
         desc = f"A photo containing {', '.join(labels)}."
         return Extraction(entities=entities, tags=labels, description=desc)
+
+
+# --------------------------------------------------------------------------- #
+# Shared text-extraction helper (sectioning for long docs, §9 risk 4)
+# --------------------------------------------------------------------------- #
+def extract_text_sectioned(extractor: Extractor, text: str, title: str = "",
+                           long_doc_chars: int = 6000, max_sections: int = 6) -> Extraction:
+    """One shot for normal docs; section-by-section union for very long ones, so the
+    extractor never just truncates a long article. Shared by the ingest pipeline
+    (Ingestor._extract_text) and the `extract-dump` tool so they can't drift."""
+    if len(text) <= long_doc_chars:
+        return extractor.extract_text(text, title)
+    merged = Extraction()
+    for i in range(0, min(len(text), long_doc_chars * max_sections), long_doc_chars):
+        part = extractor.extract_text(text[i:i + long_doc_chars], title if i == 0 else "")
+        merged.merge(part)
+    return merged
 
 
 # --------------------------------------------------------------------------- #

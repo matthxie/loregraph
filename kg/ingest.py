@@ -21,7 +21,7 @@ from .canonicalize import Canonicalizer
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
-from .extractors import Extraction, Extractor
+from .extractors import Extraction, Extractor, extract_text_sectioned
 from .models import (Edge, EdgeType, EntityType, Modality, Provenance, object_node)
 from .store import GraphStore, now_iso
 
@@ -157,14 +157,8 @@ class Ingestor:
 
     def _extract_text(self, text: str, title: str) -> Extraction:
         """Section-by-section for very long docs (§9 risk 4), else one shot."""
-        if len(text) <= self.config.long_doc_chars:
-            return self.extractor.extract_text(text, title)
-        chunk = self.config.long_doc_chars
-        merged = Extraction()
-        for i in range(0, min(len(text), chunk * 6), chunk):  # cap at ~6 sections
-            part = self.extractor.extract_text(text[i:i + chunk], title if i == 0 else "")
-            merged.merge(part)
-        return merged
+        return extract_text_sectioned(self.extractor, text, title,
+                                      self.config.long_doc_chars)
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
         if item.modality == "image":
