@@ -1,7 +1,9 @@
 """Extractors (docs/ARCHITECTURE.md §6.4).
 
-Pull `{entities[], tags[], relations∈enum[]}` directly from raw content (rev 2 — no
+Pull `{entities[], tags[], relations[]}` directly from raw content (rev 2 — no
 summary step) in one structured-output call, with an optional reflexion recall pass.
+Relations are directed and carry open-vocabulary `labels[]` (rev 3) that are
+consolidated into canonical relationship-tag nodes downstream.
 
   * HaikuExtractor   — the real path: Claude Haiku 4.5 forced into a typed tool call,
                        vision for images. Needs ANTHROPIC_API_KEY.
@@ -21,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .config import Config
-from .models import EntityType, Provenance, RelationType
+from .models import EntityType, Provenance
 
 # --------------------------------------------------------------------------- #
 # Result types
@@ -34,9 +36,12 @@ class ExtractedEntity:
 
 @dataclass
 class ExtractedRelation:
+    """A directed connection source→target carrying open-vocabulary relationship
+    labels (e.g. ["is_friend_of", "works_with"]). The labels are consolidated into
+    canonical relationship-tag nodes downstream (Canonicalizer.resolve_relation)."""
     source: str
     target: str
-    relation: RelationType = RelationType.RELATED_TO
+    labels: list[str] = field(default_factory=list)
     provenance: Provenance = Provenance.EXTRACTED
     confidence: float = 0.8
 
@@ -57,11 +62,20 @@ class Extraction:
         for t in other.tags:
             if t.lower() not in tagset:
                 self.tags.append(t); tagset.add(t.lower())
-        seen = {(r.source.lower(), r.target.lower(), r.relation) for r in self.relations}
+        # merge by directed (source, target): union the label sets of duplicates
+        by_pair: dict[tuple[str, str], ExtractedRelation] = {}
+        for r in self.relations:
+            by_pair[(r.source.lower(), r.target.lower())] = r
         for r in other.relations:
-            kk = (r.source.lower(), r.target.lower(), r.relation)
-            if kk not in seen:
-                self.relations.append(r); seen.add(kk)
+            kk = (r.source.lower(), r.target.lower())
+            if kk in by_pair:
+                have = by_pair[kk]
+                for lab in r.labels:
+                    if lab not in have.labels:
+                        have.labels.append(lab)
+            else:
+                by_pair[kk] = r
+                self.relations.append(r)
         return self
 
 
@@ -75,7 +89,6 @@ class Extractor(Protocol):
 # --------------------------------------------------------------------------- #
 # Structured-output tool schema (shared by the Haiku path)
 # --------------------------------------------------------------------------- #
-_RELATION_ENUM = [r.value for r in RelationType]
 _ENTITY_ENUM = [t.value for t in EntityType]
 
 GRAPH_TOOL = {
@@ -99,15 +112,23 @@ GRAPH_TOOL = {
                      "description": "5-12 lowercase topical tags."},
             "relations": {
                 "type": "array",
+                "description": "Directed relationships between entities.",
                 "items": {
                     "type": "object",
                     "properties": {
                         "source": {"type": "string"},
                         "target": {"type": "string"},
-                        "relation": {"type": "string", "enum": _RELATION_ENUM},
+                        "labels": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "1-3 short lowercase relationship labels "
+                            "read SOURCE→TARGET, e.g. 'founded', 'works_with', "
+                            "'member_of', 'located_in', 'parent_of'. Use natural "
+                            "predicate names; they are consolidated automatically.",
+                        },
                         "confidence": {"type": "number"},
                     },
-                    "required": ["source", "target", "relation"],
+                    "required": ["source", "target", "labels"],
                 },
             },
             "description": {"type": "string",
@@ -116,6 +137,15 @@ GRAPH_TOOL = {
         "required": ["entities", "tags"],
     },
 }
+
+
+def _coerce_labels(r: dict) -> list[str]:
+    """Open-vocab labels[], with back-compat for an old single `relation` string."""
+    labels = [str(x).strip() for x in (r.get("labels") or []) if str(x).strip()]
+    if not labels and r.get("relation"):
+        labels = [str(r["relation"]).strip()]
+    # de-dupe preserving order
+    return list(dict.fromkeys(labels))
 
 
 def _parse_tool_payload(payload: dict) -> Extraction:
@@ -133,11 +163,11 @@ def _parse_tool_payload(payload: dict) -> Extraction:
     rels = []
     for r in payload.get("relations", []) or []:
         s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
-        if not s or not t:
+        labels = _coerce_labels(r)
+        if not s or not t or not labels:
             continue
         rels.append(ExtractedRelation(
-            source=s, target=t,
-            relation=RelationType.coerce(r.get("relation")),
+            source=s, target=t, labels=labels,
             provenance=Provenance.EXTRACTED,
             confidence=float(r.get("confidence", 0.8)),
         ))
@@ -153,9 +183,13 @@ class HaikuExtractor:
 
     _SYS = (
         "You extract a knowledge graph from content. Identify the salient named "
-        "entities (with a type), 5-12 lowercase topical tags, and the key relations "
-        "between entities. Relations MUST use the provided enum; prefer a specific "
-        "relation over the 'related_to' catch-all. Call emit_graph exactly once."
+        "entities (with a type), 5-12 lowercase topical tags, and the key DIRECTED "
+        "relationships between entities. For each relationship give 1-3 short "
+        "lowercase labels read source→target (e.g. 'founded', 'works_with', "
+        "'member_of', 'located_in', 'parent_of'); order matters, so pick source and "
+        "target so the labels read correctly. Use natural predicate names — do not "
+        "force a fixed vocabulary; similar labels are consolidated automatically. "
+        "Call emit_graph exactly once."
     )
 
     def __init__(self, config: Config):
@@ -268,13 +302,15 @@ class HeuristicExtractor:
         # tags: frequent topical content words
         words = Counter(w for w in _WORD.findall(body.lower()) if w not in _STOP)
         tags = [w for w, _ in words.most_common(10)]
-        # relations: co-occurrence of the top entity with the rest (low-confidence)
+        # relations: co-occurrence of the top entity with the rest (low-confidence).
+        # The offline heuristic can't name a real predicate, so it emits the generic
+        # "related_to" label — which still flows through relation consolidation.
         rels = []
         if len(entities) >= 2:
             hub = entities[0].name
             for e in entities[1:6]:
                 rels.append(ExtractedRelation(
-                    source=hub, target=e.name, relation=RelationType.RELATED_TO,
+                    source=hub, target=e.name, labels=["related_to"],
                     provenance=Provenance.INFERRED, confidence=0.4))
         return Extraction(entities=entities, tags=tags, relations=rels)
 

@@ -32,6 +32,14 @@ class Config:
     entropy_min_chars: int = 4        # entropy guard: shorter tags merge on exact only
     entropy_min_bits: float = 2.0     # min Shannon entropy (chars) to allow fuzzy merge
 
+    # ---- relationship-tag consolidation (§3b — open-vocab relation canonicalization)
+    # Predicate labels are consolidated like topical tags, but with a HIGHER merge
+    # bar: antonyms/inverses ("is_friend_of" vs "is_enemy_of", "manages" vs
+    # "managed_by") sit close in embedding space, so we merge conservatively and
+    # never auto-link across them.
+    rel_syn_merge_threshold: float = 0.95
+    max_relation_labels: int = 3      # cap labels carried by one connection
+
     # ---- derived edges (§2 / §6.5) ------------------------------------------
     object_knn_k: int = 6             # SIMILAR_TO neighbours per object
     object_knn_floor: float = 0.55    # min cosine for an object↔object SIMILAR_TO edge
@@ -46,6 +54,12 @@ class Config:
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids
+
+    # ---- graph direction (§2 rev 3) -----------------------------------------
+    # Edges are stored DIRECTED (MultiDiGraph) so relationship semantics survive
+    # (src→dst). Traversal/diffusion (PPR, BFS) runs over a SYMMETRIZED projection
+    # so recall is unchanged (HippoRAG runs PPR undirected); see retrieval.py.
+    directed: bool = True
 
     # ---- misc ----------------------------------------------------------------
     random_seed: int = 42

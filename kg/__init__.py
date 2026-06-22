@@ -1,4 +1,4 @@
-"""kg — an LLM-traversable, bidirectional knowledge graph over multimodal content.
+"""kg — an LLM-traversable, directed knowledge graph over multimodal content.
 
 See docs/ARCHITECTURE.md for the design this implements. The public surface is small:
 

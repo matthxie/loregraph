@@ -86,11 +86,21 @@ def cmd_inspect(args):
                       "description": n.description,
                       "summary": n.summary}, indent=2, ensure_ascii=False))
     print("neighbours:")
+    out = {id(d) for _n, d in g.store.neighbors(args.node_id, direction="out")}
     for nbr, data in list(g.store.neighbors(args.node_id))[:25]:
         nbr_node = g.store.get_node(nbr)
         name = nbr_node.name if nbr_node else "?"
-        rel = f"/{data['relation']}" if data.get("relation") else ""
-        print(f"  {data.get('etype','?')}{rel} -> {nbr} ({name})  "
+        # consolidated relationship labels (rev 3), with the legacy class as fallback
+        rel_names = [g.store.get_node(r).name for r in (data.get("rel_tags") or [])
+                     if g.store.get_node(r)]
+        if rel_names:
+            rel = f" [{', '.join(rel_names)}]"
+        elif data.get("relation"):
+            rel = f"/{data['relation']}"
+        else:
+            rel = ""
+        arrow = "->" if id(data) in out else "<-"   # honour the real edge direction
+        print(f"  {data.get('etype','?')}{rel} {arrow} {nbr} ({name})  "
               f"conf={data.get('confidence', 0.0):.2f} prov={data.get('provenance','?')}")
 
 

@@ -134,6 +134,19 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         for nbr, d in store.neighbors(oid):
             if nbr in keep and not sub.has_edge(oid, nbr):
                 sub.add_edge(oid, nbr, etype=d["etype"], weight=float(d["weight"]))
+    # directed entity→entity relationship edges, labelled with their consolidated
+    # relationship-tag names (rev 3) — the "is_friend_of / works_with" layer
+    for src in keep:
+        sn = store.get_node(src)
+        if not sn or sn.ntype != NodeType.ENTITY:
+            continue
+        for dst, d in store.neighbors(src, etypes={EdgeType.RELATED_TO}, direction="out"):
+            if dst not in keep:
+                continue
+            rel_names = [store.get_node(r).name for r in (d.get("rel_tags") or [])
+                         if store.get_node(r)]
+            sub.add_edge(src, dst, etype="RELATED_TO", weight=float(d["weight"]),
+                         directed=True, dsrc=src, dtgt=dst, rel=", ".join(rel_names))
     pos = _layout(sub, seed=7)
 
     rank_of = {oid: i + 1 for i, (oid, _) in enumerate(ranked)}
@@ -162,7 +175,14 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         entry["roles"] = roles
         nodes.append(entry)
 
-    edges = [{"s": u, "t": v, "etype": d["etype"]} for u, v, d in sub.edges(data=True)]
+    edges = []
+    for u, v, d in sub.edges(data=True):
+        if d.get("directed"):
+            edges.append({"s": d.get("dsrc", u), "t": d.get("dtgt", v),
+                          "etype": d["etype"], "directed": True,
+                          "rel": d.get("rel", "")})
+        else:
+            edges.append({"s": u, "t": v, "etype": d["etype"]})
 
     # BFS hop ordering from the seed objects, for the "watch it traverse" animation
     hops = _bfs_hops(sub, seed_objs or [n for n in sub.nodes()][:1])
@@ -262,7 +282,9 @@ _HTML_TEMPLATE = r"""<!doctype html>
   line.link{stroke:var(--edge);stroke-opacity:.5}
   line.link.dim{stroke-opacity:.06}
   line.link.hi{stroke:var(--edge-hi);stroke-opacity:.95;stroke-width:2.4}
+  line.link.rel{stroke:var(--entity);stroke-opacity:.85;stroke-width:1.8}
   text.lbl{fill:var(--txt);font-size:9px;paint-order:stroke;stroke:#0b0e13;stroke-width:2.5px;pointer-events:none}
+  text.rellbl{fill:var(--entity);font-size:8.5px;font-style:italic;paint-order:stroke;stroke:#0b0e13;stroke-width:2.5px;pointer-events:none}
   text.rank{fill:#1a0410;font-weight:700;font-size:11px;text-anchor:middle;dominant-baseline:central;pointer-events:none}
   .ringseed{fill:none;stroke:var(--seed);stroke-width:2.5}
   .ringres{fill:none;stroke:var(--result);stroke-width:2.5}
@@ -272,7 +294,14 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <body>
 <div id="app">
   <div id="stage">
-    <svg id="svg"><g id="view">
+    <svg id="svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+                markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--entity)"></path>
+        </marker>
+      </defs>
+      <g id="view">
       <g id="links"></g><g id="rings"></g><g id="nodes"></g><g id="labels"></g>
     </g></svg>
     <div id="tip"></div>
@@ -289,6 +318,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
         <span><i class="dot" style="background:var(--entity)"></i>entity</span>
         <span><i class="dot" style="background:var(--seed)"></i>seed</span>
         <span><i class="dot" style="background:var(--result)"></i>result</span>
+        <span style="color:var(--entity)">→ relationship (directed)</span>
       </div>
     </div>
 
@@ -356,10 +386,22 @@ function render(nodes, edges, opts={}){
   nodes.forEach(n=>NODEBYID[n.id]=n);
   edges.forEach(e=>{
     const a=NODEBYID[e.s],b=NODEBYID[e.t]; if(!a||!b) return;
-    const [x1,y1]=P(a.x,a.y),[x2,y2]=P(b.x,b.y);
+    const [x1,y1]=P(a.x,a.y); let [x2,y2]=P(b.x,b.y);
     const ln=document.createElementNS(NS,"line"); ln.setAttribute("class","link");
+    if(e.directed){
+      // pull the line back to the target's rim so the arrowhead is visible
+      const dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy)||1, rb=radius(b)+8;
+      x2=x2-dx/L*rb; y2=y2-dy/L*rb;
+      ln.classList.add("rel"); ln.setAttribute("marker-end","url(#arrow)");
+    }
     ln.setAttribute("x1",x1);ln.setAttribute("y1",y1);ln.setAttribute("x2",x2);ln.setAttribute("y2",y2);
     ln._e=e; gLinks.appendChild(ln); elLinks.push(ln);
+    if(e.directed && e.rel){
+      const t=document.createElementNS(NS,"text"); t.setAttribute("class","rellbl");
+      t.setAttribute("x",(x1+x2)/2);t.setAttribute("y",(y1+y2)/2-2);
+      t.setAttribute("text-anchor","middle"); t.textContent=e.rel;
+      gLabels.appendChild(t);
+    }
   });
   nodes.forEach(n=>{
     const [x,y]=P(n.x,n.y);

@@ -50,7 +50,7 @@ None of the three use Personalized PageRank. cognee = vector-seed + BFS + rerank
 | 3 | **Soft-invalidation flag** (`valid`/`superseded_by`) on nodes+edges | Lets re-ingestion supersede instead of mutate/duplicate; poor-man's bi-temporal without the quad | graphiti + mem0g | cheap |
 | 4 | **Provenance back-pointer** from every tag/entity/edge to source node + summary | Enables audit and re-extraction; recovers the episode-provenance link lost by summarizing first | graphiti | cheap |
 | 5 | **Per-node/edge `confidence` flag** for trust-based retrieval filtering | Cheap; pairs with `seen` flag; enables filtered retrieval | cognee (`ontology_valid`) | cheap |
-| 6 | **Constrain the relation vocabulary** to a small fixed enum | Free-form relations collapse to vague edges in all three; constraint makes the graph richer | cognee/graphiti pitfall | cheap |
+| 6 | ~~Constrain the relation vocabulary to a small fixed enum~~ → **open-vocab labels + canonicalization** (rev 3) | The free-form *collapse* these three saw is caused by the missing canonicalization step, not by openness; adding relation-canonicalization (Galárraga CIKM'14 / CESI WWW'18) keeps richness without the collapse. See ARCHITECTURE §2. | cognee/graphiti pitfall, re-resolved | medium |
 | 7 | **Multi-mode retrieval + auto-routing** (graph-completion / pure-vector / summaries / chunks) | Lets you A/B PPR-spread vs. BFS — necessary to justify PPR at 200 nodes | cognee | medium |
 | 8 | **BM25 as a parallel seed/fusion signal** alongside embeddings | Lexical recall the embedding seed misses; both graphiti and mem0 v3 fuse it | graphiti / mem0 v3 | medium |
 | 9 | **MMR + node-distance reranking on top of PPR scores** | Adds diversity and query-anchored relevance to raw PPR | graphiti | medium |

@@ -6,7 +6,7 @@ Then one of three traversal modes spreads from the seeds:
 
   * PPRRetriever    — Personalized PageRank seed-and-spread + MMR/node-distance
                       rerank (the primary path / central bet).
-  * BFSRetriever    — plain n-hop BFS over the bidirectional graph (the A/B baseline
+  * BFSRetriever    — plain n-hop BFS over the symmetrized projection (the A/B baseline
                       PPR must beat at this scale; uses the `seen` visited-set flag).
   * VectorRetriever — flat object-embedding top-k, no graph (the "does the graph
                       even help?" baseline).
@@ -130,6 +130,13 @@ _TRAVERSAL_EXCLUDE = {EdgeType.IN_COMMUNITY.value}
 
 def projected_graph(store: GraphStore, config: Config,
                     exclude_etypes: set[str] | None = None) -> nx.Graph:
+    # Deliberately UNDIRECTED (nx.Graph): the store is directed (§2 rev 3) so
+    # relationship semantics survive, but diffusion runs over a symmetrized
+    # projection — HippoRAG's PPR and GraphRAG both run undirected, and "find
+    # related content" wants to traverse a relationship both ways. Storing
+    # direction while symmetrizing here is the standard store-directed /
+    # symmetrize-for-diffusion split; collapsing src→dst and dst→src into one
+    # weighted edge keeps PPR/BFS recall identical to the pre-rev-3 graph.
     exclude = _TRAVERSAL_EXCLUDE if exclude_etypes is None else exclude_etypes
     G = nx.Graph()
     for n in store.nodes.values():

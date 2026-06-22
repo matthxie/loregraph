@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 from kg import Config, KnowledgeGraph
-from kg.canonicalize import Canonicalizer, char_entropy, normalize_key
+from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
+                             normalize_relation)
 from kg.corpus import CorpusItem, load_articles, load_images
 from kg.embedders import HashingEmbedder, get_embedder
 from kg.extractors import HeuristicExtractor, get_extractor
@@ -137,6 +138,52 @@ def test_l1_dedup_and_entropy_guard():
     assert a != b
 
 
+def test_normalize_relation():
+    # spaces, hyphens and case all collapse to one underscore key
+    assert normalize_relation("is friends with") == "is_friends_with"
+    assert normalize_relation("is-friends-with") == "is_friends_with"
+    assert normalize_relation("Is  Friends  With") == "is_friends_with"
+    # punctuation stripped, underscores preserved/collapsed
+    assert normalize_relation("works_with!") == "works_with"
+    # unlike noun keys, predicate morphology is NOT singularized (direction matters)
+    assert normalize_relation("manages") == "manages"
+    assert normalize_relation("managed_by") == "managed_by"
+
+
+def test_resolve_relation_consolidation():
+    store = GraphStore(cfg())
+    canon = Canonicalizer(store, get_embedder(cfg()), cfg())
+    # L1: surface variants of the same predicate consolidate to one relation node
+    r1 = canon.resolve_relation("works with")
+    r2 = canon.resolve_relation("works-with")
+    r3 = canon.resolve_relation("Works With")
+    assert r1 == r2 == r3
+    assert store.get_node(r1).ntype == NodeType.RELATION
+    # a genuinely different predicate gets its own node
+    other = canon.resolve_relation("founded")
+    assert other != r1
+    # the relation vocabulary is consolidated, not duplicated
+    rel_nodes = store.nodes_of_type(NodeType.RELATION)
+    assert len(rel_nodes) == 2
+
+
+def test_relation_synonym_merges_but_antonym_and_inverse_dont():
+    """rev 3: inflectional / function-word variants of a predicate consolidate via
+    the content key, while antonyms and passive-inverses stay distinct."""
+    store = GraphStore(cfg())
+    canon = Canonicalizer(store, get_embedder(cfg()), cfg())
+    a = canon.resolve_relation("is_friend_of")
+    b = canon.resolve_relation("is friends with")   # function-word + plural variant
+    assert a == b, "synonymous inflections should consolidate to one relation node"
+    node = store.get_node(a)
+    assert node.name == "is_friend_of"               # readable canonical name kept
+    assert "is_friends_with" in node.aliases         # the variant is an alias
+    # antonyms (different content word) must NOT merge
+    assert canon.resolve_relation("is_enemy_of") != a
+    # passive inverse ("by" is preserved as a direction marker) must NOT merge
+    assert canon.resolve_relation("manages") != canon.resolve_relation("managed_by")
+
+
 def test_idf_weight_monotonic():
     store = GraphStore(cfg())
     canon = Canonicalizer(store, get_embedder(cfg()), cfg())
@@ -226,6 +273,56 @@ def test_store_save_load_roundtrip():
     assert s2.vectors.get("object", "a") is not None
 
 
+def test_directed_edges_distinct_but_neighbors_bidirectional():
+    """rev 3: storage is directed (a→b ≠ b→a), but neighbors() still walks both
+    directions by default so retrieval/derivation stay bidirectional."""
+    store = GraphStore(cfg())
+    for nid in ("a", "b"):
+        store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
+                                   raw_text="x", content_hash=nid, ts="t"))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, Provenance.EXTRACTED, 1.0, 1.0))
+    # a→b and b→a are independent directed edges
+    assert store.g.has_edge("a", "b")
+    assert not store.g.has_edge("b", "a")
+    # default neighbours are bidirectional
+    assert any(n == "b" for n, _ in store.neighbors("a"))
+    assert any(n == "a" for n, _ in store.neighbors("b"))
+    # but direction can be honoured explicitly
+    assert [n for n, _ in store.neighbors("a", direction="out")] == ["b"]
+    assert [n for n, _ in store.neighbors("a", direction="in")] == []
+    assert [n for n, _ in store.neighbors("b", direction="in")] == ["a"]
+
+
+def test_symmetric_edges_pinned_to_one_canonical_orientation():
+    """SIMILAR_TO / SHARED_* are symmetric: a→b and b→a must collapse to a single
+    canonical edge so the undirected projection can't double-count their weight."""
+    store = GraphStore(cfg())
+    for nid in ("a", "b"):
+        store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
+                                   raw_text="x", content_hash=nid, ts="t"))
+    store.add_edge(Edge("b", "a", EdgeType.SIMILAR_TO, Provenance.SIMILAR, 0.9, 0.9))
+    store.add_edge(Edge("a", "b", EdgeType.SIMILAR_TO, Provenance.SIMILAR, 0.9, 0.9))
+    # exactly one SIMILAR_TO edge exists, in canonical (min,max) orientation
+    assert store.g.number_of_edges() == 1
+    assert store.g.has_edge("a", "b") and not store.g.has_edge("b", "a")
+    # RELATED_TO, by contrast, is directional and keeps both directions distinct
+    store.add_edge(Edge("b", "a", EdgeType.RELATED_TO, Provenance.EXTRACTED, 1.0, 1.0))
+    assert store.g.has_edge("b", "a")
+
+
+def test_edge_rel_tags_union_on_duplicate():
+    """A second mention of the same connection unions its relationship-tag set."""
+    store = GraphStore(cfg())
+    for nid in ("a", "b"):
+        store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
+                                   raw_text="x", content_hash=nid, ts="t"))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0000"]))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0001"]))
+    assert set(store.edge_rel_tags("a", "b")) == {"rel_0000", "rel_0001"}
+    # the reverse direction carries nothing — direction is real
+    assert store.edge_rel_tags("b", "a") == []
+
+
 def test_supersede_marks_invalid():
     store = GraphStore(cfg())
     store.add_node(object_node("a", modality=Modality.TEXT, source_ref="u",
@@ -251,6 +348,59 @@ def test_ingest_builds_graph():
     assert s["by_node_type"]["entity"] > 0
     # Turing & Bletchley should share an entity → a derived object-object edge exists
     assert s["by_edge_type"].get("SHARED_ENTITY", 0) + s["by_edge_type"].get("SHARED_TAG", 0) > 0
+
+
+def test_store_is_directed():
+    import networkx as nx
+    g = KnowledgeGraph.open(tmp_store(), cfg())
+    assert isinstance(g.store.g, nx.MultiDiGraph)
+
+
+def test_ingest_builds_relation_tags_and_directed_edges():
+    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g.ingest(sample_items())
+    s = g.stats()
+    # open-vocab relationship labels are consolidated into first-class RELATION nodes
+    assert s["by_node_type"].get("relation", 0) > 0
+    # at least one directed RELATED_TO edge carries a consolidated relation-tag set
+    found = False
+    for _u, _v, d in g.store.all_edges():
+        if d["etype"] == EdgeType.RELATED_TO.value and d.get("rel_tags"):
+            found = True
+            for rid in d["rel_tags"]:
+                assert g.store.get_node(rid).ntype == NodeType.RELATION
+    assert found, "expected a labelled directed RELATED_TO edge"
+
+
+def test_rel_tags_survive_save_load():
+    path = tmp_store()
+    store = GraphStore.open(path, cfg())
+    for nid in ("a", "b"):
+        store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
+                                   raw_text="x", content_hash=nid, ts="t"))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0000", "rel_0001"]))
+    store.save()
+    s2 = GraphStore.open(path, cfg())
+    assert set(s2.edge_rel_tags("a", "b")) == {"rel_0000", "rel_0001"}
+    assert not s2.g.has_edge("b", "a")  # direction preserved across persistence
+
+
+def test_relation_df_idempotent_on_reingest():
+    """Re-stating the same connection must not double-count its relation frequency."""
+    path = tmp_store()
+    g = KnowledgeGraph.open(path, cfg())
+    v1 = CorpusItem(id="p", modality="text", source_ref="u", title="People",
+                    text="Alice runs daily. Alice writes books. Alice paints often. "
+                         "Alice meets Bob and Carol at work.")
+    g.ingest([v1])
+    df_before = {r.id: r.doc_frequency for r in g.store.nodes_of_type(NodeType.RELATION)}
+    assert df_before, "expected at least one consolidated relationship tag"
+    v2 = CorpusItem(id="p", modality="text", source_ref="u", title="People",
+                    text="Alice swims weekly. Alice cooks meals. Alice travels far. "
+                         "Alice meets Bob and Carol again.")
+    g.ingest([v2])  # supersedes v1; same entities + same co-occurrence relation
+    for rid, df in df_before.items():
+        assert g.store.get_node(rid).doc_frequency <= df
 
 
 def test_ingest_cache_skips_on_rerun():

@@ -1,6 +1,7 @@
 """Communities & breadth queries (docs/ARCHITECTURE.md §6 / phase 3, Path B).
 
-Detect communities over the bidirectional graph (Louvain here — seedable and in
+Detect communities over the symmetrized traversal projection (Louvain here — needs
+an undirected graph; seedable and in
 NetworkX core; Leiden/graspologic is the noted upgrade), attach a precomputed
 summary to each, and route breadth queries ("what are the main themes") to a
 map-reduce over those summaries instead of local PPR traversal.

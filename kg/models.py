@@ -20,6 +20,7 @@ class NodeType(str, Enum):
     OBJECT = "object"
     ENTITY = "entity"
     TAG = "tag"
+    RELATION = "relation"   # canonical relationship-tag node (predicate vocabulary)
     COMMUNITY = "community"
 
 
@@ -39,7 +40,14 @@ class EntityType(str, Enum):
 
 
 class RelationType(str, Enum):
-    """Fixed relation vocabulary (§2 — cognee/graphiti lesson: free-form collapses)."""
+    """Legacy coarse relation vocabulary (rev 3).
+
+    Relations are now open-vocabulary, LLM-generated, multi-label *relationship
+    tags* that are consolidated over time (see RelationTagNode / NodeType.RELATION
+    and Canonicalizer.resolve_relation). This enum is kept only as a coarse
+    fallback / back-compat for the single `Edge.relation` slot; the live payload is
+    the consolidated set in `Edge.rel_tags`.
+    """
     PART_OF = "part_of"
     LOCATED_IN = "located_in"
     CREATED_BY = "created_by"
@@ -61,7 +69,8 @@ class RelationType(str, Enum):
 class EdgeType(str, Enum):
     MENTIONS = "MENTIONS"          # ObjectNode  → EntityNode
     TAGGED_AS = "TAGGED_AS"        # ObjectNode  → TagNode
-    RELATED_TO = "RELATED_TO"      # EntityNode ↔ EntityNode (typed via `relation`)
+    RELATED_TO = "RELATED_TO"      # EntityNode  → EntityNode (directed; labelled by the
+                                   #   consolidated relationship-tag set in `rel_tags`)
     SIMILAR_TO = "SIMILAR_TO"      # any ↔ any   (embedding synonymy)
     SHARED_TAG = "SHARED_TAG"      # ObjectNode ↔ ObjectNode (derived, overlap-weighted)
     SHARED_ENTITY = "SHARED_ENTITY"
@@ -143,12 +152,18 @@ class Edge:
     provenance: Provenance = Provenance.DERIVED
     confidence: float = 1.0
     weight: float = 1.0
-    relation: RelationType | None = None  # only for RELATED_TO entity↔entity
+    relation: RelationType | None = None  # legacy coarse class (back-compat only)
+    # consolidated relationship-tag node ids carried by a directed RELATED_TO edge,
+    # e.g. ["rel_0007", "rel_0012"] == ["is_friend_of", "works_with"]. Open-vocab,
+    # multi-label, deduplicated over time by Canonicalizer.resolve_relation.
+    rel_tags: list[str] = field(default_factory=list)
     valid: bool = True
     created_at: str = ""
 
     def key(self) -> tuple:
-        """Identity of an edge (used as the multi-relation key in NetworkX)."""
+        """Identity of an edge (the multi-relation key in NetworkX). A directed
+        RELATED_TO edge is a single edge per (src, dst); its relationship labels
+        accumulate in `rel_tags` rather than spawning one edge per relation."""
         rel = self.relation.value if self.relation else ""
         return (self.etype.value, rel)
 
@@ -173,6 +188,14 @@ def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str) -> Node:
 
 def tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
     return Node(id=node_id, ntype=NodeType.TAG, name=canonical,
+                created_at=ts, last_modified=ts)
+
+
+def relation_tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
+    """A canonical relationship-tag node (predicate vocabulary). Parallel to
+    TagNode — it carries `aliases` and `doc_frequency` so the relation vocabulary
+    is consolidated and IDF-weighted exactly like the topical-tag vocabulary."""
+    return Node(id=node_id, ntype=NodeType.RELATION, name=canonical,
                 created_at=ts, last_modified=ts)
 
 

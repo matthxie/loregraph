@@ -115,8 +115,10 @@ class Ingestor:
         for ext in extractions:
             tag_ent_surfaces.extend(ext.tags)
             tag_ent_surfaces.extend(e.name for e in ext.entities)
-            tag_ent_surfaces.extend(r.source for r in ext.relations)
-            tag_ent_surfaces.extend(r.target for r in ext.relations)
+            for r in ext.relations:
+                tag_ent_surfaces.append(r.source)
+                tag_ent_surfaces.append(r.target)
+                tag_ent_surfaces.extend(r.labels)   # relationship-label embeddings too
         self.canon.prime_embeddings(tag_ent_surfaces)
 
         # 4. write each object (sequential)
@@ -215,7 +217,8 @@ class Ingestor:
             if obj_id not in en.provenance_objs:
                 en.provenance_objs.append(obj_id)
 
-        # relations → typed RELATED_TO between entities (gated by confidence)
+        # relations → directed RELATED_TO between entities, labelled with the
+        # consolidated relationship-tag set (gated by confidence)
         for r in ext.relations:
             s = ent_map.get(r.source.lower()) or self.canon.resolve_entity(r.source, EntityType.OTHER)
             t = ent_map.get(r.target.lower()) or self.canon.resolve_entity(r.target, EntityType.OTHER)
@@ -223,9 +226,24 @@ class Ingestor:
                 continue
             if r.confidence < 0.1:   # link gate: drop near-zero-confidence inferences
                 continue
+            # consolidate each free-form label into a canonical relationship-tag node
+            rel_ids: list[str] = []
+            for label in r.labels[:self.config.max_relation_labels]:
+                rid = self.canon.resolve_relation(label)
+                if rid:
+                    rel_ids.append(rid)
+            rel_ids = list(dict.fromkeys(rel_ids))
+            if not rel_ids:
+                continue
+            # idempotent df: only bump for labels not already on this directed edge,
+            # so re-ingesting identical content can't double-count relation frequency
+            already = set(self.store.edge_rel_tags(s, t))
+            for rid in rel_ids:
+                if rid not in already:
+                    self.canon.bump_doc_frequency(rid)
             self.store.add_edge(Edge(src=s, dst=t, etype=EdgeType.RELATED_TO,
                                     provenance=r.provenance, confidence=r.confidence,
-                                    weight=r.confidence, relation=r.relation))
+                                    weight=r.confidence, rel_tags=rel_ids))
 
     def _retract(self, old_id: str) -> None:
         """Undo a soon-to-be-superseded object's side effects: decrement the

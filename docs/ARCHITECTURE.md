@@ -2,7 +2,7 @@
 
 # Knowledge Graph Architecture & Decisions
 
-A concrete design for an LLM-traversable, bidirectional knowledge graph over multimodal content, synthesized from 10 sources.
+A concrete design for an LLM-traversable, directed knowledge graph over multimodal content, synthesized from 10 sources. (Rev 3: open-vocabulary, consolidated, multi-label relationship tags on a directed graph — see §2.)
 
 > **Revision 2 (2026-06-21):** (a) **No summary step** — extract tags/entities *directly* from raw content; the object's raw text (not a generated summary) is the primary embedding/retrieval surface. Images are the exception (no text → the vision model still emits tags + a one-line description as its only searchable text). (b) **Per-node timestamps** `created_at` / `last_modified`, plus a `valid` / `superseded_by` soft-invalidation flag. (c) Refinements adopted from production frameworks (cognee, mem0, graphiti) — see new **§10** and [FRAMEWORKS.md](FRAMEWORKS.md). Sections below are updated in place; older summary-first prose is superseded by §10 and this banner.
 
@@ -30,7 +30,7 @@ These choices override the option menus in §4 and §7 below.
 
 ## 1. Problem framing
 
-**What this is.** You are building a *graph-RAG memory system*: an offline indexing pipeline that turns arbitrary objects (text, links, photos, files) into a persistent, typed, bidirectional graph, plus an online retrieval path where an LLM answers queries by combining vector entry-points with graph traversal. This is the same system class as **HippoRAG**, **GraphRAG (Microsoft)**, **A-MEM**, and **Graphify** — not classic chunk-and-embed RAG.
+**What this is.** You are building a *graph-RAG memory system*: an offline indexing pipeline that turns arbitrary objects (text, links, photos, files) into a persistent, typed, directed graph, plus an online retrieval path where an LLM answers queries by combining vector entry-points with graph traversal. This is the same system class as **HippoRAG**, **GraphRAG (Microsoft)**, **A-MEM**, and **Graphify** — not classic chunk-and-embed RAG.
 
 **The 2-3 big lessons the literature agrees on:**
 
@@ -53,13 +53,14 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 | **ObjectNode** | one per ingested item (article, link, photo, file) | Holds raw ref + raw text (the embedding surface), content hash (SHA256), modality, `created_at`, `last_modified`, `valid`/`superseded_by`. Images also store a one-line VLM description (their only text). The "document" unit. *(No `summary` field — rev 2.)* |
 | **EntityNode** | named entities/concepts extracted **directly from the raw content** (rev 2) | Typed (person, place, org, concept…). The traversal backbone. |
 | **TagNode** | canonical tags from the taxonomy | First-class nodes (see below). |
+| **RelationTagNode** *(rev 3)* | canonical relationship labels (`is_friend_of`, `works_with`, `founded`…) | Open-vocabulary predicate vocabulary, consolidated like TagNodes (aliases + `doc_frequency`). A directed `RELATED_TO` edge references a *set* of these by id (`Edge.rel_tags`). |
 | **CommunityNode** *(phase 3)* | Leiden communities | Holds a precomputed cluster summary for breadth queries. |
 
 ### Edge types (all carry provenance + confidence)
 
 - `MENTIONS` (ObjectNode → EntityNode)
 - `TAGGED_AS` (ObjectNode → TagNode)
-- `RELATED_TO` / typed relations (EntityNode ↔ EntityNode) — from extraction
+- `RELATED_TO` (EntityNode **→** EntityNode, **directed**, rev 3) — from extraction; carries a *multi-label set* of canonical relationship-tag ids in `rel_tags` (e.g. `[is_friend_of, works_with]`)
 - `SIMILAR_TO` (any ↔ any) — embedding cosine above threshold, the synonymy edge
 - `SHARED_TAG` / `SHARED_ENTITY` (ObjectNode ↔ ObjectNode) — **derived, overlap-weighted**; the primary ObjectNode↔ObjectNode edge now that the corpus has no wikilinks
 - `IN_COMMUNITY` (node → CommunityNode)
@@ -67,7 +68,12 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 
 **Tag the edges, not just nodes.** Per **Graphify** and **Chain-of-Layer**, every extracted edge stores `provenance ∈ {EXTRACTED, INFERRED, SIMILAR}` and a `confidence ∈ [0,1]`. This lets the LLM weight or discard low-confidence relationships during traversal and is your single best hallucination-control lever. Validate each edge before commit (Chain-of-Layer's per-layer filter; A-MEM's LLM link gate).
 
-**Constrain the relation vocabulary (rev 2 — cognee/graphiti lesson).** Don't let the LLM invent free-form relation names — all three production frameworks found free-form relations collapse into a vague `RELATED_TO`. Give extraction a **small fixed enum** of relation types (e.g. `part_of`, `located_in`, `created_by`, `instance_of`, `causes`, `mentions`, `related_to` as the catch-all) so the graph stays rich and traversable.
+**Open-vocabulary relationships + consolidation (rev 3 — supersedes the rev-2 fixed enum).** Earlier revisions used a small fixed relation enum, on the cognee/graphiti/mem0 observation that *uncontrolled* free-form relations collapse into a vague `RELATED_TO`. Rev 3 keeps the expressivity of free-form relations **without** that collapse by adding the missing half of the recipe — **canonicalization**:
+
+- Extraction emits, per directed connection, a **multi-label set** of natural-language relationship labels read source→target (`founded`, `works_with`, `member_of`, `parent_of`, …). No enum.
+- Each label is consolidated by `Canonicalizer.resolve_relation` into a canonical **RelationTagNode** — the *same two-layer drift control as topical tags* (normalized-key exact hash → high-bar embedding-synonymy merge), with `doc_frequency` for IDF. A connection's edge stores the resulting **set** of canonical ids in `rel_tags`.
+- This is exactly **open relation extraction + relation canonicalization** (Galárraga et al., *Canonicalizing Open Knowledge Bases*, CIKM 2014; **CESI**, WWW 2018), the literature's standard answer to predicate sprawl. The fixed enum was guarding against *un-consolidated* free-form; with consolidation the guard is unnecessary and we gain real relationship semantics (`is_friend_of` ≠ `manages`).
+- **Consolidation keys on the content word, not the embedding** (the key design choice). Embedding cosine alone *cannot* separate synonyms from antonyms — `is_friend_of`/`is_friends_with` and `is_friend_of`/`is_enemy_of` are equally close — so L1 uses a **content key** (`relation_content_key`): drop relational function words (`is`, `of`, `with`, …) and singularize, leaving the content lemma. `is_friend_of` / `is_friends_with` → `friend` (**merge**); `is_enemy_of` → `enemy` (**distinct**, different content word); `managed_by` keeps the passive `by` marker so it never collapses into `manages` (**distinct inverse**). The node keeps a readable canonical name (`is_friend_of`); variants become aliases. The L2 embedding gate (high bar, 0.95, no `SIMILAR_TO` linking) only adds the cross-lexical synonym case (`collaborates_with` ↔ `works_with`). Looser semantic merges are deferred to the batch L3 reconciliation pass (with LLM confirmation), same as tags.
 
 **Provenance back-pointer (rev 2 — graphiti lesson).** Every EntityNode/TagNode and extracted edge stores a pointer back to the ObjectNode (and char span where cheap) it came from. Enables audit ("why is this tag here?") and re-extraction.
 
@@ -82,9 +88,13 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 
 Net: TagNodes participate in the graph; the attribute copy is an index optimization.
 
-### Bidirectionality
+### Directionality (rev 3 — supersedes "bidirectional-in-effect")
 
-Represent every edge **once, undirected-in-effect**. Concretely: store a directed row but **always insert/traverse both directions** (an adjacency that returns neighbors regardless of stored direction). This matches HippoRAG's PPR (runs over undirected edges), GraphRAG's degree-weighted undirected edges, and Graphify's BFS over bidirectional links. A-MEM's "confirmed links are mutual" is the same idea. Do *not* model direction semantics except where they're real (`HYPERLINKS_TO`, `is-a`).
+The store is a NetworkX **`MultiDiGraph`**: every edge keeps its real direction (`src→dst`), because relationship semantics are now first-class and many predicates are inherently directed (`manages`, `founded`, `located_in`, `parent_of`). This is the **store-directed / symmetrize-for-diffusion** split that the graph-RAG literature uses:
+
+- **Storage & semantics are directed.** `RELATED_TO`, `MENTIONS`, `TAGGED_AS`, `IN_COMMUNITY`, `HYPERLINKS_TO` all have a meaningful source→target. `inspect`/viz render the arrow; `neighbors(..., direction="out"|"in")` honour it.
+- **Traversal is symmetrized.** PPR/BFS run over an **undirected** weighted projection (`retrieval.projected_graph`) that collapses `src→dst` and `dst→src` into one weighted edge. This is non-negotiable for recall: **HippoRAG's PPR runs over undirected edges**, GraphRAG uses degree-weighted undirected edges, and "find content related to X" must be able to traverse a relationship *both ways*. Running PPR directly on the directed graph would create sink/dangling-node mass leaks and halve reachability. So `neighbors()` defaults to walking **both** successors and predecessors — the pre-rev-3 bidirectional contract every retriever relies on is preserved exactly; only the *stored* graph gained direction.
+- A-MEM's "confirmed links are mutual" still holds at the *diffusion* layer; we simply no longer throw away the direction at the *storage* layer.
 
 ### Multimodal (image) nodes
 
@@ -172,7 +182,7 @@ Add **node specificity (HippoRAG): weight each tag/entity by inverse document-fr
 **Path A — Local/specific queries (default):**
 1. Seed by **fused signals (rev 2)**: embed query → cosine over **object-text embeddings**, *and* run **BM25/keyword** over the raw text (mem0 v3 + graphiti both fuse lexical + semantic) → union into top-k **seed nodes** (the entry-point index, *not* the answer).
 2. Also extract query entities → link to EntityNodes/TagNodes as additional seeds (HippoRAG).
-3. Run **Personalized PageRank** seeded at those nodes over the bidirectional graph (`RELATED_TO` + `SIMILAR_TO` + `SHARED_TAG` (+ optional `HYPERLINKS_TO`) edges), seeds reweighted by **node specificity (IDF)**. Weight edges by their `confidence`; downweight/skip `INFERRED` low-confidence and `valid=false` superseded edges.
+3. Run **Personalized PageRank** seeded at those nodes over the **symmetrized traversal projection** of the directed graph (`RELATED_TO` + `SIMILAR_TO` + `SHARED_TAG` (+ optional `HYPERLINKS_TO`) edges), seeds reweighted by **node specificity (IDF)**. Weight edges by their `confidence`; downweight/skip `INFERRED` low-confidence and `valid=false` superseded edges.
 4. **Rerank** the PPR-scored nodes with MMR (diversity) + node-distance-to-seed (query-anchored relevance) — graphiti's rerankers on top of raw scores. Take the top nodes' ObjectNodes as the minimal subgraph; hand their **raw text** (on demand) to the LLM to answer.
 
 This makes **graph diffusion the primary path and embeddings the seed index** — the unanimous lesson. PPR over a ~200-node graph is milliseconds (`networkx.pagerank` with `personalization=`). **PPR is one mode, not the only path (rev 2):** none of cognee/mem0/graphiti use PPR (they use vector+BM25+BFS), so make the retriever pluggable and **A/B PPR-spread vs. plain BFS** — prove PPR earns its place at this scale before relying on it.
@@ -207,9 +217,10 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
                  Keep the raw text (it IS the embedding surface — no summary).
 4. EXTRACT       DIRECTLY from raw content (rev 2 — no summary step), in ONE
                  structured-output call (cognee): Haiku returns a typed
-                 {entities[], tags[], relations[]} object — relations chosen
-                 from a FIXED enum (§2), not free-form. Each item carries a
-                 provenance back-pointer to this object. Images: vision call
+                 {entities[], tags[], relations[]} object — each relation is a
+                 DIRECTED connection with open-vocab labels[] (rev 3), consolidated
+                 downstream like tags. Each item carries a provenance back-pointer
+                 to this object. Images: vision call
                  emits tags/entities + one description line in the same shot.
                  Then ONE reflexion pass ("did you miss any concept?") to lift
                  recall (graphiti) — cheaper than a separate summarize call.
@@ -220,15 +231,17 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
                  real categories/links as ground-truth deterministic edges.
 6. CANONICALIZE  Each candidate tag → L1 hash → L2 embedding synonymy gate
                  (§3), with an entropy guard so short/common tags ("AI","US")
-                 aren't wrongly merged (graphiti). Ambiguous-only → LLM
-                 ADD/UPDATE/MERGE/NOOP tie-breaker (mem0). Update doc_frequency.
+                 aren't wrongly merged (graphiti). Each relationship label runs the
+                 SAME path → canonical RelationTagNode (higher merge bar; rev 3).
+                 Ambiguous-only → LLM ADD/UPDATE/MERGE/NOOP tie-breaker (mem0).
+                 Update doc_frequency.
 7. EMBED         Raw object-text embedding (primary; lead section if long).
                  Tag/entity-string embeddings (synonymy/linking). Images:
                  embed the VLM description line.
 8. WRITE GRAPH   Create ObjectNode (created_at, last_modified, valid=true);
                  create/link EntityNodes & TagNodes with provenance pointers;
-                 insert edges with {provenance, confidence, relation∈enum},
-                 both directions. Gate each LLM-inferred edge (A-MEM/CoL filter).
+                 insert DIRECTED edges with {provenance, confidence, rel_tags[]}
+                 (rev 3). Gate each LLM-inferred edge (A-MEM/CoL filter).
 9. CACHE         Store hash → node id.
 ```
 
@@ -333,7 +346,8 @@ Three production memory frameworks were reviewed *after* the original paper-base
 | Refinement | Stage | Source | Effort |
 |---|---|---|---|
 | Structured-output extraction (typed `Node[]/Edge[]`, not free-text parse) | extraction §6.4 | cognee | cheap |
-| Fixed relation-type enum (no free-form relations) | graph model §2 | cognee/graphiti | cheap |
+| ~~Fixed relation-type enum~~ → **open-vocab relationship tags + canonicalization** (rev 3) | graph model §2 | Galárraga CIKM'14 / CESI WWW'18; multi-label = multiplex networks | medium |
+| Directed store (`MultiDiGraph`) + symmetrized traversal projection (rev 3) | graph model §2 | HippoRAG (PPR undirected) / GraphRAG | cheap |
 | Provenance back-pointer (tag/edge → source node) | graph model §2 | graphiti | cheap |
 | Reflexion self-critique pass after extraction | extraction §6.4 | graphiti | cheap |
 | Entropy guard so short/common tags aren't mis-merged | dedup §6.6 | graphiti | cheap |
@@ -345,4 +359,4 @@ Three production memory frameworks were reviewed *after* the original paper-base
 | MMR + node-distance reranking on PPR scores | retrieval §5 | graphiti | medium |
 | PPR as one *comparable* mode, A/B vs BFS (prove it at 200 nodes) | retrieval §5 | all three (none use PPR) | medium |
 
-**Explicitly NOT adopted:** cognee's full RDF/OWL ontology engine and DataPoint "type-hints become edges" magic (schema rigidity, real maintenance — take the confidence flag + constrained relations instead); mem0's per-write LLM reconciliation as the default (expensive; mem0 removed it in v3 — selective tie-breaker only); hard-delete on LLM-judged contradiction (always soft-invalidate); graphiti's full bi-temporal quad + LLM date-parsing (unjustified for a stable snapshot — take the soft-invalidation flag, not the quad); a server graph DB (Neo4j/FalkorDB) — loses free PPR; `difflib`-fuzzy in place of embedding synonymy (weaker). Borrow patterns, not dependency weight.
+**Explicitly NOT adopted:** cognee's full RDF/OWL ontology engine and DataPoint "type-hints become edges" magic (schema rigidity, real maintenance — take the confidence flag + *canonicalized* open relations instead); mem0's per-write LLM reconciliation as the default (expensive; mem0 removed it in v3 — selective tie-breaker only); hard-delete on LLM-judged contradiction (always soft-invalidate); graphiti's full bi-temporal quad + LLM date-parsing (unjustified for a stable snapshot — take the soft-invalidation flag, not the quad); a server graph DB (Neo4j/FalkorDB) — loses free PPR; `difflib`-fuzzy in place of embedding synonymy (weaker). Borrow patterns, not dependency weight.

@@ -2,15 +2,17 @@
 
 An **LLM-traversable knowledge graph** over multimodal content (text, links, photos, files).
 
-Each ingested object becomes a node: an LLM summarizes it, extracts tags/entities/concepts
-from the summary, and links it into a **bidirectional graph**. Retrieval is *graph-first* — an
-LLM (or a PageRank-style diffusion) traverses the graph rather than relying on chunk-embedding
+Each ingested object becomes a node: an LLM extracts tags/entities/concepts and the
+**directed relationships** between entities, and links it into a **directed graph**.
+Both tags *and* relationship labels are open-vocabulary (LLM-generated) and **consolidated
+over time** into a canonical vocabulary. Retrieval is *graph-first* — an LLM (or a
+PageRank-style diffusion) traverses the graph rather than relying on chunk-embedding
 similarity alone. Embeddings exist mainly as an **entry-point index** to find seed nodes.
 
 ## Status
 
 **MVP built** — the `kg/` package implements the design end-to-end (ingestion → typed
-bidirectional graph → 2-path retrieval → communities → eval). It runs fully offline by
+directed graph → 2-path retrieval → communities → eval). It runs fully offline by
 default (pluggable backends fall back when no API key / model is present) and upgrades to
 Claude Haiku 4.5 + `bge-small` embeddings when they are. See [docs/MVP.md](docs/MVP.md)
 for the feature→design map, run commands, and the thesis-validating eval results. The
@@ -36,7 +38,8 @@ animated). `python -m kg serve` for live typed queries, or `python -m kg viz --q
 
 - **Pipeline LLM:** Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), vision-capable for images.
 - **Embeddings:** local `sentence-transformers` (`BAAI/bge-small-en-v1.5`), fully offline.
-- **Graph:** NetworkX (in-memory, persisted) — PageRank/BFS/Leiden out of the box.
+- **Graph:** NetworkX `MultiDiGraph` (directed, in-memory, persisted) — PageRank/BFS/Leiden
+  out of the box; traversal runs over a symmetrized projection so direction never costs recall.
 - **Vectors:** NumPy brute-force cosine to start; SQLite for metadata + SHA256 cache.
 - **Python:** 3.14 native (torch + sentence-transformers both ship 3.14 wheels).
 
@@ -55,10 +58,20 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
 
 1. **Traversal is the primary retrieval path; embeddings are a seed index.** Embed to *find*
    entry nodes, then let graph structure (PageRank diffusion / BFS) do the work.
-2. **Tags are first-class nodes**, not just attributes — so they can be clustered and traversed.
+2. **Tags *and* relationships are first-class, open-vocabulary, and consolidated.** Topical
+   tags are first-class nodes; relationship labels (`is_friend_of`, `works_with`, …) are
+   LLM-generated per connection as a *multi-label set* on a **directed** edge, then
+   consolidated into canonical `RelationTagNode`s by the same drift-control pipeline as tags.
+   This is *open relation extraction + relation canonicalization* (Galárraga et al., CIKM 2014;
+   CESI, WWW 2018) — the consolidation step is what stops free-form predicates from collapsing
+   into a vague `related_to`, so we get expressivity without the drift the fixed-enum was
+   guarding against.
 3. **Drift control is layered**, not a single hash: exact/normalized hash → embedding synonymy
    *link* (not merge) → periodic taxonomy reconciliation. Bias toward *linking* near-duplicates,
-   not hard-merging them.
+   not hard-merging them. Relationships consolidate on a **content key** (drop function words +
+   singularize): `is_friend_of` ≈ `is_friends_with` merge, but `is_enemy_of` and the passive
+   inverse `managed_by` stay distinct — because embedding cosine alone can't tell synonyms from
+   antonyms.
 4. **Embed summaries (primary) + tag/entity strings (for synonymy linking)** — bare-tag
    embeddings alone are too lossy as the main retrieval vector.
 5. **Edges carry provenance + confidence** (`EXTRACTED` / `INFERRED` / `SIMILAR`) so the LLM can
