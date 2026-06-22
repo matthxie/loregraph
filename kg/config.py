@@ -47,7 +47,7 @@ class Config:
     # minted (sequential, main-thread), so a MERGE just returns the existing id — no
     # provisional node, no edge rewrite. Default OFF and auto-skipped with no
     # ANTHROPIC_API_KEY, so the offline path is byte-for-byte unchanged. Enable only
-    # after `python -m kg eval-canon` shows zero antonym/inverse false-merges. See CLAUDE.md.
+    # after `python -m kg eval-canon` shows zero antonym/inverse false-merges. See docs/MVP.md.
     l3_enabled: bool = False
     l3_model: str = "claude-haiku-4-5-20251001"  # pinned adjudicator model (temperature=0)
     rel_gray_floor: float = 0.90      # relation gray band = [rel_gray_floor, rel_syn_merge_threshold)

@@ -62,6 +62,41 @@ python -m pytest -q                       # 26 offline tests
 
 Use `--extractor haiku --embedder st` on `ingest` for the full-quality pipeline.
 
+## Dev / comparison tooling
+
+Two commands sit *beside* the main pipeline for model comparison and canonicalizer
+safety — neither builds the graph.
+
+**`extract-dump` — diff what each model extracts.** Runs *only* the extraction step (no
+graph, no canonicalization) and writes one JSONL record per object plus a `.summary.json`
+vocabulary aggregate (`unique_tags`, `top_tags`, `entity_types`, `unique_entities`,
+`unique_relation_labels`, `top_relation_labels`, `failed`). Diff the summaries to see how
+tag/entity/relation vocabularies differ by model. `--model` picks the LLM.
+
+```bash
+python -m kg extract-dump --extractor heuristic --out store/dump_heuristic.jsonl     # offline baseline (no key)
+python -m kg extract-dump --extractor haiku --model claude-haiku-4-5-20251001 --n-text 30 --out store/dump_haiku.jsonl
+python -m kg extract-dump --extractor haiku --model claude-sonnet-4-6         --n-text 30 --out store/dump_sonnet.jsonl
+python -m kg extract-dump --extractor haiku --model claude-opus-4-8           --n-text 30 --out store/dump_opus.jsonl
+# add images with --n-image N  (default 0 = text only)
+```
+
+**`eval-canon` — the safety gate before enabling L3.** Feeds hand-labeled
+predicate/entity pairs through the canonicalizer. **The gate passes iff zero
+antonym/inverse/distinct-sense pairs wrongly merge** (`wrong_antonym_inverse_merges=0`);
+synonym *recall* is reported but not gated (that's L3's upside, not a safety risk).
+Currently GATE PASS under both the hashing and bge paths.
+
+```bash
+python -m kg eval-canon                 # deterministic path (hashing) — fast
+python -m kg eval-canon --embedder st   # real bge-small embeddings
+python -m kg eval-canon --l3 --model claude-haiku-4-5-20251001   # + L3 tie-breaker
+```
+
+Only enable the L3 tie-breaker in a real run (`python -m kg ingest --l3 …`) after this
+gate passes. L3 is **off by default** (see `config.l3_enabled`); §3 of
+[ARCHITECTURE.md](ARCHITECTURE.md) explains the layered L1/L2/L3 drift control it gates.
+
 ## Viewer (plain HTML)
 
 A dependency-free browser viewer (`kg/viz.py` + `kg/serve.py`; vanilla JS + SVG, no
