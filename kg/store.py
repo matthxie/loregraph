@@ -80,39 +80,37 @@ class GraphStore:
         etype, rel = edge.key()
         if etype in _SYMMETRIC_ETYPES and edge.src > edge.dst:  # pin canonical orientation
             edge.src, edge.dst = edge.dst, edge.src
-        rel_tags = list(dict.fromkeys(edge.rel_tags or []))
-        # collapse a duplicate directed (src→dst, etype, relation): keep the stronger
-        # one but UNION the relationship-tag sets so a second mention of the same
-        # connection accumulates labels (is_friend_of + works_with) instead of racing.
+        # collapse a duplicate of the SAME parallel edge (src→dst, etype, relation/rel_tag):
+        # keep the stronger one. Different rel_tags between the same pair are DISTINCT
+        # parallel edges (rev 4) — restating "is_friend_of" doesn't touch "works_with".
         existing = self.g.get_edge_data(edge.src, edge.dst)
         if existing:
             for k, data in list(existing.items()):
                 if data.get("etype") == etype and data.get("relation", "") == rel:
-                    merged = list(dict.fromkeys(list(data.get("rel_tags") or []) + rel_tags))
                     if edge.confidence * edge.weight >= data["confidence"] * data["weight"]:
                         self.g.remove_edge(edge.src, edge.dst, key=k)
-                        rel_tags = merged
                         break
                     else:
-                        data["rel_tags"] = merged   # absorb labels, keep stronger edge
-                        return
+                        return   # an equal-or-stronger edge already exists
         self.g.add_edge(
             edge.src, edge.dst, key=f"{etype}:{rel}",
             etype=etype, relation=rel, provenance=edge.provenance.value,
             confidence=edge.confidence, weight=edge.weight,
-            valid=edge.valid, created_at=edge.created_at, rel_tags=rel_tags,
+            valid=edge.valid, created_at=edge.created_at, rel_tag=edge.rel_tag,
         )
 
     def edge_rel_tags(self, src: str, dst: str,
                       etype: EdgeType = EdgeType.RELATED_TO) -> list[str]:
-        """Relationship-tag ids currently on the directed src→dst edge of `etype`."""
+        """Relationship-tag ids on the directed src→dst connection — collected across
+        the PARALLEL edges of `etype` (one per relation, rev 4)."""
         data = self.g.get_edge_data(src, dst)
         if not data:
             return []
+        out = []
         for _k, d in data.items():
-            if d.get("etype") == etype.value:
-                return list(d.get("rel_tags") or [])
-        return []
+            if d.get("etype") == etype.value and d.get("rel_tag"):
+                out.append(d["rel_tag"])
+        return out
 
     def neighbors(self, node_id: str, etypes: set[EdgeType] | None = None,
                   valid_only: bool = True, direction: str = "both"):
@@ -216,10 +214,13 @@ class GraphStore:
         )
         edge_rows = []
         for u, v, d in self.g.edges(data=True):
+            # rev 4: the `relation` column is the per-edge discriminator and already
+            # holds the rel_tag id for RELATED_TO edges (key() folds it in), so a
+            # parallel edge per relation gets a distinct primary key. The legacy
+            # rel_tags column is left empty — non-empty only in pre-rev-4 stores.
             edge_rows.append((u, v, d["etype"], d.get("relation", ""), d["provenance"],
                               d["confidence"], d["weight"], int(d.get("valid", True)),
-                              d.get("created_at", ""),
-                              json.dumps(d.get("rel_tags") or [])))
+                              d.get("created_at", ""), ""))
         cur.executemany(
             "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?)", edge_rows)
         vec_rows = [(nid, kind, np.asarray(vec, dtype=np.float32).tobytes())
@@ -239,14 +240,32 @@ class GraphStore:
             node = Node.from_payload(payload)
             self.nodes[node.id] = node
             self.g.add_node(node.id, ntype=node.ntype.value)
+        related = EdgeType.RELATED_TO.value
         for row in cur.execute("SELECT * FROM edges"):
             # tolerant of pre-rev-3 stores that have no `rel_tags` column
             src, dst, etype, relation, prov, conf, weight, valid, created = row[:9]
-            rel_tags = json.loads(row[9]) if len(row) > 9 and row[9] else []
+            legacy = None
+            if len(row) > 9 and row[9]:
+                try:
+                    legacy = json.loads(row[9])
+                except (ValueError, TypeError):
+                    legacy = None
+            # rev-3 → rev-4 migration: a RELATED_TO row whose old rel_tags column held a
+            # SET of ids becomes one parallel edge per id.
+            if etype == related and isinstance(legacy, list) and legacy:
+                for rid in dict.fromkeys(legacy):
+                    self.g.add_edge(src, dst, key=f"{etype}:{rid}", etype=etype,
+                                    relation=rid, provenance=prov, confidence=conf,
+                                    weight=weight, valid=bool(valid),
+                                    created_at=created, rel_tag=rid)
+                continue
+            # rev-4 (and rev-2 legacy): the `relation` column is the discriminator;
+            # for RELATED_TO it IS the rel_tag id.
+            rel_tag = relation if (etype == related and relation) else None
             self.g.add_edge(
                 src, dst, key=f"{etype}:{relation}", etype=etype, relation=relation,
                 provenance=prov, confidence=conf, weight=weight,
-                valid=bool(valid), created_at=created, rel_tags=rel_tags)
+                valid=bool(valid), created_at=created, rel_tag=rel_tag)
         for node_id, kind, blob in cur.execute("SELECT node_id, kind, vec FROM vectors"):
             vec = np.frombuffer(blob, dtype=np.float32)
             if vec.size:

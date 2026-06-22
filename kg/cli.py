@@ -90,11 +90,10 @@ def cmd_inspect(args):
     for nbr, data in list(g.store.neighbors(args.node_id))[:25]:
         nbr_node = g.store.get_node(nbr)
         name = nbr_node.name if nbr_node else "?"
-        # consolidated relationship labels (rev 3), with the legacy class as fallback
-        rel_names = [g.store.get_node(r).name for r in (data.get("rel_tags") or [])
-                     if g.store.get_node(r)]
-        if rel_names:
-            rel = f" [{', '.join(rel_names)}]"
+        # rev 4: one relationship label per (parallel) edge; legacy class as fallback
+        rn = g.store.get_node(data["rel_tag"]) if data.get("rel_tag") else None
+        if rn:
+            rel = f" [{rn.name}]"
         elif data.get("relation"):
             rel = f"/{data['relation']}"
         else:

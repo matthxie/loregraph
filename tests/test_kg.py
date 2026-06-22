@@ -76,6 +76,9 @@ def test_relation_coerce():
 def test_edge_key():
     e = Edge("a", "b", EdgeType.RELATED_TO, relation=RelationType.CAUSES)
     assert e.key() == ("RELATED_TO", "causes")
+    # rev 4: a canonical relation-tag id is the per-edge discriminator (precedence)
+    e2 = Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0007")
+    assert e2.key() == ("RELATED_TO", "rel_0007")
 
 
 # --------------------------------------------------------------------------- #
@@ -310,15 +313,20 @@ def test_symmetric_edges_pinned_to_one_canonical_orientation():
     assert store.g.has_edge("b", "a")
 
 
-def test_edge_rel_tags_union_on_duplicate():
-    """A second mention of the same connection unions its relationship-tag set."""
+def test_parallel_relation_edges_one_per_tag():
+    """rev 4: each relationship tag is its own directed edge between the pair."""
     store = GraphStore(cfg())
     for nid in ("a", "b"):
         store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
                                    raw_text="x", content_hash=nid, ts="t"))
-    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0000"]))
-    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0001"]))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0000"))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0001"))
+    # two PARALLEL directed edges between the same pair, one per relation
+    assert store.g.number_of_edges("a", "b") == 2
     assert set(store.edge_rel_tags("a", "b")) == {"rel_0000", "rel_0001"}
+    # re-asserting an existing relation does not add a duplicate edge
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0000"))
+    assert store.g.number_of_edges("a", "b") == 2
     # the reverse direction carries nothing — direction is real
     assert store.edge_rel_tags("b", "a") == []
 
@@ -362,27 +370,51 @@ def test_ingest_builds_relation_tags_and_directed_edges():
     s = g.stats()
     # open-vocab relationship labels are consolidated into first-class RELATION nodes
     assert s["by_node_type"].get("relation", 0) > 0
-    # at least one directed RELATED_TO edge carries a consolidated relation-tag set
+    # at least one directed RELATED_TO edge is labelled with a single relation-tag
     found = False
     for _u, _v, d in g.store.all_edges():
-        if d["etype"] == EdgeType.RELATED_TO.value and d.get("rel_tags"):
+        if d["etype"] == EdgeType.RELATED_TO.value and d.get("rel_tag"):
             found = True
-            for rid in d["rel_tags"]:
-                assert g.store.get_node(rid).ntype == NodeType.RELATION
+            assert g.store.get_node(d["rel_tag"]).ntype == NodeType.RELATION
     assert found, "expected a labelled directed RELATED_TO edge"
 
 
-def test_rel_tags_survive_save_load():
+def test_parallel_relation_edges_survive_save_load():
     path = tmp_store()
     store = GraphStore.open(path, cfg())
     for nid in ("a", "b"):
         store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
                                    raw_text="x", content_hash=nid, ts="t"))
-    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tags=["rel_0000", "rel_0001"]))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0000"))
+    store.add_edge(Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0001"))
     store.save()
     s2 = GraphStore.open(path, cfg())
+    assert s2.g.number_of_edges("a", "b") == 2  # both parallel edges survive
     assert set(s2.edge_rel_tags("a", "b")) == {"rel_0000", "rel_0001"}
     assert not s2.g.has_edge("b", "a")  # direction preserved across persistence
+
+
+def test_rev3_set_on_edge_migrates_to_parallel_edges():
+    """A pre-rev-4 store with a rel_tags SET on one RELATED_TO edge loads as N
+    parallel directed edges (one per relation)."""
+    import json as _json
+    import sqlite3
+    path = tmp_store()
+    store = GraphStore.open(path, cfg())
+    for nid in ("a", "b"):
+        store.add_node(object_node(nid, modality=Modality.TEXT, source_ref="u",
+                                   raw_text="x", content_hash=nid, ts="t"))
+    store.save()
+    # inject a legacy rev-3 row: a SET of rel ids stored on ONE RELATED_TO edge
+    con = sqlite3.connect(path)
+    con.execute("INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("a", "b", "RELATED_TO", "", "EXTRACTED", 0.9, 0.9, 1, "",
+                 _json.dumps(["rel_0000", "rel_0001", "rel_0002"])))
+    con.commit()
+    con.close()
+    s2 = GraphStore.open(path, cfg())
+    assert s2.g.number_of_edges("a", "b") == 3      # exploded into parallel edges
+    assert set(s2.edge_rel_tags("a", "b")) == {"rel_0000", "rel_0001", "rel_0002"}
 
 
 def test_relation_df_idempotent_on_reingest():

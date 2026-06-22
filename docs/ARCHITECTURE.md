@@ -53,14 +53,14 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 | **ObjectNode** | one per ingested item (article, link, photo, file) | Holds raw ref + raw text (the embedding surface), content hash (SHA256), modality, `created_at`, `last_modified`, `valid`/`superseded_by`. Images also store a one-line VLM description (their only text). The "document" unit. *(No `summary` field — rev 2.)* |
 | **EntityNode** | named entities/concepts extracted **directly from the raw content** (rev 2) | Typed (person, place, org, concept…). The traversal backbone. |
 | **TagNode** | canonical tags from the taxonomy | First-class nodes (see below). |
-| **RelationTagNode** *(rev 3)* | canonical relationship labels (`is_friend_of`, `works_with`, `founded`…) | Open-vocabulary predicate vocabulary, consolidated like TagNodes (aliases + `doc_frequency`). A directed `RELATED_TO` edge references a *set* of these by id (`Edge.rel_tags`). |
+| **RelationTagNode** *(rev 3)* | canonical relationship labels (`is_friend_of`, `works_with`, `founded`…) | Open-vocabulary predicate vocabulary, consolidated like TagNodes (aliases + `doc_frequency`). Each directed `RELATED_TO` edge carries ONE canonical id (`Edge.rel_tag`); a pair with several relations = several **parallel edges** (rev 4). |
 | **CommunityNode** *(phase 3)* | Leiden communities | Holds a precomputed cluster summary for breadth queries. |
 
 ### Edge types (all carry provenance + confidence)
 
 - `MENTIONS` (ObjectNode → EntityNode)
 - `TAGGED_AS` (ObjectNode → TagNode)
-- `RELATED_TO` (EntityNode **→** EntityNode, **directed**, rev 3) — from extraction; carries a *multi-label set* of canonical relationship-tag ids in `rel_tags` (e.g. `[is_friend_of, works_with]`)
+- `RELATED_TO` (EntityNode **→** EntityNode, **directed**) — from extraction; **one parallel edge per canonical relationship** (rev 4), each carrying a single `rel_tag` id plus its own provenance/confidence/timestamp (so `[is_friend_of, works_with]` = two edges A→B)
 - `SIMILAR_TO` (any ↔ any) — embedding cosine above threshold, the synonymy edge
 - `SHARED_TAG` / `SHARED_ENTITY` (ObjectNode ↔ ObjectNode) — **derived, overlap-weighted**; the primary ObjectNode↔ObjectNode edge now that the corpus has no wikilinks
 - `IN_COMMUNITY` (node → CommunityNode)
@@ -71,7 +71,7 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 **Open-vocabulary relationships + consolidation (rev 3 — supersedes the rev-2 fixed enum).** Earlier revisions used a small fixed relation enum, on the cognee/graphiti/mem0 observation that *uncontrolled* free-form relations collapse into a vague `RELATED_TO`. Rev 3 keeps the expressivity of free-form relations **without** that collapse by adding the missing half of the recipe — **canonicalization**:
 
 - Extraction emits, per directed connection, a **multi-label set** of natural-language relationship labels read source→target (`founded`, `works_with`, `member_of`, `parent_of`, …). No enum.
-- Each label is consolidated by `Canonicalizer.resolve_relation` into a canonical **RelationTagNode** — the *same two-layer drift control as topical tags* (normalized-key exact hash → high-bar embedding-synonymy merge), with `doc_frequency` for IDF. A connection's edge stores the resulting **set** of canonical ids in `rel_tags`.
+- Each label is consolidated by `Canonicalizer.resolve_relation` into a canonical **RelationTagNode** — the *same two-layer drift control as topical tags* (normalized-key exact hash → high-bar embedding-synonymy merge), with `doc_frequency` for IDF. Each canonical relation becomes **its own directed `RELATED_TO` edge** (rev 4 — parallel edges keyed by the rel-node id), so per-relation provenance/confidence/timestamp survive; this is the RDF-triple / Neo4j-LPG shape, and is equivalent to a multiplex / edge-colored multigraph (Kivelä et al. 2014). The diffusion projection combines parallel relations between a pair by max (not sum) so a verbose extraction can't inflate PPR weight.
 - This is exactly **open relation extraction + relation canonicalization** (Galárraga et al., *Canonicalizing Open Knowledge Bases*, CIKM 2014; **CESI**, WWW 2018), the literature's standard answer to predicate sprawl. The fixed enum was guarding against *un-consolidated* free-form; with consolidation the guard is unnecessary and we gain real relationship semantics (`is_friend_of` ≠ `manages`).
 - **Consolidation keys on the content word, not the embedding** (the key design choice). Embedding cosine alone *cannot* separate synonyms from antonyms — `is_friend_of`/`is_friends_with` and `is_friend_of`/`is_enemy_of` are equally close — so L1 uses a **content key** (`relation_content_key`): drop relational function words (`is`, `of`, `with`, …) and singularize, leaving the content lemma. `is_friend_of` / `is_friends_with` → `friend` (**merge**); `is_enemy_of` → `enemy` (**distinct**, different content word); `managed_by` keeps the passive `by` marker so it never collapses into `manages` (**distinct inverse**). The node keeps a readable canonical name (`is_friend_of`); variants become aliases. The L2 embedding gate (high bar, 0.95, no `SIMILAR_TO` linking) only adds the cross-lexical synonym case (`collaborates_with` ↔ `works_with`). Looser semantic merges are deferred to the batch L3 reconciliation pass (with LLM confirmation), same as tags.
 
@@ -240,8 +240,9 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
                  embed the VLM description line.
 8. WRITE GRAPH   Create ObjectNode (created_at, last_modified, valid=true);
                  create/link EntityNodes & TagNodes with provenance pointers;
-                 insert DIRECTED edges with {provenance, confidence, rel_tags[]}
-                 (rev 3). Gate each LLM-inferred edge (A-MEM/CoL filter).
+                 insert DIRECTED edges — one parallel RELATED_TO edge per canonical
+                 relation, each {rel_tag, provenance, confidence} (rev 4). Gate each
+                 LLM-inferred edge (A-MEM/CoL filter).
 9. CACHE         Store hash → node id.
 ```
 

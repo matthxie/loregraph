@@ -11,7 +11,7 @@ traversal — exactly the system class (HippoRAG / GraphRAG / A-MEM) the design 
 |---|---|---|
 | Graph model: Object/Entity/Tag/Community nodes; typed edges w/ provenance + confidence | `kg/models.py` | §2 |
 | Timestamps + `valid`/`superseded_by` soft-invalidation; `seen` debug flag | `kg/models.py`, `kg/store.py` | §2 rev 2 |
-| Open-vocab, multi-label relationship tags consolidated like tags (rev 3) | `kg/canonicalize.py` `resolve_relation`, `kg/models.py` `RelationTagNode` | §2, §3b |
+| Open-vocab relationship tags consolidated like tags; one parallel directed edge per relation (rev 3/4) | `kg/canonicalize.py` `resolve_relation`, `kg/models.py` `RelationTagNode`/`Edge.rel_tag` | §2, §3b |
 | Directed `MultiDiGraph` + symmetrized traversal projection (rev 3) + SQLite + NumPy cosine | `kg/store.py`, `kg/retrieval.py`, `kg/vectors.py` | §0, §2, §7 |
 | Structured-output extraction direct from raw content (+ reflexion) | `kg/extractors.py` `HaikuExtractor` | §6.4, §10 |
 | Vision path for images (tags + one-line description) | `kg/extractors.py` | §2 multimodal |

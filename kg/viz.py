@@ -134,8 +134,9 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         for nbr, d in store.neighbors(oid):
             if nbr in keep and not sub.has_edge(oid, nbr):
                 sub.add_edge(oid, nbr, etype=d["etype"], weight=float(d["weight"]))
-    # directed entity→entity relationship edges, labelled with their consolidated
-    # relationship-tag names (rev 3) — the "is_friend_of / works_with" layer
+    # directed entity→entity relationship edges (rev 4 — one parallel edge per
+    # relation); aggregate the parallel labels per ordered pair for display
+    rel_by_pair: dict[tuple[str, str], list[str]] = {}
     for src in keep:
         sn = store.get_node(src)
         if not sn or sn.ntype != NodeType.ENTITY:
@@ -143,10 +144,12 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         for dst, d in store.neighbors(src, etypes={EdgeType.RELATED_TO}, direction="out"):
             if dst not in keep:
                 continue
-            rel_names = [store.get_node(r).name for r in (d.get("rel_tags") or [])
-                         if store.get_node(r)]
-            sub.add_edge(src, dst, etype="RELATED_TO", weight=float(d["weight"]),
-                         directed=True, dsrc=src, dtgt=dst, rel=", ".join(rel_names))
+            rn = store.get_node(d.get("rel_tag")) if d.get("rel_tag") else None
+            if rn:
+                rel_by_pair.setdefault((src, dst), []).append(rn.name)
+    for (src, dst), names in rel_by_pair.items():
+        sub.add_edge(src, dst, etype="RELATED_TO", weight=1.0,
+                     directed=True, dsrc=src, dtgt=dst, rel=", ".join(names))
     pos = _layout(sub, seed=7)
 
     rank_of = {oid: i + 1 for i, (oid, _) in enumerate(ranked)}

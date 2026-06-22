@@ -60,7 +60,8 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
    entry nodes, then let graph structure (PageRank diffusion / BFS) do the work.
 2. **Tags *and* relationships are first-class, open-vocabulary, and consolidated.** Topical
    tags are first-class nodes; relationship labels (`is_friend_of`, `works_with`, …) are
-   LLM-generated per connection as a *multi-label set* on a **directed** edge, then
+   LLM-generated per connection as **parallel directed edges — one per relation** (the
+   KG-triple / property-graph shape, so each carries its own provenance/confidence), then
    consolidated into canonical `RelationTagNode`s by the same drift-control pipeline as tags.
    This is *open relation extraction + relation canonicalization* (Galárraga et al., CIKM 2014;
    CESI, WWW 2018) — the consolidation step is what stops free-form predicates from collapsing

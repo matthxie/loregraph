@@ -46,7 +46,7 @@ class RelationType(str, Enum):
     tags* that are consolidated over time (see RelationTagNode / NodeType.RELATION
     and Canonicalizer.resolve_relation). This enum is kept only as a coarse
     fallback / back-compat for the single `Edge.relation` slot; the live payload is
-    the consolidated set in `Edge.rel_tags`.
+    the canonical relationship-tag id in `Edge.rel_tag` (one per parallel edge).
     """
     PART_OF = "part_of"
     LOCATED_IN = "located_in"
@@ -69,8 +69,8 @@ class RelationType(str, Enum):
 class EdgeType(str, Enum):
     MENTIONS = "MENTIONS"          # ObjectNode  → EntityNode
     TAGGED_AS = "TAGGED_AS"        # ObjectNode  → TagNode
-    RELATED_TO = "RELATED_TO"      # EntityNode  → EntityNode (directed; labelled by the
-                                   #   consolidated relationship-tag set in `rel_tags`)
+    RELATED_TO = "RELATED_TO"      # EntityNode  → EntityNode (directed; ONE per canonical
+                                   #   relationship in `rel_tag` — parallel edges per pair)
     SIMILAR_TO = "SIMILAR_TO"      # any ↔ any   (embedding synonymy)
     SHARED_TAG = "SHARED_TAG"      # ObjectNode ↔ ObjectNode (derived, overlap-weighted)
     SHARED_ENTITY = "SHARED_ENTITY"
@@ -153,18 +153,19 @@ class Edge:
     confidence: float = 1.0
     weight: float = 1.0
     relation: RelationType | None = None  # legacy coarse class (back-compat only)
-    # consolidated relationship-tag node ids carried by a directed RELATED_TO edge,
-    # e.g. ["rel_0007", "rel_0012"] == ["is_friend_of", "works_with"]. Open-vocab,
-    # multi-label, deduplicated over time by Canonicalizer.resolve_relation.
-    rel_tags: list[str] = field(default_factory=list)
+    # canonical relationship-tag node id labelling a directed RELATED_TO edge (rev 4).
+    # ONE per edge: A→B [is_friend_of] and A→B [works_with] are two PARALLEL edges in
+    # the MultiDiGraph, each with its own provenance / confidence / timestamp — the
+    # idiomatic KG-triple / property-graph shape (one relation per edge).
+    rel_tag: str | None = None
     valid: bool = True
     created_at: str = ""
 
     def key(self) -> tuple:
-        """Identity of an edge (the multi-relation key in NetworkX). A directed
-        RELATED_TO edge is a single edge per (src, dst); its relationship labels
-        accumulate in `rel_tags` rather than spawning one edge per relation."""
-        rel = self.relation.value if self.relation else ""
+        """Identity of an edge — the per-relation key in the MultiDiGraph. For a
+        RELATED_TO edge the discriminator is the canonical relationship-tag id, so
+        each relationship between a pair becomes its own parallel edge."""
+        rel = self.rel_tag or (self.relation.value if self.relation else "")
         return (self.etype.value, rel)
 
 

@@ -142,6 +142,12 @@ def projected_graph(store: GraphStore, config: Config,
     for n in store.nodes.values():
         if n.valid:
             G.add_node(n.id)
+    # Accumulate per undirected pair as {etype: max weight}. Taking the MAX within an
+    # etype (then summing ACROSS etypes) means N parallel RELATED_TO relations between
+    # a pair (rev 4 — is_friend_of + works_with) count once, not N times — a verbose
+    # LLM can't inflate diffusion weight (the research's per-pair-normalization point).
+    # Distinct signals (SHARED_TAG + SIMILAR_TO) still combine.
+    pair_w: dict[tuple, dict[str, float]] = {}
     for u, v, data in store.all_edges():
         if not data.get("valid", True):
             continue
@@ -153,10 +159,13 @@ def projected_graph(store: GraphStore, config: Config,
         if u not in G or v not in G:
             continue
         w = max(1e-4, float(data["confidence"]) * float(data["weight"]))
-        if G.has_edge(u, v):
-            G[u][v]["weight"] += w
-        else:
-            G.add_edge(u, v, weight=w)
+        pair = (u, v) if u <= v else (v, u)        # symmetrize direction
+        et = data["etype"]
+        by_etype = pair_w.setdefault(pair, {})
+        if w > by_etype.get(et, 0.0):
+            by_etype[et] = w
+    for (u, v), by_etype in pair_w.items():
+        G.add_edge(u, v, weight=sum(by_etype.values()))
     return G
 
 

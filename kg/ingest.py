@@ -226,24 +226,23 @@ class Ingestor:
                 continue
             if r.confidence < 0.1:   # link gate: drop near-zero-confidence inferences
                 continue
-            # consolidate each free-form label into a canonical relationship-tag node
-            rel_ids: list[str] = []
+            # consolidate each free-form label into a canonical relationship-tag node,
+            # and emit ONE directed edge per relation (rev 4 — parallel typed edges),
+            # so each carries its own provenance/confidence/timestamp
+            already = set(self.store.edge_rel_tags(s, t))
+            seen_here: set[str] = set()
             for label in r.labels[:self.config.max_relation_labels]:
                 rid = self.canon.resolve_relation(label)
-                if rid:
-                    rel_ids.append(rid)
-            rel_ids = list(dict.fromkeys(rel_ids))
-            if not rel_ids:
-                continue
-            # idempotent df: only bump for labels not already on this directed edge,
-            # so re-ingesting identical content can't double-count relation frequency
-            already = set(self.store.edge_rel_tags(s, t))
-            for rid in rel_ids:
+                if not rid or rid in seen_here:
+                    continue
+                seen_here.add(rid)
+                # idempotent df: bump only when this (s→t, rid) edge is genuinely new,
+                # so re-ingesting identical content can't double-count relation frequency
                 if rid not in already:
                     self.canon.bump_doc_frequency(rid)
-            self.store.add_edge(Edge(src=s, dst=t, etype=EdgeType.RELATED_TO,
-                                    provenance=r.provenance, confidence=r.confidence,
-                                    weight=r.confidence, rel_tags=rel_ids))
+                self.store.add_edge(Edge(src=s, dst=t, etype=EdgeType.RELATED_TO,
+                                        provenance=r.provenance, confidence=r.confidence,
+                                        weight=r.confidence, rel_tag=rid))
 
     def _retract(self, old_id: str) -> None:
         """Undo a soon-to-be-superseded object's side effects: decrement the
