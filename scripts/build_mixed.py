@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Build a third corpus folder that *combines* the text + image datasets, with the
-Wikipedia articles **exploded into per-paragraph chunks stamped over a timeline**.
+"""Build a text-only corpus folder from the Wikipedia articles, **exploded into
+per-paragraph chunks stamped over a timeline**.
 
-Leaves dataset/wikipedia/ and dataset/images/ untouched. Reads both and writes
-dataset/mixed/, where every item's filename is a hash so a plain directory listing
-interleaves articles and photos in a basically-random order instead of grouping
-them by type.
+Leaves dataset/wikipedia/ untouched. Reads it and writes dataset/mixed/, where every
+item's filename is a hash so a plain directory listing scatters an article's paragraphs
+in a basically-random order instead of grouping them together.
 
 Unlike a 1:1 article→file copy, each Wikipedia article is split into its
 paragraphs and **every paragraph becomes its own independent entry** with a fresh
@@ -17,28 +16,27 @@ of paragraph-entries arriving over time instead of a frozen snapshot.
 
 Scope: this is a *chronological append stream* — it spreads `created_at` over a
 timeline. It is NOT an update/contradiction stream: every entry is a distinct,
-never-restated fact (`orig_id#pNNN`), so nothing supersedes anything. And note the
-kg pipeline does not currently ingest dataset/mixed/ at all (kg/corpus.py reads
-wikipedia/articles.jsonl + images/manifest.jsonl, and kg/ingest.py stamps nodes
-with now_iso() at ingest) — this folder is a standalone artifact. The `created_at`
-format deliberately matches kg.store.now_iso() so a future load_mixed() *could*
-thread these times into the graph's created_at/valid machinery, but no code does so
-today.
+never-restated fact (`orig_id#pNNN`), so nothing supersedes anything. The `created_at`
+format deliberately matches kg.store.now_iso() so `kg ingest --mixed` (kg/corpus.py
+load_mixed) threads these times into the graph's created_at/valid machinery.
+
+The stream is deliberately **text-only** (images were removed — the knowledge graph is
+built from prose) and the entries are **title-free body text**: the `title`/`url` in the
+manifest are provenance metadata only; load_mixed never injects the title into the item,
+so it never reaches the extraction prompt or a node name.
 
   dataset/mixed/<hash>.txt        ONE paragraph of a Wikipedia article (raw text,
                                   its section heading kept as the first line)
-  dataset/mixed/<hash>.jpg        one photo (copied bytes)
   dataset/mixed/manifest.jsonl    one record per item, sorted by created_at (a
                                   chronological stream):
                                   {id, file, modality, orig_id, title, url, label,
                                    para_index, para_count, created_at}
 
-Deterministic: paragraph hashes are sha1(orig_id#pNNN) and image hashes are
-sha1(orig_id), and all timestamps come from a seeded RNG, so re-running reproduces
-identical names and times. para_index / para_count let you regroup an article's
-paragraphs and recover their order (within an article created_at is monotonic in
-para_index). The manifest records the provenance a future loader would need (titles
-for text nodes, COCO labels as the offline image-description stand-in).
+Deterministic: paragraph hashes are sha1(orig_id#pNNN) and all timestamps come from a
+seeded RNG, so re-running reproduces identical names and times. para_index / para_count
+let you regroup an article's paragraphs and recover their order (within an article
+created_at is monotonic in para_index). The manifest records the provenance metadata
+(title/url) a loader keeps for tracing, never for ingestion.
 
 Usage:  python scripts/build_mixed.py [--seed 42]
 """
@@ -56,8 +54,6 @@ from datetime import datetime, timedelta, timezone
 DATASET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "dataset")
 WIKI = os.path.join(DATASET_DIR, "wikipedia", "articles.jsonl")
-IMG_MANIFEST = os.path.join(DATASET_DIR, "images", "manifest.jsonl")
-IMG_DIR = os.path.join(DATASET_DIR, "images")
 OUT_DIR = os.path.join(DATASET_DIR, "mixed")
 
 # Timeline the synthetic stream is spread across. Anchored at the Wikipedia dump
@@ -206,11 +202,10 @@ def main() -> None:
     args = ap.parse_args()
     rng = random.Random(args.seed)
 
-    # Validate sources BEFORE the destructive rebuild, so a missing input never wipes
+    # Validate the source BEFORE the destructive rebuild, so a missing input never wipes
     # the previous good dataset/mixed/ and leaves a half-written folder behind.
-    for src in (WIKI, IMG_MANIFEST):
-        if not os.path.exists(src):
-            raise SystemExit(f"missing source {src} — run scripts/build_dataset.py first")
+    if not os.path.exists(WIKI):
+        raise SystemExit(f"missing source {WIKI} — run scripts/build_dataset.py first")
 
     if os.path.isdir(OUT_DIR):
         shutil.rmtree(OUT_DIR)        # rebuild cleanly
@@ -242,19 +237,6 @@ def main() -> None:
                 "para_index": idx, "para_count": n_para, "created_at": _iso(t),
             })
 
-    # images → <hash>.jpg (copied bytes), one timestamped entry each
-    for r in _read_jsonl(IMG_MANIFEST):
-        h = _hash(r["id"], taken)
-        fname = f"{h}.jpg"
-        src = os.path.join(IMG_DIR, os.path.basename(r["file"]))
-        shutil.copyfile(src, os.path.join(OUT_DIR, fname))
-        t = WINDOW_START + timedelta(seconds=rng.uniform(0, _SPAN_S))
-        records.append({
-            "id": h, "file": fname, "modality": "image", "orig_id": r["id"],
-            "title": None, "url": None, "label": r.get("label"),
-            "para_index": None, "para_count": None, "created_at": _iso(t),
-        })
-
     # sort chronologically so the manifest reads as a stream of arriving updates
     records.sort(key=lambda x: (x["created_at"], x["id"]))
     with open(os.path.join(OUT_DIR, "manifest.jsonl"), "w", encoding="utf-8") as out:
@@ -262,9 +244,8 @@ def main() -> None:
             out.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     n_text = sum(1 for r in records if r["modality"] == "text")
-    n_img = sum(1 for r in records if r["modality"] == "image")
     print(f"wrote {len(records)} entries "
-          f"({n_text} paragraph chunks from {n_articles} articles + {n_img} images) "
+          f"({n_text} paragraph chunks from {n_articles} articles, text-only) "
           f"-> {OUT_DIR}")
     if n_dropped:
         print(f"  ({n_dropped} articles had no usable paragraphs, skipped)")

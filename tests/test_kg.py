@@ -14,12 +14,14 @@ import numpy as np
 import pytest
 
 from kg import Config, KnowledgeGraph
-from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
-                             normalize_relation, relation_merge_vetoed)
-from kg.corpus import CorpusItem, load_articles, load_images
+from kg.canonicalize import (Canonicalizer, char_entropy, normalize_date,
+                             normalize_key, normalize_relation, relation_merge_vetoed)
+from kg.corpus import CorpusItem, load_articles, load_images, load_mixed
 from kg.embedders import HashingEmbedder, get_embedder
-from kg.extractors import HeuristicExtractor, get_extractor
-from kg.models import (Edge, EdgeType, Modality, Node, NodeType,
+from kg.extractors import (Extraction, ExtractedEntity, HeuristicExtractor,
+                           get_extractor)
+from kg.ingest import Ingestor
+from kg.models import (Edge, EdgeType, EntityType, Modality, Node, NodeType,
                        Provenance, RelationType, object_node)
 from kg.store import GraphStore
 from kg.vectors import VectorIndex
@@ -134,12 +136,12 @@ def test_char_entropy_short_vs_long():
 def test_l1_dedup_and_entropy_guard():
     store = GraphStore(cfg())
     canon = Canonicalizer(store, get_embedder(cfg()), cfg())
-    t1 = canon.resolve_tag("Machine Learning")
-    t2 = canon.resolve_tag("machine-learning")  # normalizes to same key
+    t1 = canon.resolve_entity("Machine Learning", EntityType.CONCEPT)
+    t2 = canon.resolve_entity("machine-learning", EntityType.CONCEPT)  # same normalized key
     assert t1 == t2
-    # short low-entropy tags must NOT be embedding-merged: distinct nodes
-    a = canon.resolve_tag("AI")
-    b = canon.resolve_tag("US")
+    # short low-entropy surfaces must NOT be embedding-merged: distinct nodes
+    a = canon.resolve_entity("AI", EntityType.CONCEPT)
+    b = canon.resolve_entity("US", EntityType.CONCEPT)
     assert a != b
 
 
@@ -187,6 +189,58 @@ def test_relation_synonym_merges_but_antonym_and_inverse_dont():
     assert canon.resolve_relation("is_enemy_of") != a
     # passive inverse ("by" is preserved as a direction marker) must NOT merge
     assert canon.resolve_relation("manages") != canon.resolve_relation("managed_by")
+
+
+# --------------------------------------------------------------------------- #
+# date canonicalization (EntityType.DATE)
+# --------------------------------------------------------------------------- #
+def test_normalize_date_variants_and_granularity():
+    # surface variants of the SAME instant collapse to one structured key
+    for s in ("July 18, 1896", "18 July 1896", "1896-07-18", "1896/07/18", "18th July 1896"):
+        assert normalize_date(s) == "1896-07-18", s
+    # granularity is preserved — coarser dates get distinct keys, never colliding
+    assert normalize_date("1896") == "1896"
+    assert normalize_date("July 1896") == "1896-07"
+    assert normalize_date("July 4th") == "--07-04"      # month-day, no year
+    assert normalize_date("December 7, 1941") == "1941-12-07"
+    # a stray numeral NOT adjacent to the month must not be fabricated into a day, so it
+    # still dedups with the bare month+year form
+    assert normalize_date("page 12 of May 1896") == "1896-05"
+    assert normalize_date("on 2 separate days in May 1896") == "1896-05"
+    # not a concrete date → None (falls back to generic string handling)
+    for s in ("the 1890s", "early 20th century", "summer", "nonsense", ""):
+        assert normalize_date(s) is None, s
+
+
+def test_date_entity_consolidation_and_no_fuzzy_merge():
+    store = GraphStore(cfg())
+    canon = Canonicalizer(store, get_embedder(cfg()), cfg())
+    d1 = canon.resolve_entity("July 18, 1896", EntityType.DATE)
+    d2 = canon.resolve_entity("18 July 1896", EntityType.DATE)
+    d3 = canon.resolve_entity("1896-07-18", EntityType.DATE)
+    assert d1 == d2 == d3, "date surface variants must consolidate to one node"
+    assert store.get_node(d1).entity_type == EntityType.DATE
+    # different granularities stay distinct (no specificity loss)
+    yr = canon.resolve_entity("1896", EntityType.DATE)
+    md = canon.resolve_entity("July 4th", EntityType.DATE)
+    assert len({d1, yr, md}) == 3
+    # adjacent years sit close in embedding space but must NOT merge (structured key only)
+    assert canon.resolve_entity("1897", EntityType.DATE) != yr
+    # an unparseable temporal phrase still becomes a (generic) entity, not dropped
+    decade = canon.resolve_entity("the 1890s", EntityType.DATE)
+    assert store.get_node(decade).ntype == NodeType.ENTITY
+
+
+def test_date_entity_key_survives_save_load():
+    path = tmp_store()
+    store = GraphStore.open(path, cfg())
+    canon = Canonicalizer(store, get_embedder(cfg()), cfg())
+    d1 = canon.resolve_entity("July 18, 1896", EntityType.DATE)
+    store.save()
+    store2 = GraphStore.open(path, cfg())
+    canon2 = Canonicalizer(store2, get_embedder(cfg()), cfg())  # _reindex re-registers date keys
+    # a different surface for the same instant resolves to the persisted node, no duplicate
+    assert canon2.resolve_entity("1896-07-18", EntityType.DATE) == d1
 
 
 # --------------------------------------------------------------------------- #
@@ -274,9 +328,9 @@ def test_extract_dump_runs_and_summarizes():
     records, errors = extract_corpus(ext, sample_items(), cfg())
     assert len(records) == 4 and not errors
     s = summarize(records, "heuristic")
-    assert s["items"] == 4 and s["unique_tags"] > 0 and s["entity_types"]
+    assert s["items"] == 4 and s["unique_concepts"] > 0 and s["entity_types"]
     img = next(r for r in records if r["modality"] == "image")
-    assert img["tags"] and img["description"]
+    assert img["entities"] and img["description"]
 
 
 def test_extract_text_sectioned_unions_sections():
@@ -284,7 +338,7 @@ def test_extract_text_sectioned_unions_sections():
     ext = HeuristicExtractor(cfg())
     long = "Alan Turing worked at Bletchley Park on cryptography and the Enigma. " * 200
     merged = extract_text_sectioned(ext, long, "Turing", long_doc_chars=500, max_sections=4)
-    assert merged.tags and merged.entities  # produced a unioned extraction across sections
+    assert merged.entities  # produced a unioned extraction across sections
 
 
 def test_eval_canon_gate_passes_offline():
@@ -304,8 +358,8 @@ def test_idf_weight_monotonic():
     for i in range(10):
         store.add_node(object_node(f"obj_{i}", modality=Modality.TEXT, source_ref="u",
                                    raw_text="x", content_hash=str(i), ts="t"))
-    common = canon.resolve_tag("common")
-    rare = canon.resolve_tag("rare")
+    common = canon.resolve_entity("common", EntityType.CONCEPT)
+    rare = canon.resolve_entity("rare", EntityType.CONCEPT)
     store.get_node(common).doc_frequency = 8
     store.get_node(rare).doc_frequency = 1
     assert canon.idf_weight(rare) > canon.idf_weight(common)
@@ -340,14 +394,32 @@ def test_heuristic_extract_text():
                          "Alan Turing")
     names = {e.name.lower() for e in r.entities}
     assert any("turing" in n for n in names)
-    assert len(r.tags) > 0
+    # topical content words come back as CONCEPT entities (no separate tag list)
+    assert any(e.type == EntityType.CONCEPT for e in r.entities)
 
 
 def test_heuristic_extract_image_uses_labels():
     ext = HeuristicExtractor(cfg())
     r = ext.extract_image("x.jpg", "dog, frisbee")
-    assert "dog" in r.tags and "frisbee" in r.tags
+    names = {e.name for e in r.entities}
+    assert "dog" in names and "frisbee" in names
     assert r.description and "dog" in r.description
+
+
+def test_parse_tool_payload_tolerates_malformed_shapes():
+    """Robustness: the model occasionally emits an entity as a bare string or a relation in a
+    non-object shape. The parser must recover (bare string → untyped entity) or skip, never
+    crash the whole extraction (the old AttributeError on e.get gave the item an empty graph)."""
+    from kg.extractors import _parse_tool_payload
+    payload = {
+        "entities": ["Jepara", {"name": "Bali", "type": "place"}, 42, {"type": "org"}],
+        "relations": ["not-an-object", {"source": "Jepara", "target": "Bali", "labels": ["near"]}],
+    }
+    ext = _parse_tool_payload(payload)
+    names = {e.name for e in ext.entities}
+    assert "Jepara" in names and "Bali" in names     # bare string recovered, dict parsed
+    assert 42 not in names                            # non-str/non-dict skipped
+    assert len(ext.relations) == 1 and ext.relations[0].labels == ["near"]
 
 
 # --------------------------------------------------------------------------- #
@@ -462,8 +534,9 @@ def test_ingest_builds_graph():
     assert rep.ingested == 4
     s = g.stats()
     assert s["by_node_type"]["object"] == 4
-    assert s["by_node_type"]["tag"] > 0
     assert s["by_node_type"]["entity"] > 0
+    # tags were retired into the entity vocabulary — no separate TAG nodes are ever minted
+    assert s["by_node_type"].get("tag", 0) == 0
     # Turing & Bletchley should share an entity → a derived object-object edge exists
     assert s["by_edge_type"].get("SHARED_ENTITY", 0) + s["by_edge_type"].get("SHARED_TAG", 0) > 0
 
@@ -472,6 +545,95 @@ def test_store_is_directed():
     import networkx as nx
     g = KnowledgeGraph.open(tmp_store(), cfg())
     assert isinstance(g.store.g, nx.MultiDiGraph)
+
+
+def test_concepts_are_entities_and_no_tag_nodes():
+    """Tags were retired into one vocabulary: a theme the extractor surfaces is a CONCEPT
+    entity, not a separate tag node. So there are NO tag nodes at all (duplication is
+    impossible by construction), concepts are reachable via MENTIONS, and node.tags mirrors
+    the object's concept entities for cheap display."""
+    c = cfg()
+    store = GraphStore(c)
+    embedder = get_embedder(c)
+    canon = Canonicalizer(store, embedder, c)
+    ext = Extraction(entities=[
+        ExtractedEntity(name="Ukraine", type=EntityType.PLACE),
+        ExtractedEntity(name="energy policy", type=EntityType.CONCEPT),
+        ExtractedEntity(name="geopolitics", type=EntityType.CONCEPT),
+    ])
+
+    class _FixedExtractor:
+        name = "fixed"
+
+        def extract_text(self, text, title=""):
+            return ext
+
+        def extract_image(self, image_path, label_hint=None):
+            return Extraction()
+
+    ingestor = Ingestor(store, _FixedExtractor(), embedder, canon, c)
+    item = CorpusItem(id="x", modality="text", source_ref="u", title="",
+                      text="A paragraph about Ukraine, energy policy and geopolitics.")
+    rep = ingestor.ingest([item])
+    assert rep.ingested == 1
+    # no separate tag vocabulary exists at all
+    assert store.nodes_of_type(NodeType.TAG) == []
+    # the concepts AND the place are all entities, reachable via MENTIONS
+    ent_names = {n.name for n in store.nodes_of_type(NodeType.ENTITY)}
+    assert {"Ukraine", "energy policy", "geopolitics"} <= ent_names
+    # node.tags mirrors ONLY the object's CONCEPT entities (the place is not a "tag")
+    assert set(store.get_node("obj_x").tags) == {"energy policy", "geopolitics"}
+
+
+def test_date_entity_ignores_embedding_collision():
+    """Load-bearing guard: even if the embedder reports two different dates as IDENTICAL,
+    DATE entities must NOT merge — they consolidate on the structured key, never the fuzzy
+    embedding gate. (The hashing embedder alone keeps adjacent years apart, so this uses a
+    constant embedder to actually force the collision the date path must withstand.)"""
+    c = cfg()
+
+    class _ConstEmbedder:
+        name = "const"
+
+        def embed(self, texts):
+            return [np.ones(c.embed_dim, dtype=np.float32) for _ in texts]
+
+    store = GraphStore(c)
+    canon = Canonicalizer(store, _ConstEmbedder(), c)
+    assert (canon.resolve_entity("1896", EntityType.DATE)
+            != canon.resolve_entity("1897", EntityType.DATE))
+    # control (fresh store): the SAME const embedder DOES fuzzy-merge two non-date concepts,
+    # proving the collision is real and the date path is what prevents it
+    store2 = GraphStore(c)
+    canon2 = Canonicalizer(store2, _ConstEmbedder(), c)
+    assert (canon2.resolve_entity("biography", EntityType.CONCEPT)
+            == canon2.resolve_entity("chemistry", EntityType.CONCEPT))
+
+
+def test_load_mixed_is_title_free_and_text_only(tmp_path):
+    """The mixed stream is title-free body text and image-free: load_mixed must never
+    inject the manifest title (no leakage into the prompt/node name) and must skip any
+    non-text row."""
+    (tmp_path / "aaa.txt").write_text("Some paragraph body about a topic.", encoding="utf-8")
+    rows = [
+        {"id": "aaa", "file": "aaa.txt", "modality": "text", "orig_id": "wiki_009",
+         "title": "Some Article Title", "url": "https://en.wikipedia.org/wiki/Some",
+         "label": None, "para_index": 0, "para_count": 1,
+         "created_at": "2024-01-01T00:00:00+00:00"},
+        {"id": "bbb", "file": "bbb.jpg", "modality": "image", "orig_id": "img_001",
+         "title": None, "url": None, "label": "dog", "para_index": None,
+         "para_count": None, "created_at": "2024-01-02T00:00:00+00:00"},
+    ]
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    items = load_mixed(manifest=str(manifest))
+    assert len(items) == 1                       # the image row is skipped (text-only)
+    it = items[0]
+    assert it.modality == "text"
+    assert it.title == ""                        # title is NEVER injected (no leakage)
+    assert it.id == "wiki_009#p000"
+    assert it.created_at == "2024-01-01T00:00:00+00:00"
+    assert "Some paragraph body" in it.text
 
 
 def test_ingest_builds_relation_tags_and_directed_edges():
@@ -628,11 +790,11 @@ def test_supersede_retracts_doc_frequency():
                       title="Quantum", text="Quantum mechanics describes atoms and photons. "
                       "Quantum theory and quantum fields are central to physics.")
     g.ingest([item])
-    df_before = {n.id: n.doc_frequency for n in g.store.nodes_of_type(NodeType.TAG)}
+    df_before = {n.id: n.doc_frequency for n in g.store.nodes_of_type(NodeType.ENTITY)}
     changed = CorpusItem(id="x", modality="text", source_ref="u", title="Quantum",
                          text="Completely different: marine biology, coral reefs and fish.")
     g.ingest([changed])
-    # the old tags must have been retracted (df back to 0), not left double-counted
+    # the old entities/concepts must have been retracted (df back down), not double-counted
     for tid, df in df_before.items():
         assert g.store.get_node(tid).doc_frequency <= df
 

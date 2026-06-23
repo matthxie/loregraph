@@ -21,8 +21,7 @@ from .graph import KnowledgeGraph
 from .models import EdgeType, NodeType
 from .store import GraphStore
 
-_OBJ_EDGES = {EdgeType.SHARED_TAG.value, EdgeType.SHARED_ENTITY.value,
-              EdgeType.SIMILAR_TO.value}
+_OBJ_EDGES = {EdgeType.SHARED_ENTITY.value, EdgeType.SIMILAR_TO.value}
 
 
 # --------------------------------------------------------------------------- #
@@ -115,14 +114,14 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
                  and store.get_node(s).ntype == NodeType.OBJECT]
     obj_set = list(dict.fromkeys(seed_objs + result_objs))  # ordered unique
 
-    # tag/entity hubs that connect these objects (the things the traversal hops through)
+    # entity/concept hubs that connect these objects (the things the traversal hops through)
     hub_hits: dict[str, int] = {}
     for oid in obj_set:
-        for nbr, d in store.neighbors(oid, etypes={EdgeType.TAGGED_AS, EdgeType.MENTIONS}):
+        for nbr, d in store.neighbors(oid, etypes={EdgeType.MENTIONS}):
             hub_hits[nbr] = hub_hits.get(nbr, 0) + 1
-    # also include any tag/entity nodes that were themselves seeds
+    # also include any entity/concept nodes that were themselves seeds
     seed_hubs = [s for s in seeds if store.get_node(s)
-                 and store.get_node(s).ntype in (NodeType.TAG, NodeType.ENTITY)]
+                 and store.get_node(s).ntype == NodeType.ENTITY]
     hubs = [h for h, c in sorted(hub_hits.items(), key=lambda kv: -kv[1]) if c >= 2]
     hubs = list(dict.fromkeys(seed_hubs + hubs))[:max_hubs]
 
@@ -173,7 +172,7 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
             roles.append("result")
             entry["rank"] = rank_of[nid]
             entry["score"] = round(float(score_of[nid]), 4)
-        if n.ntype in (NodeType.TAG, NodeType.ENTITY):
+        if n.ntype == NodeType.ENTITY:
             roles.append("hub")
         entry["roles"] = roles
         nodes.append(entry)
@@ -217,8 +216,8 @@ def agent_trace_payload(answer, store: GraphStore, max_hubs: int = 28) -> dict:
                   if is_t(t, NodeType.OBJECT) and t not in set(seed_objs) | set(result_objs)]
     obj_set = list(dict.fromkeys(seed_objs + result_objs + other_objs))[:40]
 
-    seed_hubs = [s for s in answer.seeds if is_t(s, NodeType.TAG, NodeType.ENTITY)]
-    hub_ids = [t for t in answer.touched if is_t(t, NodeType.TAG, NodeType.ENTITY)]
+    seed_hubs = [s for s in answer.seeds if is_t(s, NodeType.ENTITY)]
+    hub_ids = [t for t in answer.touched if is_t(t, NodeType.ENTITY)]
     hubs = list(dict.fromkeys(seed_hubs + hub_ids))[:max_hubs]
 
     keep = set(obj_set) | set(hubs)
@@ -265,7 +264,7 @@ def agent_trace_payload(answer, store: GraphStore, max_hubs: int = 28) -> dict:
         if nid in rank_of:
             roles.append("result")
             entry["rank"] = rank_of[nid]
-        if n.ntype in (NodeType.TAG, NodeType.ENTITY):
+        if n.ntype == NodeType.ENTITY:
             roles.append("hub")
         entry["roles"] = roles
         nodes.append(entry)
@@ -330,7 +329,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <title>kg — knowledge graph viewer</title>
 <style>
   :root{ --bg:#0e1116; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --mut:#8b949e;
-         --obj-text:#4f8ef7; --obj-image:#2ec27e; --tag:#f5a623; --entity:#b06ff0;
+         --obj-text:#4f8ef7; --obj-image:#2ec27e; --entity:#b06ff0;
          --seed:#ffd24d; --result:#ff5d8f; --edge:#3a4250; --edge-hi:#ffae57; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
@@ -406,8 +405,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
       <div class="legend" style="margin-top:8px">
         <span><i class="dot" style="background:var(--obj-text)"></i>article</span>
         <span><i class="dot" style="background:var(--obj-image)"></i>image</span>
-        <span><i class="dot" style="background:var(--tag)"></i>tag</span>
-        <span><i class="dot" style="background:var(--entity)"></i>entity</span>
+        <span><i class="dot" style="background:var(--entity)"></i>entity / concept</span>
         <span><i class="dot" style="background:var(--seed)"></i>seed</span>
         <span><i class="dot" style="background:var(--result)"></i>result</span>
         <span style="color:var(--entity)">→ relationship (directed)</span>
@@ -445,9 +443,9 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <script>
 const DATA = /*__DATA__*/;
 const NS="http://www.w3.org/2000/svg";
-const COLORS={object_text:"#4f8ef7",object_image:"#2ec27e",tag:"#f5a623",entity:"#b06ff0",community:"#9aa4af"};
+const COLORS={object_text:"#4f8ef7",object_image:"#2ec27e",entity:"#b06ff0",community:"#9aa4af"};
 function colorOf(n){ if(n.type==="object") return n.modality==="image"?COLORS.object_image:COLORS.object_text; return COLORS[n.type]||"#9aa4af"; }
-function radius(n){ if(n.type==="object") return 5+Math.min(7,(n.deg||0)*0.5); return n.type==="tag"?3.5:3; }
+function radius(n){ if(n.type==="object") return 5+Math.min(7,(n.deg||0)*0.5); return 3; }
 
 const svg=document.getElementById("svg"), view=document.getElementById("view");
 const gLinks=document.getElementById("links"), gNodes=document.getElementById("nodes"),

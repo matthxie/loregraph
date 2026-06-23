@@ -2,10 +2,14 @@
 
 An **LLM-traversable knowledge graph** over multimodal content (text, links, photos, files).
 
-Each ingested object becomes a node: an LLM extracts tags/entities/concepts and the
-**directed relationships** between entities, and links it into a **directed graph**.
-Both tags *and* relationship labels are open-vocabulary (LLM-generated) and **consolidated
-over time** into a canonical vocabulary. Retrieval is *graph-first* — an LLM (or a
+Each ingested object becomes a node: an LLM extracts a single open-vocabulary set of
+**entities & concepts** — named things *and* the topical themes the content is about, plus
+the **dates** tied to stated facts — and the **directed relationships** between them, then
+links it into a **directed graph**. There is one unified vocabulary: a topical theme is just
+a `concept`-typed entity (no separate "tag" node type), so the same surface can never be
+duplicated as both a tag and an entity. Both the entity/concept names *and* the relationship
+labels are open-vocabulary (LLM-generated) and **consolidated over time** into a canonical
+vocabulary. Retrieval is *graph-first* — an LLM (or a
 PageRank-style diffusion) traverses the graph rather than relying on chunk-embedding
 similarity alone. Embeddings exist mainly as an **entry-point index** to find seed nodes.
 
@@ -67,15 +71,16 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
 
 1. **Traversal is the primary retrieval path; embeddings are a seed index.** Embed to *find*
    entry nodes, then let graph structure (PageRank diffusion / BFS) do the work.
-2. **Tags *and* relationships are first-class, open-vocabulary, and consolidated.** Topical
-   tags are first-class nodes; relationship labels (`is_friend_of`, `works_with`, …) are
-   LLM-generated per connection as **parallel directed edges — one per relation** (the
-   KG-triple / property-graph shape, so each carries its own provenance/confidence), then
-   consolidated into canonical `RelationTagNode`s by the same drift-control pipeline as tags.
-   This is *open relation extraction + relation canonicalization* (Galárraga et al., CIKM 2014;
-   CESI, WWW 2018) — the consolidation step is what stops free-form predicates from collapsing
-   into a vague `related_to`, so we get expressivity without the drift the fixed-enum was
-   guarding against.
+2. **Entities/concepts *and* relationships are first-class, open-vocabulary, and
+   consolidated.** Named things and topical themes share **one** entity vocabulary (a theme is
+   a `concept`-typed entity — there is no separate tag node type, so nothing is stored twice);
+   relationship labels (`is_friend_of`, `works_with`, `born_on`, …) are LLM-generated per
+   connection as **parallel directed edges — one per relation** (the KG-triple / property-graph
+   shape, so each carries its own provenance/confidence), then consolidated into canonical
+   `RelationTagNode`s by the same drift-control pipeline as the entities. This is *open relation
+   extraction + relation canonicalization* (Galárraga et al., CIKM 2014; CESI, WWW 2018) — the
+   consolidation step is what stops free-form predicates from collapsing into a vague
+   `related_to`, so we get expressivity without the drift the fixed-enum was guarding against.
 3. **Drift control is layered**, not a single hash: exact/normalized hash → embedding synonymy
    *link* (not merge) → periodic taxonomy reconciliation. Bias toward *linking* near-duplicates,
    not hard-merging them. Relationships consolidate on a **content key** (drop function words +

@@ -113,7 +113,6 @@ class Ingestor:
         # 3b. batch-embed every tag/entity surface up front (huge speedup vs. per-resolve)
         tag_ent_surfaces: list[str] = []
         for ext in extractions:
-            tag_ent_surfaces.extend(ext.tags)
             tag_ent_surfaces.extend(e.name for e in ext.entities)
             for r in ext.relations:
                 tag_ent_surfaces.append(r.source)
@@ -188,19 +187,10 @@ class Ingestor:
             self._retract(supersedes)              # undo the old version's df/hash
             self.store.supersede_node(supersedes, obj_id)
 
-        # tags → TAGGED_AS
-        for t in ext.tags:
-            tid = self.canon.resolve_tag(t)
-            if not tid:
-                continue
-            self.store.add_edge(Edge(src=obj_id, dst=tid, etype=EdgeType.TAGGED_AS,
-                                    provenance=Provenance.EXTRACTED, confidence=1.0))
-            self.canon.bump_doc_frequency(tid)
-            cname = self.store.get_node(tid).name
-            if cname not in node.tags:
-                node.tags.append(cname)
-
-        # entities → MENTIONS (+ provenance back-pointer)
+        # entities & concepts → MENTIONS (+ provenance back-pointer). Tags were retired:
+        # what used to be a topical "tag" is now a CONCEPT entity in this ONE vocabulary, so
+        # there is no separate tag node / TAGGED_AS edge — and therefore no tag↔entity
+        # duplication possible (the same surface resolves to a single entity node).
         ent_map: dict[str, str] = {}
         for e in ext.entities:
             eid = self.canon.resolve_entity(e.name, e.type)
@@ -213,6 +203,10 @@ class Ingestor:
             en = self.store.get_node(eid)
             if obj_id not in en.provenance_objs:
                 en.provenance_objs.append(obj_id)
+            # keep node.tags as a denormalised display list of the object's THEMES (its
+            # concept entities) so inspect / viz / agent still surface topics cheaply
+            if en.entity_type == EntityType.CONCEPT and en.name not in node.tags:
+                node.tags.append(en.name)
 
         # relations → directed RELATED_TO between entities, labelled with the
         # consolidated relationship-tag set (gated by confidence)
@@ -249,7 +243,9 @@ class Ingestor:
         if not old:
             return
         for nbr, data in self.store.neighbors(old_id, valid_only=False):
-            if data["etype"] in (EdgeType.TAGGED_AS.value, EdgeType.MENTIONS.value):
+            # MENTIONS covers entities/concepts; TAGGED_AS is kept only so superseding a node
+            # loaded from a legacy (pre-rev-5) dump still retracts its old tag-node df.
+            if data["etype"] in (EdgeType.MENTIONS.value, EdgeType.TAGGED_AS.value):
                 n = self.store.get_node(nbr)
                 if n and n.doc_frequency > 0:
                     n.doc_frequency -= 1
@@ -258,28 +254,28 @@ class Ingestor:
 
     # --------------------------------------------------------- derived edges
     def _derive_object_edges(self) -> None:
-        """SHARED_TAG / SHARED_ENTITY (overlap × IDF) + object embedding kNN.
+        """SHARED_ENTITY (overlap × IDF) + object embedding kNN.
 
         Runs over the full valid-object set each ingest. At MVP scale (one-shot
         ingest of ~200 objects) this is paid once; incremental scoping to only the
         newly-written objects is the noted optimization if ingest goes online.
+
+        (No SHARED_TAG: tags were retired into the CONCEPT-entity vocabulary, so concept
+        overlap flows through SHARED_ENTITY like every other entity. SHARED_TAG remains a
+        legacy edge type only for reading older graph dumps — see kg/models.py.)
         """
         from .models import NodeType
         objects = [n.id for n in self.store.nodes_of_type(NodeType.OBJECT)]  # valid only
         invalid = {n.id for n in self.store.nodes_of_type(NodeType.OBJECT, valid_only=False)
                    if not n.valid}
 
-        # inverted indexes tag/entity -> objects (via TAGGED_AS / MENTIONS)
-        tag_objs: dict[str, list[str]] = defaultdict(list)
+        # inverted index entity/concept -> objects (via MENTIONS)
         ent_objs: dict[str, list[str]] = defaultdict(list)
         for oid in objects:
             for nbr, data in self.store.neighbors(oid):
-                if data["etype"] == EdgeType.TAGGED_AS.value:
-                    tag_objs[nbr].append(oid)
-                elif data["etype"] == EdgeType.MENTIONS.value:
+                if data["etype"] == EdgeType.MENTIONS.value:
                     ent_objs[nbr].append(oid)
 
-        self._add_shared_edges(tag_objs, EdgeType.SHARED_TAG)
         self._add_shared_edges(ent_objs, EdgeType.SHARED_ENTITY)
 
         # object embedding kNN → SIMILAR_TO (skip superseded objects)

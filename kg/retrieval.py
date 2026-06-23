@@ -1,7 +1,7 @@
 """Retrieval (docs/ARCHITECTURE.md §5) — a pluggable, multi-mode retriever.
 
 Seeding fuses three signals (rev 2): object-text embeddings, BM25 keyword search,
-and query-entity/tag linking → seed nodes (the *entry-point index*, not the answer).
+and query-entity/concept linking → seed nodes (the *entry-point index*, not the answer).
 Then one of three traversal modes spreads from the seeds:
 
   * PPRRetriever    — Personalized PageRank seed-and-spread + MMR/node-distance
@@ -106,7 +106,7 @@ class Seeder:
         return out
 
     def seed(self, query: str) -> dict[str, float]:
-        """Return {node_id: seed_mass} fusing embedding + BM25 + entity/tag links."""
+        """Return {node_id: seed_mass} fusing embedding + BM25 + entity/concept links."""
         scores: dict[str, float] = {}
         qv = self.embedder.embed([query])[0]
 
@@ -119,22 +119,19 @@ class Seeder:
         for oid, score in self.bm25_search(query, k=self.config.seed_k):
             scores[oid] = max(scores.get(oid, 0.0), score)
 
-        # (c) query-entity / tag linking → seed those nodes too (HippoRAG)
+        # (c) query-entity linking → seed those nodes too (HippoRAG). The entity vocabulary
+        # is unified: named entities AND concepts (the former "tags") both live here.
         keys = set()
         toks = _TOK.findall(query.lower())
         for n in range(1, 4):  # unigram..trigram surface forms
             for i in range(len(toks) - n + 1):
                 keys.add(normalize_key(" ".join(toks[i:i + n])))
-        for nid in (self.canon._tag_keys.get(k) for k in keys):
-            if nid:
-                scores[nid] = max(scores.get(nid, 0.0), 0.6)
         for nid in (self.canon._entity_keys.get(k) for k in keys):
             if nid:
                 scores[nid] = max(scores.get(nid, 0.0), 0.6)
-        # embedding-matched tags/entities (synonymy seeds)
-        for kind in ("tag", "entity"):
-            for nid, cos in self.store.vectors.search(kind, qv, k=3, floor=0.6):
-                scores[nid] = max(scores.get(nid, 0.0), float(cos) * 0.6)
+        # embedding-matched entities/concepts (synonymy seeds)
+        for nid, cos in self.store.vectors.search("entity", qv, k=3, floor=0.6):
+            scores[nid] = max(scores.get(nid, 0.0), float(cos) * 0.6)
 
         return scores
 
@@ -166,7 +163,7 @@ def projected_graph(store: GraphStore, config: Config,
     # etype (then summing ACROSS etypes) means N parallel RELATED_TO relations between
     # a pair (rev 4 — is_friend_of + works_with) count once, not N times — a verbose
     # LLM can't inflate diffusion weight (the research's per-pair-normalization point).
-    # Distinct signals (SHARED_TAG + SIMILAR_TO) still combine.
+    # Distinct signals (SHARED_ENTITY + SIMILAR_TO) still combine.
     pair_w: dict[tuple, dict[str, float]] = {}
     for u, v, data in store.all_edges():
         if not data.get("valid", True):

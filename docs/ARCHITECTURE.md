@@ -48,6 +48,16 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 
 ### Node types
 
+> **Update (rev 5) — tags retired into one entity/concept vocabulary.** What were "topical
+> tags" are now `concept`-typed **EntityNode**s: the extractor emits a single open-vocabulary
+> entity list (named things *and* themes *and* dates), so the same surface is never stored
+> twice as both a tag and an entity. **TagNode / `TAGGED_AS` / `SHARED_TAG` are legacy** —
+> nothing mints them anymore (the enum members are kept only so an old store still
+> deserializes); objects connect to concepts via `MENTIONS`, and ObjectNode↔ObjectNode
+> overlap is `SHARED_ENTITY`. The drift-control machinery below applies unchanged to the
+> unified entity vocabulary. A new `date` entity type carries concrete dates (canonicalized by
+> `normalize_date`), so temporal facts become edges like `born_on` / `died_on` / `founded_in`.
+
 | Node type | Source / object | Notes |
 |---|---|---|
 | **ObjectNode** | one per ingested item (article, link, photo, file) | Holds raw ref + raw text (the embedding surface), content hash (SHA256), modality, `created_at`, `last_modified`, `valid`/`superseded_by`. Images also store a one-line VLM description (their only text). The "document" unit. *(No `summary` field — rev 2.)* |
