@@ -5,6 +5,7 @@
     eval-canon     canonicalization gate (synonyms merge; antonyms/inverses must not)
     communities    detect communities + summaries (Path B / breadth queries)
     query          retrieve for a question (auto-routes local↔global)
+    ask            answer a question with an LLM that traverses the graph via tools (§5)
     stats          print node/edge counts
     inspect        dump one node + its neighbours
     eval           recall@k / MRR ablation across retrieval modes
@@ -28,9 +29,12 @@ def _config(args) -> Config:
         cfg.extractor = args.extractor
     if getattr(args, "embedder", None):
         cfg.embedder = args.embedder
-    if getattr(args, "model", None):          # override the LLM model (extractor + L3)
+    if getattr(args, "model", None):          # override the LLM model (extractor + L3 + agent)
         cfg.llm_model = args.model
         cfg.l3_model = args.model
+        cfg.agent_model = args.model
+    if getattr(args, "backend", None):        # agent backend override (ask)
+        cfg.agent_backend = args.backend
     if getattr(args, "l3", False):            # enable the L3 canonicalization tie-breaker
         cfg.l3_enabled = True
     return cfg
@@ -108,6 +112,43 @@ def cmd_query(args):
             print(f"  [{c['score']:.4f}] {c['community']} (size {c['size']}): {c['summary']}")
         return
     print(g.explain(res, max_objects=args.k))
+
+
+def cmd_ask(args):
+    g = _open(args)
+    ans = g.ask(args.text, backend=args.backend, k=args.k, max_steps=args.max_steps)
+    print(f"ask: {args.text!r}  backend={ans.backend}  steps={ans.steps}  "
+          f"stopped={ans.stopped}")
+    print(f"\nanswer:\n{ans.answer}\n")
+    if ans.citations:
+        print("citations:")
+        for cid in ans.citations:
+            n = g.store.get_node(cid)
+            print(f"  [{cid}] {n.name if n else '?'}")
+    else:
+        print("citations: (none)")
+    if ans.dropped_citations:
+        print(f"⚠ dropped {len(ans.dropped_citations)} unvalidated citation(s): "
+              f"{', '.join(ans.dropped_citations)}")
+    if args.show_trace:
+        print("\ntrace:")
+        for s in ans.trace:
+            inp = {kk: vv for kk, vv in s["input"].items() if kk != "etypes" or vv}
+            print(f"  {s['step'] + 1} {s['tool']:16s} {json.dumps(inp, ensure_ascii=False)}"
+                  f"  -> {s['result_summary']}")
+    if args.trace_out:
+        with open(args.trace_out, "w", encoding="utf-8") as f:
+            json.dump({"query": ans.query, "backend": ans.backend, "answer": ans.answer,
+                       "citations": ans.citations, "trace": ans.trace}, f,
+                      ensure_ascii=False, indent=2)
+        print(f"\nwrote trace -> {args.trace_out}")
+    if args.viz:
+        from .viz import agent_trace_payload, graph_payload, render_html
+        html = render_html(graph_payload(g.store),
+                           trace=agent_trace_payload(ans, g.store), server=False)
+        with open(args.viz, "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"wrote viewer -> {args.viz}  (open it in a browser)")
 
 
 def cmd_stats(args):
@@ -241,6 +282,19 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["auto", "ppr", "bfs", "vector", "community"])
     pq.add_argument("--k", type=int, default=8)
     pq.set_defaults(func=cmd_query)
+
+    pa = sub.add_parser("ask", help="answer a question with an LLM that traverses the graph "
+                                    "via tools (§5 agentic retrieval)")
+    pa.add_argument("text")
+    pa.add_argument("--backend", choices=["auto", "claude", "offline"], default="auto",
+                    help="auto = Claude if a key is present, else the offline deterministic agent")
+    pa.add_argument("--model", default=None, help="override the agent LLM model id")
+    pa.add_argument("--k", type=int, default=8, help="default objects per search tool")
+    pa.add_argument("--max-steps", type=int, default=None, help="tool-call budget (default 8)")
+    pa.add_argument("--show-trace", action="store_true", help="print the per-step tool calls")
+    pa.add_argument("--trace-out", default=None, help="write the agent trace as JSON")
+    pa.add_argument("--viz", default=None, help="write the HTML viewer with this agent's trace")
+    pa.set_defaults(func=cmd_ask)
 
     ps = sub.add_parser("stats", help="node/edge counts")
     ps.set_defaults(func=cmd_stats)

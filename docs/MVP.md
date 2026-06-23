@@ -24,7 +24,8 @@ traversal — exactly the system class (HippoRAG / GraphRAG / A-MEM) the design 
 | A/B baselines: plain BFS (uses `seen`), flat vector top-k | `kg/retrieval.py` | §5, §10 |
 | INFERRED-edge confidence floor + skip superseded edges in traversal | `kg/retrieval.py` `projected_graph` | §2, §9.5 |
 | **Path B**: Louvain communities + summaries + breadth-query router | `kg/communities.py` | phase 3 |
-| Eval harness: recall@k / MRR ablation (PPR vs BFS vs vector) | `kg/evaluate.py` | phase 4 |
+| **Agentic retrieval** (`ask`): an LLM traverses via tools (seed-and-spread/keyword/vector/neighbors/find_path/read_object/browse_themes) → cited answer; deterministic offline agent fallback | `kg/agent.py` | §5 (reserved LLM-guided traversal) |
+| Eval harness: recall@k / MRR ablation (PPR vs BFS vs vector vs **agent**) | `kg/evaluate.py` | phase 4 |
 | CLI | `kg/cli.py` | — |
 
 This covers Phases 0–4 of the §8 build plan. Deferred per the design: L3 batch
@@ -55,12 +56,64 @@ python -m kg ingest --reset              # build the graph from dataset/ (~12s o
 python -m kg communities                 # detect communities for breadth queries
 python -m kg query "Canadian football player who won the Grey Cup"
 python -m kg query "what are the main themes across the collection"   # → global path
+python -m kg ask "how is Alan Turing connected to the Enigma machine?" --show-trace  # agentic
 python -m kg inspect obj_wiki_000        # node + neighbours (provenance/confidence)
 python -m kg eval --single 40 --cross 40 # the thesis ablation
 python -m pytest -q                       # 26 offline tests
 ```
 
 Use `--extractor haiku --embedder st` on `ingest` for the full-quality pipeline.
+
+## Agentic retrieval (`ask`)
+
+`query` runs the algorithmic retrievers directly. **`ask`** realizes the design's *reserved*
+**LLM-guided traversal** path (§5: "reserve it … the path-finding / explainability path …
+serialize the subgraph compactly … respect the ~80-node-per-prompt ceiling"): an LLM answers a
+prompt by **calling read-only graph tools** across tool-use turns, gathering compact evidence,
+then synthesizing a cited answer. The agent is pure orchestration over the existing primitives —
+it reimplements no retrieval (`kg/agent.py`).
+
+**The toolbox** (each wraps an existing primitive; results are compact stubs + ≤160-char
+snippets, never full payloads — reading is its own tool):
+
+| tool | wraps | for |
+|---|---|---|
+| `seed_and_spread` | `PPRRetriever` | the primary path: seed (embedding+BM25+entity link) → PPR diffusion → ranked objects |
+| `keyword_search` | `Seeder.bm25_search` | exact/lexical recall (names, rare terms) the embedding blurs |
+| `vector_search` | `VectorRetriever` | flat semantic similarity to broaden when the graph path is thin |
+| `neighbors` | `store.neighbors` | one typed hop, surfacing the relationship **label + direction + provenance + confidence** (parallel `RELATED_TO` edges yield one row each) |
+| `find_path` | `nx.shortest_path` over `projected_graph` | the connecting chain between two entities ("how are X and Y related") |
+| `read_object` | `store.get_node` | the **only** full-text tool — read before you cite |
+| `browse_themes` | `CommunityRetriever` | corpus-wide themes for breadth questions |
+
+A `submit_answer` terminal makes the stop condition and citations machine-readable. The loop is
+bounded (`agent_max_steps`, default 8), dedupes identical calls, and a **node budget**
+(`agent_node_budget`, the §5 ceiling) caps how many distinct nodes any run can surface.
+**Citations are read-gated**: a cited id survives only if it is an OBJECT node the model actually
+read (`_validate_citations`), so the agent structurally cannot cite what it never opened —
+anything else is dropped and reported.
+
+**Offline parity.** Exactly like the extractor (`HaikuExtractor` ⇄ `HeuristicExtractor`), the
+real `ClaudeAgent` (Anthropic tool-use) degrades to a deterministic `OfflineAgent` that runs the
+*same* tool executors as a fixed traversal policy (route global→themes, else seed-and-spread →
+escalate → one-hop enrich / find-path → read → extractive answer). With no key it is the default,
+so `python -m kg ask` and the 24 agent tests run fully offline and deterministically; the live
+path turns on the moment a key is present.
+
+```bash
+python -m kg ask "how is Alan Turing connected to the Enigma machine?" --show-trace
+python -m kg ask "who did Marie Curie work with?" --backend offline       # deterministic, no key
+python -m kg ask "..." --viz agent.html         # write the graph viewer with this run's trace
+python -m kg ask "..." --trace-out trace.json   # dump the tool-call trace
+python -m kg eval --modes ppr,bfs,vector,agent  # recall@k: does agent traversal recall gold?
+```
+
+`ask` prints the answer, the validated citations, and (with `--show-trace`) the per-step tool
+calls; `--viz` reuses the existing viewer (`viz.agent_trace_payload` maps the run onto the same
+seed/hub/result schema as a `query` trace). In `eval`, the `agent` mode runs the offline backend
+and feeds `AgentAnswer.object_ids` (citations ∪ surfaced objects) into the same recall@k/MRR math
+as the algorithmic modes — an apples-to-apples "does the agent's traversal recall the gold
+objects?" comparison.
 
 ## Dev / comparison tooling
 

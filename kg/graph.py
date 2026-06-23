@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .canonicalize import Canonicalizer
 from .communities import CommunityRetriever, build_communities, is_global_query
 from .config import Config
@@ -64,6 +66,23 @@ class KnowledgeGraph:
         retriever = get_retriever(mode, self.store, self.embedder, self.canon, self.config)
         return retriever.retrieve(text, k=k)
 
+    # ------------------------------------------------------------------- ask
+    def ask(self, text: str, *, backend: str | None = None, k: int | None = None,
+            max_steps: int | None = None, model: str | None = None, client=None):
+        """Agentic LLM graph-traversal query (docs/ARCHITECTURE.md §5 reserved path).
+
+        Hands an LLM read-only graph tools (seed-and-spread, keyword/vector search,
+        neighbors, find_path, read_object, browse_themes) and lets it traverse to a cited
+        answer. Falls back to a deterministic offline agent with no API key. Returns an
+        AgentAnswer. `client=` injects a (possibly fake) Anthropic client for tests."""
+        from .agent import get_agent
+        cfg = self.config
+        if backend or max_steps or model:
+            cfg = replace(cfg, **{kk: vv for kk, vv in
+                                  (("agent_backend", backend), ("agent_max_steps", max_steps),
+                                   ("agent_model", model)) if vv})
+        return get_agent(self.store, self.embedder, self.canon, cfg, client=client).run(text)
+
     # ----------------------------------------------------------------- helpers
     def explain(self, result: RetrievalResult, max_objects: int = 5) -> str:
         """Human-readable trace of a retrieval (uses the touched subgraph)."""
@@ -76,7 +95,11 @@ class KnowledgeGraph:
         return "\n".join(lines)
 
     def stats(self) -> dict:
+        import os
         s = self.store.stats()
         # surface the live backends so a degraded offline run is never silent
-        s["backends"] = {"extractor": self.extractor.name, "embedder": self.embedder.name}
+        agent = "claude" if (self.config.agent_backend in ("auto", "claude")
+                             and os.environ.get("ANTHROPIC_API_KEY")) else "offline"
+        s["backends"] = {"extractor": self.extractor.name, "embedder": self.embedder.name,
+                         "agent": agent}
         return s

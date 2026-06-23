@@ -55,25 +55,55 @@ class Seeder:
         self.config = config
         self._bm25 = None
         self._bm25_ids: list[str] = []
+        self._bm25_corpus: list[list[str]] = []
 
     def _ensure_bm25(self):
         if self._bm25 is not None:
-            return
-        try:
-            from rank_bm25 import BM25Okapi
-        except Exception:
-            self._bm25 = False
             return
         corpus, ids = [], []
         for n in self.store.nodes_of_type(NodeType.OBJECT):
             surface = n.raw_text or n.description or n.name or ""
             corpus.append(_TOK.findall(surface.lower()))
             ids.append(n.id)
+        self._bm25_ids = ids
+        self._bm25_corpus = corpus     # kept for the offline token-overlap fallback
         if not corpus:
             self._bm25 = False
             return
+        try:
+            from rank_bm25 import BM25Okapi
+        except Exception:
+            self._bm25 = False         # rank_bm25 absent → bm25_search uses the fallback
+            return
         self._bm25 = BM25Okapi(corpus)
-        self._bm25_ids = ids
+
+    def bm25_search(self, query: str, k: int | None = None) -> list[tuple[str, float]]:
+        """Top-k (object_id, max-normalized score) over object raw-text by lexical
+        relevance. Shared by `seed()` step (b) and the agent's `keyword_search` tool
+        so the two can't drift. Uses BM25 when `rank_bm25` is installed; otherwise
+        degrades to a deterministic token-overlap scan so lexical search still works
+        fully offline."""
+        k = k or self.config.seed_k
+        self._ensure_bm25()
+        toks = _TOK.findall((query or "").lower())
+        if not toks or not self._bm25_ids:
+            return []
+        if self._bm25:
+            scores = self._bm25.get_scores(toks)
+        else:                          # offline fallback: count query-token hits per doc
+            want = set(toks)
+            scores = np.array([sum(1 for t in doc if t in want)
+                               for doc in self._bm25_corpus], dtype=np.float64)
+        peak = float(scores.max()) if len(scores) else 0.0
+        if peak <= 0:
+            return []
+        scores = scores / peak
+        out = []
+        for i in np.argsort(-scores)[:k]:
+            if scores[i] <= 0:
+                break
+            out.append((self._bm25_ids[i], float(scores[i])))
+        return out
 
     def seed(self, query: str) -> dict[str, float]:
         """Return {node_id: seed_mass} fusing embedding + BM25 + entity/tag links."""
@@ -86,18 +116,8 @@ class Seeder:
             scores[oid] = max(scores.get(oid, 0.0), float(cos))
 
         # (b) BM25 keyword seeds (lexical recall the embedding misses)
-        self._ensure_bm25()
-        if self._bm25:
-            toks = _TOK.findall(query.lower())
-            bm = self._bm25.get_scores(toks)
-            if bm.max() > 0:
-                bm = bm / bm.max()
-                top = np.argsort(-bm)[: self.config.seed_k]
-                for i in top:
-                    if bm[i] <= 0:
-                        continue
-                    oid = self._bm25_ids[i]
-                    scores[oid] = max(scores.get(oid, 0.0), float(bm[i]))
+        for oid, score in self.bm25_search(query, k=self.config.seed_k):
+            scores[oid] = max(scores.get(oid, 0.0), score)
 
         # (c) query-entity / tag linking → seed those nodes too (HippoRAG)
         keys = set()

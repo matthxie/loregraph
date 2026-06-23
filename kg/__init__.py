@@ -32,8 +32,9 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+from .agent import AgentAnswer
 from .config import Config
 from .graph import KnowledgeGraph
 
-__all__ = ["Config", "KnowledgeGraph"]
+__all__ = ["AgentAnswer", "Config", "KnowledgeGraph"]
 __version__ = "0.1.0"

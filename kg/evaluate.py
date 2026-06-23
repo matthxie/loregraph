@@ -126,7 +126,11 @@ def evaluate(g: KnowledgeGraph, questions: list[Question],
         agg_r, agg_m = 0.0, 0.0
         per = {kind: {"n": 0, "r": 0.0, "m": 0.0} for kind in kinds}
         for q in questions:
-            res = g.query(q.query, mode=mode, k=k)
+            # "agent" routes through the §5 agentic traversal (offline backend for a
+            # deterministic, key-free comparison); its .object_ids (citations ∪ surfaced
+            # objects) drops into the same recall@k/MRR math as a RetrievalResult.
+            res = (g.ask(q.query, backend="offline", k=k) if mode == "agent"
+                   else g.query(q.query, mode=mode, k=k))
             ranked = res.object_ids
             r = _recall_at_k(ranked, q.gold, k)
             m = _mrr(ranked, q.gold)
