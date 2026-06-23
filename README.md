@@ -30,8 +30,20 @@ python -m kg query "what are the main themes across the collection"   # algorith
 python -m kg ask   "how is Alan Turing connected to the Enigma machine?"  # LLM traverses via tools
 python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector (+ agent)
 python -m kg serve       # browser viewer: watch the graph build + trace queries
+python -m kg testrun     # one test run: ingest the temporal stream doc-by-doc + ask all
+                         #   eval questions, tracking cost/tokens/tags/temporal/accuracy
+python -m kg dashboard   # browse runs: Input view (structure forms) ⇄ Query view (traversal)
 python -m pytest -q
 ```
+
+A **test-run dashboard** instruments the pipeline end-to-end (`kg testrun` → `runs/<id>/`):
+the *Input* view animates the graph forming as the `dataset/mixed/` temporal stream is
+ingested one document at a time — with synchronized charts for cost, tokens, avg tags
+per node, vocabulary growth and the `doc_frequency` of the top tags over time — while the
+*Query* view replays the agent's traversal for every `dataset/retrieval` question with
+recall@k / MRR / citation-grounding and an optional LLM-judge response score. It runs live
+(real Haiku cost/tokens) or fully offline ($0, deterministic). Trigger it in Claude Code
+with *"test the input and query on the full dataset"* (the `test-graph` skill).
 
 Two query surfaces: **`query`** runs the *algorithmic* retrievers directly (PPR / BFS / vector /
 community) and returns ranked objects; **`ask`** is the *agentic* path — an LLM is handed

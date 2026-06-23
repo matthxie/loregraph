@@ -23,3 +23,9 @@ store/
 
 # Generated HTML viewer
 kg_viz.html
+
+# Dashboard test-run artifacts (regenerable via `python -m kg testrun`)
+runs/
+
+# Throwaway test virtualenv
+.venv-test/

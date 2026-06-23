@@ -30,6 +30,7 @@ from .canonicalize import Canonicalizer
 from .communities import CommunityRetriever, is_global_query
 from .config import Config
 from .embedders import Embedder
+from .metering import UsageMeter, empty_totals
 from .models import EdgeType, Node, NodeType
 from .retrieval import (PPRRetriever, VectorRetriever, projected_graph)
 from .store import GraphStore
@@ -218,6 +219,10 @@ class AgentAnswer:
     touched: list[str] = field(default_factory=list)          # every node a tool surfaced
     object_ids: list[str] = field(default_factory=list)       # ranked object ids (eval seam)
     notes: list[str] = field(default_factory=list)
+    # token/cost rollup for this run (metering.totals_of): llm_calls, input_tokens,
+    # output_tokens, cache_read, cache_write, tokens, cost_usd. Zero for the offline
+    # backend (it never calls the API), so the field is always present and safe to read.
+    usage: dict = field(default_factory=empty_totals)
 
     def objects(self, store: GraphStore) -> list[Node]:
         """Resolve the validated citations to their ObjectNodes (convenience)."""
@@ -638,6 +643,7 @@ class ClaudeAgent:
         self.tools = tools
         self.config = config
         self.client = client
+        self.meter = UsageMeter()   # token/cost across this run's tool-use turns
 
     def run(self, query: str) -> AgentAnswer:
         if not query or not query.strip():
@@ -657,6 +663,7 @@ class ClaudeAgent:
                 # mirroring _force_submit / get_agent's degrade-don't-crash posture.
                 return self._answer_from_evidence(query, trace, steps, "api_error",
                                                   extra_note=f"api error: {e!r}")
+            self.meter.record("agent", self.config.agent_model, msg, label=query[:40])
             messages.append({"role": "assistant", "content": msg.content})
             tool_uses = [b for b in msg.content if getattr(b, "type", None) == "tool_use"]
             if not tool_uses:                       # model answered in prose, no tool call
@@ -719,6 +726,7 @@ class ClaudeAgent:
                 model=self.config.agent_model, max_tokens=self.config.agent_max_tokens,
                 temperature=0, system=_AGENT_SYS, tools=TOOLS + [SUBMIT_ANSWER_TOOL],
                 tool_choice={"type": "tool", "name": "submit_answer"}, messages=msgs)
+            self.meter.record("agent", self.config.agent_model, msg, label=query[:40])
             for b in msg.content:
                 if getattr(b, "type", None) == "tool_use" and b.name == "submit_answer":
                     return self._build_answer(query, b.input, trace, steps, "step_cap")
@@ -746,7 +754,8 @@ class ClaudeAgent:
             query=query, answer=answer, citations=kept, dropped_citations=dropped,
             backend=self.name, steps=steps, stopped=stopped, trace=trace.steps,
             seeds=trace.seeds, touched=touched,
-            object_ids=_ranked_object_ids(kept, touched, self.tools.store), notes=notes)
+            object_ids=_ranked_object_ids(kept, touched, self.tools.store), notes=notes,
+            usage=self.meter.totals())
 
 
 # --------------------------------------------------------------------------- #
@@ -877,7 +886,8 @@ class OfflineAgent:
             backend=self.name, steps=len(trace.steps), stopped=stopped, trace=trace.steps,
             seeds=trace.seeds, touched=touched,
             object_ids=_ranked_object_ids(kept, touched, self.tools.store),
-            notes=["degraded to offline agent"] if self.config.agent_backend == "auto" else [])
+            notes=["degraded to offline agent"] if self.config.agent_backend == "auto" else [],
+            usage=empty_totals())   # offline never calls the API → $0 / 0 tokens
 
 
 def _merge_object_rows(*rowsets) -> list[dict]:
