@@ -206,6 +206,27 @@ def cmd_serve(args):
     serve(args.store, port=args.port, config=_config(args))
 
 
+def cmd_testrun(args):
+    from .testrun import run_testrun, summarize
+    cfg = _config(args)
+    # keep the dashboard's corpus out of the main graph store unless overridden
+    store_path = (args.store if args.store != DEFAULT_STORE
+                  else os.path.join("store", "testrun.db"))
+    run = run_testrun(
+        store_path=store_path, limit=args.limit, n_queries=args.queries,
+        backend=args.backend, k=args.k, max_steps=args.max_steps,
+        judge=not args.no_judge, communities=not args.no_communities,
+        label=args.label, out_dir=args.out, config=cfg, progress=print)
+    print("\n" + summarize(run))
+    print(f"\nview it:  python -m kg dashboard --out {args.out}"
+          f"   (or open {args.out}/{run['run_id']}/dashboard.html)")
+
+
+def cmd_dashboard(args):
+    from .dashboard import serve
+    serve(out_dir=args.out, port=args.port)
+
+
 def cmd_eval(args):
     from .evaluate import (cross_article_questions, evaluate, load_questions,
                            single_article_questions)
@@ -312,6 +333,34 @@ def build_parser() -> argparse.ArgumentParser:
     pse = sub.add_parser("serve", help="live graph viewer with typed queries")
     pse.add_argument("--port", type=int, default=8000)
     pse.set_defaults(func=cmd_serve)
+
+    pt = sub.add_parser("testrun", help="run the input+query test on the temporal dataset "
+                                        "and write a dashboard run (cost/tokens/accuracy)")
+    pt.add_argument("--limit", type=int, default=None,
+                    help="cap the number of mixed/temporal documents (default: all 1343)")
+    pt.add_argument("--queries", type=int, default=None,
+                    help="cap the number of eval questions (default: all 68)")
+    pt.add_argument("--backend", choices=["auto", "claude", "offline"], default=None,
+                    help="agent backend for the query half (auto = live if a key is set)")
+    pt.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
+    pt.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pt.add_argument("--model", default=None, help="override the LLM model id")
+    pt.add_argument("--k", type=int, default=8, help="objects per search / recall@k")
+    pt.add_argument("--max-steps", type=int, default=None, help="agent tool-call budget")
+    pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
+    pt.add_argument("--no-judge", action="store_true",
+                    help="skip the LLM response-accuracy judge (deterministic proxy only)")
+    pt.add_argument("--no-communities", action="store_true",
+                    help="skip community detection after ingest (faster)")
+    pt.add_argument("--label", default=None, help="run id / label (default: timestamp)")
+    pt.add_argument("--out", default="runs", help="directory of dashboard runs")
+    pt.set_defaults(func=cmd_testrun)
+
+    pdash = sub.add_parser("dashboard", help="serve the test-run dashboard (run index + "
+                                             "Input/Query drill-down)")
+    pdash.add_argument("--out", default="runs", help="directory of dashboard runs")
+    pdash.add_argument("--port", type=int, default=8050)
+    pdash.set_defaults(func=cmd_dashboard)
 
     pe = sub.add_parser("eval", help="recall@k / MRR ablation")
     pe.add_argument("--k", type=int, default=8)
