@@ -65,6 +65,22 @@ class Config:
     mmr_lambda: float = 0.6           # MMR relevance↔diversity tradeoff
     inferred_confidence_floor: float = 0.3  # drop INFERRED edges below this in traversal
 
+    # ---- agentic query (§5 — the reserved LLM-guided-traversal path) ---------
+    # An LLM answers a prompt by calling read-only graph tools (seed-and-spread,
+    # keyword/vector search, neighbors, find_path, read_object, browse_themes) and
+    # synthesizing a cited answer. Mirrors the extractor's real⇄offline split: with
+    # no key (or backend="offline") a deterministic OfflineAgent runs the same tools,
+    # so the path is byte-for-byte offline and tests stay deterministic.
+    agent_backend: str = "auto"       # "auto" | "claude" | "offline"
+    agent_model: str = "claude-haiku-4-5-20251001"  # reuse the cheap model; overridable
+    agent_max_steps: int = 8          # tool-call rounds (the runaway-loop bound)
+    agent_max_tokens: int = 1024      # per-turn output cap
+    agent_result_chars: int = 2000    # max chars per tool_result fed back into the prompt
+    agent_read_chars: int = 2000      # read_object truncation (mirrors lead_chars)
+    agent_node_budget: int = 80       # §5 ~80-node-per-prompt traversal ceiling
+    agent_max_path_hops: int = 5      # find_path bound
+    agent_offline_floor: float = 0.05  # offline agent escalates below this PPR score
+
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids
 

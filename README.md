@@ -22,11 +22,20 @@ taxonomy-induction sources — see the docs below.
 ```bash
 pip install -r requirements.txt
 python -m kg ingest --reset && python -m kg communities
-python -m kg query "what are the main themes across the collection"
-python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector
+python -m kg query "what are the main themes across the collection"   # algorithmic retrieval
+python -m kg ask   "how is Alan Turing connected to the Enigma machine?"  # LLM traverses via tools
+python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector (+ agent)
 python -m kg serve       # browser viewer: watch the graph build + trace queries
 python -m pytest -q
 ```
+
+Two query surfaces: **`query`** runs the *algorithmic* retrievers directly (PPR / BFS / vector /
+community) and returns ranked objects; **`ask`** is the *agentic* path — an LLM is handed
+read-only graph tools (`seed_and_spread`/PPR, `keyword_search`, `vector_search`, `neighbors`,
+`find_path`, `read_object`, `browse_themes`) and **traverses the graph itself** across tool-use
+turns, then answers with citations to the objects it read. Like the rest of the stack it runs
+offline: with no API key, a deterministic agent executes the same tools (`--backend offline`).
+See [docs/MVP.md](docs/MVP.md#agentic-retrieval-ask).
 
 A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the object
 graph, animates it **being built** in ingestion order, and **traces the path a query
