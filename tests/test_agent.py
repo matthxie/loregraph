@@ -293,13 +293,22 @@ def test_agent_cite_without_reading_is_dropped():
 def test_agent_step_cap_forces_submit():
     g = agent_graph()
     # never emits submit during the loop; the forced final turn does
-    script = [
+    client = _FakeAgentClient([
         _turn(_tool_use("u1", "read_object", {"object_id": "obj_a"})),
         _turn(_tool_use("u2", "read_object", {"object_id": "obj_a"})),
         _submit("forced answer from evidence", ["obj_a"]),   # the _force_submit turn
-    ]
-    ans = g.ask("q", client=_FakeAgentClient(script), max_steps=2)
+    ])
+    ans = g.ask("q", client=client, max_steps=2)
     assert ans.stopped == "step_cap" and ans.answer and ans.citations == ["obj_a"]
+    # the forced create() must be protocol-correct: alternating roles (no two consecutive
+    # user turns — the API 400s otherwise) and tool_choice forcing submit_answer. Guards the
+    # _force_submit fold-the-nudge fix, which a fake client otherwise can't catch.
+    forced = client.calls[-1]
+    roles = [m["role"] for m in forced["messages"]]
+    assert not any(roles[i] == roles[i + 1] for i in range(len(roles) - 1)), roles
+    assert forced["tool_choice"] == {"type": "tool", "name": "submit_answer"}
+    assert forced["messages"][-1]["role"] == "user"               # nudge folded into...
+    assert forced["messages"][-1]["content"][-1]["type"] == "text"  # ...the trailing user turn
 
 
 def test_agent_prose_without_submit_is_salvaged():
@@ -356,6 +365,53 @@ def test_offline_agent_answers_and_cites():
     assert "find_path" in tools
 
 
+def test_ask_k_threads_to_agent():
+    """Regression: the k argument (the `ask --k` flag / eval breadth) must reach the agent's
+    searches; it used to be silently dropped, pinning breadth to config.top_k."""
+    g = agent_graph(build_comms=False)   # local path → a deterministic seed_and_spread call
+    for k in (3, 6):
+        ans = g.ask("cryptography Bletchley Turing", backend="offline", k=k)
+        ss = next(s for s in ans.trace if s["tool"] == "seed_and_spread")
+        assert ss["input"]["k"] == k
+
+
+def test_agent_api_error_degrades_not_crashes():
+    """A transient mid-loop API error must degrade to an evidence answer, not crash `ask`."""
+    g = agent_graph()
+
+    class _Raising:
+        def __init__(self):
+            self.messages = self
+            self.n = 0
+
+        def create(self, **kw):
+            self.n += 1
+            if self.n == 1:   # first turn reads an object, then the API "fails"
+                return _turn(_tool_use("u1", "read_object", {"object_id": "obj_a"}))
+            raise RuntimeError("boom: connection reset by peer")
+
+    ans = g.ask("q", client=_Raising())
+    assert ans.stopped == "api_error" and ans.backend == "claude"
+    assert ans.citations == ["obj_a"]              # answered from evidence already read
+    assert any("api error" in n for n in ans.notes)
+
+
+def test_finalize_unwraps_literal_submit_markup():
+    """Regression: when a model writes submit_answer as literal text (a Haiku quirk), the
+    prose-salvage path must unwrap it, not echo raw tool-call markup as the answer."""
+    g = agent_graph()
+    markup = ('<submit_answer>\n<parameter name="answer">Turing worked at Bletchley Park.'
+              '</parameter>\n<parameter name="citations">["obj_a"]</parameter>\n</submit_answer>')
+    ans = g.ask("q", client=_FakeAgentClient([
+        _turn(_tool_use("u1", "read_object", {"object_id": "obj_a"})),
+        _turn(_text(markup)),
+    ]))
+    assert ans.stopped == "prose"
+    assert "<submit_answer>" not in ans.answer and "parameter name" not in ans.answer
+    assert ans.answer.startswith("Turing worked at Bletchley")
+    assert ans.citations == ["obj_a"]
+
+
 def test_offline_agent_global_routes_to_themes():
     g = agent_graph()
     ans = g.ask("what are the main themes across the collection", backend="offline")
@@ -383,7 +439,8 @@ def test_offline_and_online_trace_same_shape():
     for ans in (off, on):
         assert isinstance(ans, AgentAnswer)
         assert all(set(s) == keys for s in ans.trace)
-        assert isinstance(ans.object_ids, list)
+        assert ans.object_ids        # the eval seam is populated on BOTH backends
+    assert "obj_b" in on.object_ids  # the cited object surfaces in the online seam
 
 
 # --------------------------------------------------------------------------- #
@@ -393,12 +450,13 @@ def test_agent_object_ids_feed_recall():
     from kg.evaluate import _recall_at_k, cross_article_questions, evaluate
     g = agent_graph()
     ans = g.ask("Alan Turing", backend="offline")
-    assert 0.0 <= _recall_at_k(ans.object_ids, {"obj_a"}, 8) <= 1.0
+    assert "obj_a" in ans.object_ids                       # the Turing article is recalled
+    assert _recall_at_k(ans.object_ids, {"obj_a"}, 8) == 1.0
     # the eval harness accepts "agent" as a mode and runs fully offline
     qs = cross_article_questions(g, limit=2)
-    if qs:
-        scores = evaluate(g, qs, modes=("agent",), k=5)
-        assert len(scores) == 1 and 0.0 <= scores[0].recall_at_k <= 1.0
+    assert qs, "the sample has shared-entity (cross-article) questions"
+    scores = evaluate(g, qs, modes=("agent",), k=5)
+    assert len(scores) == 1 and scores[0].recall_at_k > 0.0  # the agent recalls gold objects
 
 
 # --------------------------------------------------------------------------- #

@@ -42,6 +42,14 @@ _OBJ_ID = re.compile(r"\bobj_[A-Za-z0-9_]+\b")
 _CONNECT_CUE = re.compile(
     r"\b(connect|connected|relate|related|link|linked|between|relationship|"
     r"how (?:are|is|do|does|did))\b", re.I)
+# Some models (notably Haiku) occasionally emit a tool call as LITERAL TEXT rather than a
+# real tool_use block ('<submit_answer>\n<parameter name="answer">...'); the prose-salvage
+# path unwraps that so the user never sees raw tool-call markup as the answer.
+_MARKUP_ANSWER = re.compile(
+    r'<parameter name="answer">(.*?)(?:</parameter>|<parameter name=|</submit_answer>|$)',
+    re.DOTALL)
+_MARKUP_CITES = re.compile(
+    r'<parameter name="citations">(.*?)(?:</parameter>|</submit_answer>|$)', re.DOTALL)
 
 # Etypes the agent's neighbors tool exposes (IN_COMMUNITY is excluded — community hubs
 # are browsed via browse_themes, not walked, matching retrieval._TRAVERSAL_EXCLUDE).
@@ -473,7 +481,10 @@ class GraphTools:
         if len(path) - 1 > max_hops:
             return {"found": False, "reason": f"shortest path is {len(path) - 1} hops "
                     f"(> max_hops {max_hops})"}
-        # annotate each hop with the real DIRECTED relationship label
+        # annotate each hop with the real DIRECTED relationship label. The path nodes are
+        # touched WHOLE (a deliberate bounded exception to the node budget): a partial chain
+        # is meaningless, and the path is capped at agent_max_path_hops+1 (<=6 by default),
+        # so the overrun is tiny. The endpoint-object harvest below DOES honour the budget.
         hop_rows, objects = [], []
         for i, nid in enumerate(path):
             n = self.store.get_node(nid)
@@ -589,6 +600,17 @@ def _ranked_object_ids(citations: list[str], touched: list[str],
     return out
 
 
+def _unwrap_submit_markup(text: str) -> tuple[str, list[str]]:
+    """If a model wrote submit_answer as literal text instead of a tool_use block, return
+    (inner answer prose, cited obj ids); otherwise return (text, []) unchanged."""
+    if "submit_answer" not in text and 'name="answer"' not in text:
+        return text, []
+    m = _MARKUP_ANSWER.search(text)
+    answer = m.group(1).strip() if m else text
+    cm = _MARKUP_CITES.search(text)
+    return answer, (_OBJ_ID.findall(cm.group(1)) if cm else [])
+
+
 def _extractive_answer(query: str, read: list[Node], path_note: str | None = None) -> str:
     """Deterministic, grounded synthesis for the offline path: stitch the leads of the
     objects the agent read, plus an optional connection note."""
@@ -623,9 +645,15 @@ class ClaudeAgent:
         seen_calls: set[tuple] = set()
         steps = 0
         for step in range(self.config.agent_max_steps):
-            msg = self.client.messages.create(
-                model=self.config.agent_model, max_tokens=self.config.agent_max_tokens,
-                temperature=0, system=_AGENT_SYS, tools=all_tools, messages=messages)
+            try:
+                msg = self.client.messages.create(
+                    model=self.config.agent_model, max_tokens=self.config.agent_max_tokens,
+                    temperature=0, system=_AGENT_SYS, tools=all_tools, messages=messages)
+            except Exception as e:  # noqa: BLE001 — a transient API error must not crash
+                # `kg ask`; degrade to a best-effort answer from evidence already gathered,
+                # mirroring _force_submit / get_agent's degrade-don't-crash posture.
+                return self._answer_from_evidence(query, trace, steps, "api_error",
+                                                  extra_note=f"api error: {e!r}")
             messages.append({"role": "assistant", "content": msg.content})
             tool_uses = [b for b in msg.content if getattr(b, "type", None) == "tool_use"]
             if not tool_uses:                       # model answered in prose, no tool call
@@ -661,9 +689,11 @@ class ClaudeAgent:
         text and any obj_* ids it mentioned, then validate them like real citations."""
         text = " ".join(b.text for b in msg.content
                         if getattr(b, "type", None) == "text").strip()
-        raw = _OBJ_ID.findall(text)
+        answer, raw = _unwrap_submit_markup(text)   # strip literal tool-call markup if present
+        if not raw:
+            raw = _OBJ_ID.findall(text)
         kept, dropped = _validate_citations(raw, trace, self.tools.store)
-        return self._assemble(query, text or "(no answer produced)", kept, dropped,
+        return self._assemble(query, answer or "(no answer produced)", kept, dropped,
                               trace, steps, "prose")
 
     def _force_submit(self, query, messages, trace, steps) -> AgentAnswer:
@@ -691,12 +721,18 @@ class ClaudeAgent:
                     return self._build_answer(query, b.input, trace, steps, "step_cap")
         except Exception:  # noqa: BLE001 — fall through to an evidence-only answer
             pass
-        # last resort: answer from what was read, so we never return nothing
-        read_nodes = [self.tools.store.get_node(r) for r in trace.read]
-        read_nodes = [n for n in read_nodes if n]
-        kept = [n.id for n in read_nodes]
-        answer = _extractive_answer(query, read_nodes)
-        return self._assemble(query, answer, kept, [], trace, steps, "step_cap")
+        return self._answer_from_evidence(query, trace, steps, "step_cap")
+
+    def _answer_from_evidence(self, query, trace, steps, stopped, extra_note=None) -> AgentAnswer:
+        """Best-effort extractive answer from the objects already read — so a run that hits
+        the step cap or a mid-loop API error still returns a grounded AgentAnswer, never
+        nothing. Citations are the read objects (they pass the same read-gate)."""
+        read_nodes = [n for n in (self.tools.store.get_node(r) for r in trace.read) if n]
+        ans = self._assemble(query, _extractive_answer(query, read_nodes),
+                             [n.id for n in read_nodes], [], trace, steps, stopped)
+        if extra_note:
+            ans.notes.append(extra_note)
+        return ans
 
     def _assemble(self, query, answer, kept, dropped, trace, steps, stopped) -> AgentAnswer:
         touched = self.tools.touched_ids()

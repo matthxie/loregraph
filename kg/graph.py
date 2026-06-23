@@ -77,10 +77,12 @@ class KnowledgeGraph:
         AgentAnswer. `client=` injects a (possibly fake) Anthropic client for tests."""
         from .agent import get_agent
         cfg = self.config
-        if backend or max_steps or model:
+        # `k` maps to top_k — the breadth the OfflineAgent's searches use and the
+        # ClaudeAgent's default when the model omits k (each tool clamps to AGENT_MAX_HITS).
+        if backend or max_steps or model or k:
             cfg = replace(cfg, **{kk: vv for kk, vv in
                                   (("agent_backend", backend), ("agent_max_steps", max_steps),
-                                   ("agent_model", model)) if vv})
+                                   ("agent_model", model), ("top_k", k)) if vv})
         return get_agent(self.store, self.embedder, self.canon, cfg, client=client).run(text)
 
     # ----------------------------------------------------------------- helpers
