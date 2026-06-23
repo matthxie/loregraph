@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .config import Config
+from .metering import UsageMeter
 from .models import EntityType, Provenance
 
 # --------------------------------------------------------------------------- #
@@ -227,6 +228,9 @@ class HaikuExtractor:
         import anthropic
         self.config = config
         self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+        # per-extractor token/cost accumulator (the test-run dashboard drains it per
+        # document); always present so callers stay backend-blind.
+        self.meter = UsageMeter()
 
     def _call(self, content_blocks: list) -> Extraction:
         msg = self.client.messages.create(
@@ -241,6 +245,8 @@ class HaikuExtractor:
             tool_choice={"type": "tool", "name": "emit_graph"},
             messages=[{"role": "user", "content": content_blocks}],
         )
+        # record token usage + cost (no-op for fakes/offline that carry no .usage)
+        self.meter.record("extract", self.config.llm_model, msg)
         for block in msg.content:
             if getattr(block, "type", None) == "tool_use" and block.name == "emit_graph":
                 return _parse_tool_payload(block.input)
@@ -323,6 +329,9 @@ class HeuristicExtractor:
 
     def __init__(self, config: Config):
         self.config = config
+        # offline: no API call ever happens, so the meter stays empty → $0 / 0 tokens.
+        # Present so the ingest pipeline can read `extractor.meter` without branching.
+        self.meter = UsageMeter()
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         body = f"{title}. {text}" if title else text

@@ -201,6 +201,8 @@ class Canonicalizer:
         self._next = Counter()
         self._l3_client = _L3_UNSET                   # lazy anthropic client (L3 tie-breaker)
         self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
+        from .metering import UsageMeter
+        self.meter = UsageMeter()                     # L3 token/cost (empty unless L3 fires)
         self._reindex()
 
     def prime_embeddings(self, surfaces: list[str]) -> None:
@@ -311,6 +313,7 @@ class Canonicalizer:
             msg = client.messages.create(
                 model=self.config.l3_model, max_tokens=300, temperature=0,
                 system=_L3_SYS, messages=[{"role": "user", "content": prompt}])
+            self.meter.record("l3", self.config.l3_model, msg, label=kind)
             text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
             data = _extract_json(text) or {}
             verdict = str(data.get("verdict", "NEW")).strip()
