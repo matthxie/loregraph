@@ -26,7 +26,7 @@ import numpy as np
 from .config import Config
 from .embedders import Embedder
 from .models import (Edge, EdgeType, EntityType, NodeType, Provenance,
-                     entity_node, relation_tag_node, tag_node)
+                     entity_node, relation_tag_node)
 from .store import GraphStore, now_iso
 
 _PUNCT = re.compile(r"[^\w\s]")
@@ -180,6 +180,81 @@ def normalize_key(s: str) -> str:
     return " ".join(toks)
 
 
+# --------------------------------------------------------------------------- #
+# Date canonicalization (EntityType.DATE)
+# --------------------------------------------------------------------------- #
+# Date entities are consolidated on a *structured* key, not on embeddings: "1896"
+# and "1897" sit close in vector space but are distinct dates, so DATE never goes
+# through the fuzzy L2/L3 merge (resolve_entity routes it here). Surface variants of
+# the SAME instant collapse ("July 18, 1896" == "18 July 1896" == "1896-07-18") while
+# different GRANULARITIES stay distinct ("July 4" ≠ "1896" ≠ "July 1896") so we never
+# lose specificity. Unparseable temporal phrases ("the 1890s", "early 20th century")
+# return None and fall back to the generic string handling — conservative under-merge.
+_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12, "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sept": 9, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_ORDINAL = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b")
+_ISO_DATE = re.compile(r"^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$")
+_MONTH_NAME = re.compile(r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True)) + r")\b")
+_YEAR = re.compile(r"\b(\d{4})\b")
+
+
+def _date_key(year: int | None, month: int | None, day: int | None) -> str | None:
+    """A granularity-aware canonical key: present components only, so coarser dates
+    can't collide with finer ones (year `1896` vs full `1896-07-18` vs bare month-day
+    `--07-04`). ISO-8601-flavoured (`--MM-DD` is the standard recurring month-day)."""
+    if year and month and day:
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    if year and month:
+        return f"{year:04d}-{month:02d}"
+    if year:
+        return f"{year:04d}"
+    if month and day:
+        return f"--{month:02d}-{day:02d}"
+    if month:
+        return f"--{month:02d}"
+    return None
+
+
+def normalize_date(s: str) -> str | None:
+    """Parse a date surface into a granularity-aware canonical key, or None if it
+    isn't a recognizable concrete date. Deliberately bounded (common English forms +
+    ISO), never a full date parser — anything it can't confidently read returns None."""
+    raw = (s or "").strip().lower()
+    if not raw:
+        return None
+    t = _ORDINAL.sub(r"\1", raw)                      # "4th" → "4"
+    t = _WS.sub(" ", t)                               # collapse runs of whitespace so the
+                                                      # adjacency windows below can't truncate
+    m = _ISO_DATE.match(t.strip())                    # 1896-07-18 / 1896/7/18 / 1896-07
+    if m:
+        y, mo = int(m.group(1)), int(m.group(2))
+        d = int(m.group(3)) if m.group(3) else None
+        if 1 <= mo <= 12 and (d is None or 1 <= d <= 31):
+            return _date_key(y, mo, d)
+    mn = _MONTH_NAME.search(t)
+    month = _MONTHS[mn.group(1)] if mn else None
+    ym = _YEAR.search(t)
+    year = int(ym.group(1)) if ym and 1000 <= int(ym.group(1)) <= 2100 else None
+    day = None
+    if month:
+        # only read a day IMMEDIATELY adjacent to the month token ("July 18", "18 July"),
+        # never a stray numeral elsewhere in the string ("page 12 of May 1896" → no day, so
+        # it dedups with the bare "May 1896"). The 4-digit year can't match \d{1,2}\b.
+        after = re.match(r"\s*,?\s*(\d{1,2})\b", t[mn.end():mn.end() + 5])
+        before = re.search(r"\b(\d{1,2})\s*$", t[max(0, mn.start() - 5):mn.start()])
+        for cand in (after, before):
+            if cand and 1 <= int(cand.group(1)) <= 31:
+                day = int(cand.group(1))
+                break
+    if month or year:
+        return _date_key(year, month, day)
+    return None
+
+
 def char_entropy(s: str) -> float:
     s = (s or "").lower()
     if not s:
@@ -194,7 +269,6 @@ class Canonicalizer:
         self.store = store
         self.embedder = embedder
         self.config = config
-        self._tag_keys: dict[str, str] = {}     # normalized key -> tag node id
         self._entity_keys: dict[str, str] = {}   # normalized key -> entity node id
         self._relation_keys: dict[str, str] = {}  # normalized key -> relation-tag id
         self._emb_cache: dict[str, np.ndarray] = {}  # surface -> embedding (batch primed)
@@ -223,20 +297,20 @@ class Canonicalizer:
         return v
 
     def _reindex(self) -> None:
-        """Rebuild key→id maps from a loaded store."""
+        """Rebuild key→id maps from a loaded store. (NodeType.TAG is legacy: tags were
+        retired into the CONCEPT-entity vocabulary, so new stores hold none; any in an old
+        store are simply ignored here.)"""
         for n in self.store.nodes.values():
-            if n.ntype == NodeType.TAG:
-                self._tag_keys[normalize_key(n.name)] = n.id
-                for a in n.aliases:
-                    self._tag_keys.setdefault(normalize_key(a), n.id)
-            elif n.ntype == NodeType.ENTITY:
+            if n.ntype == NodeType.ENTITY:
                 self._entity_keys[normalize_key(n.name)] = n.id
+                if n.entity_type == EntityType.DATE:    # also key on the structured date form
+                    dk = normalize_date(n.name)
+                    if dk:
+                        self._entity_keys.setdefault(f"date:{dk}", n.id)
             elif n.ntype == NodeType.RELATION:
                 self._relation_keys[relation_content_key(n.name)] = n.id
                 for a in n.aliases:
                     self._relation_keys.setdefault(relation_content_key(a), n.id)
-        self._next["tag"] = sum(1 for n in self.store.nodes.values()
-                                if n.ntype == NodeType.TAG)
         self._next["entity"] = sum(1 for n in self.store.nodes.values()
                                    if n.ntype == NodeType.ENTITY)
         self._next["rel"] = sum(1 for n in self.store.nodes.values()
@@ -332,56 +406,35 @@ class Canonicalizer:
                  if not relation_merge_vetoed(surface, self._node_name(cid))]
         return self._l3_adjudicate("relation", surface, cands)
 
-    # -------------------------------------------------------------------- tags
-    def resolve_tag(self, surface: str) -> str | None:
-        surface = (surface or "").strip()
-        if not surface:
-            return None
-        key = normalize_key(surface)
-        if not key:
-            return None
-        if key in self._tag_keys:                      # L1 hit
-            tid = self._tag_keys[key]
-            self._add_alias(tid, surface)
-            return tid
-        vec = self._embed(surface)
-        # L2 merge gate (high bar) — only if entropy guard allows. NOTE: this uses a
-        # single global cosine threshold; TaxoCom's local-neighborhood thresholding
-        # (§3) is an accepted MVP simplification at ~1k tags.
-        if self._entropy_ok(surface):
-            hits = self.store.vectors.search("tag", vec, k=5,
-                                            floor=self.config.syn_link_threshold)
-            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
-                tid = hits[0][0]
-                self._add_alias(tid, surface)
-                self._tag_keys[key] = tid
-                return tid
-            # L3: gray band [syn_link, syn_merge) → ask the LLM merge-or-new (no-op if disabled)
-            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
-            tid = self._l3_adjudicate("tag", surface, gray)
-            if tid:
-                self._add_alias(tid, surface)
-                self._tag_keys[key] = tid
-                return tid
-        tid = self._new_id("tag")
-        node = tag_node(tid, canonical=surface.lower(), ts=now_iso())
-        self.store.add_node(node)
-        self.store.vectors.add("tag", tid, vec)
-        self._tag_keys[key] = tid
-        self._synonymy("tag", surface, vec, tid)       # link (not merge)
-        return tid
-
-    def _add_alias(self, tag_id: str, surface: str) -> None:
-        node = self.store.get_node(tag_id)
-        if node and surface.lower() != node.name and surface.lower() not in node.aliases:
-            node.aliases.append(surface.lower())
-            self._tag_keys.setdefault(normalize_key(surface), tag_id)
-
     # ---------------------------------------------------------------- entities
     def resolve_entity(self, name: str, etype: EntityType) -> str | None:
         name = (name or "").strip()
         if not name:
             return None
+        # DATE: consolidate on the deterministic structured key only — never the fuzzy
+        # embedding gate (adjacent dates sit close in vector space but are distinct).
+        if etype == EntityType.DATE:
+            dk = normalize_date(name)
+            if dk:
+                date_key = f"date:{dk}"
+                if date_key in self._entity_keys:
+                    return self._entity_keys[date_key]
+                # also dedup against the plain surface so the same string already minted
+                # under another type (e.g. "1896" as a concept) is reused, not duplicated —
+                # order-independent with the generic same-surface-shares-a-node policy.
+                nk = normalize_key(name)
+                if nk in self._entity_keys:
+                    eid = self._entity_keys[nk]
+                    self._entity_keys.setdefault(date_key, eid)
+                    return eid
+                eid = self._new_id("entity")
+                node = entity_node(eid, name=name, etype=EntityType.DATE, ts=now_iso())
+                self.store.add_node(node)
+                self.store.vectors.add("entity", eid, self._embed(name))  # still a retrieval seed
+                self._entity_keys[date_key] = eid
+                self._entity_keys.setdefault(nk, eid)
+                return eid
+            # unparseable temporal phrase → fall through to generic string handling
         key = normalize_key(name)
         if not key:
             return None

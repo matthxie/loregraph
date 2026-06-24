@@ -59,14 +59,18 @@ def load_images(manifest: str | None = None, limit: int | None = None) -> list[C
 def load_mixed(manifest: str | None = None, limit: int | None = None) -> list[CorpusItem]:
     """Load the per-paragraph temporal stream from dataset/mixed/manifest.jsonl.
 
-    Built by scripts/build_mixed.py: each Wikipedia paragraph (and each COCO photo)
-    is its own record stamped with a synthetic `created_at`. Carrying that timestamp
-    through lets the graph's created_at/valid/superseded_by machinery see real
-    spread-out times instead of identical wall-clock stamps. Text records read their
-    paragraph body from the sibling `.txt` file; image records mirror load_images
-    (photo path + COCO label hint). Provenance is `orig_id#pNNN` (orig article/image
-    + paragraph index); since every paragraph is a distinct fact, this is an append
-    stream, not a supersession stream.
+    Built by scripts/build_mixed.py: each Wikipedia paragraph is its own record stamped
+    with a synthetic `created_at`. Carrying that timestamp through lets the graph's
+    created_at/valid/superseded_by machinery see real spread-out times instead of
+    identical wall-clock stamps. Records read their paragraph body from the sibling
+    `.txt` file; provenance is `orig_id#pNNN` (orig article + paragraph index). Since
+    every paragraph is a distinct fact, this is an append stream, not a supersession one.
+
+    The mixed stream is deliberately **title-free body text**: the Wikipedia article
+    title in the manifest is provenance metadata only and is NOT injected into the item
+    (it must never reach the extraction prompt or the node name — the graph is built from
+    the paragraph body alone). The stream is also **text-only**; any stray non-text row is
+    skipped (images were removed — see scripts/build_mixed.py and docs/DATASET.md).
     """
     manifest = manifest or os.path.join(DATASET_DIR, "mixed", "manifest.jsonl")
     base = os.path.dirname(manifest)
@@ -74,21 +78,17 @@ def load_mixed(manifest: str | None = None, limit: int | None = None) -> list[Co
     with open(manifest, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
+            if r.get("modality") != "text":     # text-only stream; skip any legacy image rows
+                continue
             pidx = r.get("para_index")
             cid = r["orig_id"] if pidx is None else f"{r['orig_id']}#p{pidx:03d}"
             path = os.path.join(base, os.path.basename(r["file"]))
-            if r["modality"] == "image":
-                items.append(CorpusItem(
-                    id=cid, modality="image", source_ref=path,
-                    title=r.get("title") or "", image_path=path,
-                    label_hint=r.get("label"), created_at=r.get("created_at")))
-            else:
-                with open(path, encoding="utf-8") as tf:
-                    text = tf.read()
-                items.append(CorpusItem(
-                    id=cid, modality="text", source_ref=r.get("url") or path,
-                    title=r.get("title") or "", text=text,
-                    created_at=r.get("created_at")))
+            with open(path, encoding="utf-8") as tf:
+                text = tf.read()
+            # title="" on purpose — keep the body title-free (provenance lives in the manifest)
+            items.append(CorpusItem(
+                id=cid, modality="text", source_ref=r.get("url") or path,
+                title="", text=text, created_at=r.get("created_at")))
             if limit and len(items) >= limit:
                 break
     return items

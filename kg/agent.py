@@ -54,7 +54,9 @@ _MARKUP_CITES = re.compile(
 
 # Etypes the agent's neighbors tool exposes (IN_COMMUNITY is excluded — community hubs
 # are browsed via browse_themes, not walked, matching retrieval._TRAVERSAL_EXCLUDE).
-_NEIGHBOR_ETYPES = {e.value for e in EdgeType} - {EdgeType.IN_COMMUNITY.value}
+_NEIGHBOR_ETYPES = ({e.value for e in EdgeType}
+                    - {EdgeType.IN_COMMUNITY.value,
+                       EdgeType.TAGGED_AS.value, EdgeType.SHARED_TAG.value})  # tags retired
 
 
 # --------------------------------------------------------------------------- #
@@ -109,8 +111,8 @@ TOOLS: list[dict] = [
                 "direction": {"type": "string", "enum": ["both", "out", "in"]},
                 "etypes": {"type": "array", "items": {
                     "type": "string",
-                    "enum": ["MENTIONS", "TAGGED_AS", "RELATED_TO", "SIMILAR_TO",
-                             "SHARED_TAG", "SHARED_ENTITY", "HYPERLINKS_TO"]}},
+                    "enum": ["MENTIONS", "RELATED_TO", "SIMILAR_TO",
+                             "SHARED_ENTITY", "HYPERLINKS_TO"]}},
                 "limit": {"type": "integer", "description": "default 20"},
             },
             "required": ["node_id"],
@@ -171,9 +173,10 @@ SUBMIT_ANSWER_TOOL: dict = {
 }
 
 _AGENT_SYS = (
-    "You answer questions using a DIRECTED knowledge graph over a fixed multimodal corpus. "
-    "Nodes are objects (documents, images), entities, tags, relations and themes. Objects "
-    "connect to entities (MENTIONS) and tags (TAGGED_AS); entities connect to entities "
+    "You answer questions using a DIRECTED knowledge graph over a fixed corpus. "
+    "Nodes are objects (documents), entities & concepts (named things AND topical themes, "
+    "including dates), relations and themes. Objects connect to entities/concepts (MENTIONS); "
+    "entities connect to entities "
     "through directed, LABELED relationships (RELATED_TO, e.g. 'founded', 'located_in') "
     "carrying provenance and confidence. You cannot see the graph directly — you explore it "
     "with tools.\n\n"

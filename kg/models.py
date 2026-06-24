@@ -19,7 +19,8 @@ from enum import Enum
 class NodeType(str, Enum):
     OBJECT = "object"
     ENTITY = "entity"
-    TAG = "tag"
+    TAG = "tag"             # LEGACY: tags were retired into the CONCEPT-entity vocabulary;
+                            # kept only so an old store's tag nodes still deserialize.
     RELATION = "relation"   # canonical relationship-tag node (predicate vocabulary)
     COMMUNITY = "community"
 
@@ -36,6 +37,7 @@ class EntityType(str, Enum):
     CONCEPT = "concept"
     WORK = "work"
     EVENT = "event"
+    DATE = "date"      # a specific date / time-point (canonicalized by normalize_date)
     OTHER = "other"
 
 
@@ -67,12 +69,16 @@ class RelationType(str, Enum):
 
 
 class EdgeType(str, Enum):
-    MENTIONS = "MENTIONS"          # ObjectNode  → EntityNode
-    TAGGED_AS = "TAGGED_AS"        # ObjectNode  → TagNode
+    MENTIONS = "MENTIONS"          # ObjectNode  → EntityNode (entities AND concepts)
+    TAGGED_AS = "TAGGED_AS"        # LEGACY (read-only): ObjectNode → TagNode. Tags were retired
+                                   #   into CONCEPT entities (rev 5); never minted anymore, kept
+                                   #   only so older graph dumps still deserialize.
     RELATED_TO = "RELATED_TO"      # EntityNode  → EntityNode (directed; ONE per canonical
                                    #   relationship in `rel_tag` — parallel edges per pair)
     SIMILAR_TO = "SIMILAR_TO"      # any ↔ any   (embedding synonymy)
-    SHARED_TAG = "SHARED_TAG"      # ObjectNode ↔ ObjectNode (derived, overlap-weighted)
+    SHARED_TAG = "SHARED_TAG"      # LEGACY (read-only): ObjectNode ↔ ObjectNode shared-tag
+                                   #   overlap. Superseded by SHARED_ENTITY now that concepts
+                                   #   are entities; kept only for back-compat with old dumps.
     SHARED_ENTITY = "SHARED_ENTITY"
     IN_COMMUNITY = "IN_COMMUNITY"  # node → CommunityNode
     HYPERLINKS_TO = "HYPERLINKS_TO"  # optional deterministic enrichment
@@ -185,11 +191,6 @@ def object_node(node_id: str, *, modality: Modality, source_ref: str,
 def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str) -> Node:
     return Node(id=node_id, ntype=NodeType.ENTITY, name=name,
                 entity_type=etype, created_at=ts, last_modified=ts)
-
-
-def tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
-    return Node(id=node_id, ntype=NodeType.TAG, name=canonical,
-                created_at=ts, last_modified=ts)
 
 
 def relation_tag_node(node_id: str, *, canonical: str, ts: str) -> Node:

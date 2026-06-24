@@ -15,7 +15,7 @@ import networkx as nx
 
 from .config import Config
 from .embedders import Embedder
-from .models import EdgeType, Edge, NodeType, Provenance, community_node
+from .models import EdgeType, Edge, EntityType, NodeType, Provenance, community_node
 from .retrieval import projected_graph
 from .store import GraphStore, now_iso
 
@@ -65,21 +65,29 @@ def build_communities(store: GraphStore, embedder: Embedder, config: Config) -> 
 
 
 def _summarize_community(store: GraphStore, members, objs) -> str:
-    """Extractive summary: dominant tags + representative titles (offline-friendly)."""
-    tag_counts: Counter = Counter()
-    for m in members:
-        node = store.get_node(m)
-        if node and node.ntype == NodeType.TAG:
-            tag_counts[node.name] += 1
+    """Extractive summary from the unified entity vocabulary: dominant CONCEPT entities are
+    the themes, salient named entities are the 'featuring' list. Tags were retired, so this
+    reads the MENTIONS neighbourhood instead of TAGGED_AS; it also works with title-free
+    objects (names come from entities, not document titles)."""
+    concept_counts: Counter = Counter()
+    named_counts: Counter = Counter()
     for oid in objs:
-        for nbr, data in store.neighbors(oid, etypes={EdgeType.TAGGED_AS}):
-            tn = store.get_node(nbr)
-            if tn:
-                tag_counts[tn.name] += 1
-    top_tags = [t for t, _ in tag_counts.most_common(8)]
-    titles = [store.get_node(o).name for o in objs[:6] if store.get_node(o)]
-    return (f"Theme: {', '.join(top_tags)}. "
-            f"Includes: {'; '.join(titles)}.")
+        for nbr, _data in store.neighbors(oid, etypes={EdgeType.MENTIONS}):
+            en = store.get_node(nbr)
+            if not en or en.ntype != NodeType.ENTITY:
+                continue
+            if en.entity_type == EntityType.CONCEPT:
+                concept_counts[en.name] += 1
+            elif en.entity_type != EntityType.DATE:   # dates aren't a "featuring" label
+                named_counts[en.name] += 1
+    top_themes = [t for t, _ in concept_counts.most_common(8)]
+    top_named = [t for t, _ in named_counts.most_common(6)]
+    parts = []
+    if top_themes:
+        parts.append(f"Theme: {', '.join(top_themes)}.")
+    if top_named:
+        parts.append(f"Featuring: {', '.join(top_named)}.")
+    return " ".join(parts) or f"{len(objs)} related items."
 
 
 class CommunityRetriever:

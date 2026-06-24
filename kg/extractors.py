@@ -49,8 +49,9 @@ class ExtractedRelation:
 
 @dataclass
 class Extraction:
+    # ONE unified vocabulary: named entities AND abstract concepts/themes (what used to be
+    # "tags") are all entities now — a concept is just EntityType.CONCEPT (see GRAPH_TOOL).
     entities: list[ExtractedEntity] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
     description: str | None = None  # images: the one-line VLM description
 
@@ -59,10 +60,6 @@ class Extraction:
         for e in other.entities:
             if e.name.lower() not in names:
                 self.entities.append(e); names.add(e.name.lower())
-        tagset = {t.lower() for t in self.tags}
-        for t in other.tags:
-            if t.lower() not in tagset:
-                self.tags.append(t); tagset.add(t.lower())
         # merge by directed (source, target): union the label sets of duplicates
         by_pair: dict[tuple[str, str], ExtractedRelation] = {}
         for r in self.relations:
@@ -109,8 +106,6 @@ GRAPH_TOOL = {
                     "required": ["name", "type"],
                 },
             },
-            "tags": {"type": "array", "items": {"type": "string"},
-                     "description": "5-12 lowercase topical tags."},
             "relations": {
                 "type": "array",
                 "description": "Directed relationships between entities.",
@@ -135,7 +130,7 @@ GRAPH_TOOL = {
             "description": {"type": "string",
                             "description": "One-line description (images only)."},
         },
-        "required": ["entities", "tags"],
+        "required": ["entities"],
     },
 }
 
@@ -152,6 +147,13 @@ def _coerce_labels(r: dict) -> list[str]:
 def _parse_tool_payload(payload: dict) -> Extraction:
     ents = []
     for e in payload.get("entities", []) or []:
+        # robustness: the model sometimes emits an entity as a bare string instead of the
+        # {name, type} object. Recover it as an untyped entity rather than crashing the
+        # whole extraction (was an AttributeError on e.get → an empty graph for the item).
+        if isinstance(e, str):
+            e = {"name": e}
+        elif not isinstance(e, dict):
+            continue
         name = (e.get("name") or "").strip()
         if not name:
             continue
@@ -160,9 +162,10 @@ def _parse_tool_payload(payload: dict) -> Extraction:
         except ValueError:
             etype = EntityType.OTHER
         ents.append(ExtractedEntity(name=name, type=etype))
-    tags = [t.strip() for t in (payload.get("tags") or []) if t and t.strip()]
     rels = []
     for r in payload.get("relations", []) or []:
+        if not isinstance(r, dict):   # a relation needs source+target; skip malformed shapes
+            continue
         s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
         labels = _coerce_labels(r)
         if not s or not t or not labels:
@@ -172,7 +175,7 @@ def _parse_tool_payload(payload: dict) -> Extraction:
             provenance=Provenance.EXTRACTED,
             confidence=float(r.get("confidence", 0.8)),
         ))
-    return Extraction(entities=ents, tags=tags, relations=rels,
+    return Extraction(entities=ents, relations=rels,
                       description=(payload.get("description") or None))
 
 
@@ -191,19 +194,27 @@ class HaikuExtractor:
     # makes it cache-eligible if it ever grows past that minimum — e.g. with few-shots.)
     _SYS = (
         "You extract a knowledge graph from a single piece of content. Work in this order.\n\n"
-        "1) ENTITIES. List the salient, nameable entities, each with a type:\n"
+        "1) ENTITIES & CONCEPTS. Everything the content is ABOUT goes in ONE list — both the "
+        "named things AND the abstract topics/themes (there is no separate \"tags\" list). "
+        "Give each a type:\n"
         "   - person  — an individual human (e.g. Marie Curie)\n"
         "   - place   — a geographic location (e.g. Paris, the Pacific Ocean)\n"
         "   - org     — an organisation, company, institution, team, or group\n"
-        "   - concept — an idea, field, method, material, or abstract thing (e.g. radioactivity)\n"
+        "   - concept — an idea, field, method, material, theme, topic, genre, or abstract "
+        "thing the content is about (e.g. radioactivity, organic chemistry, cold war diplomacy, "
+        "biography). This ABSORBS what you might call topics or tags: every salient theme or "
+        "subject the content covers is a concept.\n"
         "   - work    — a named created work (book, film, song, paper, artwork, product)\n"
         "   - event   — a time-bounded happening (a war, election, discovery, ceremony)\n"
+        "   - date    — a specific date or time-point stated in the content (e.g. "
+        "\"July 18, 1896\", \"1896\", \"the 1980s\"). Capture it AS WRITTEN and keep its "
+        "precision — \"July 18, 1896\", not just \"1896\".\n"
         "   - other   — a real entity that fits none of the above\n"
         "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
-        "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
-        "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
-        "(themes, not entities).\n\n"
-        "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
+        "Do not invent anything not in the content. Capture every salient named entity AND every "
+        "distinct theme/topic (as a concept) AND the dates tied to a stated fact (a birth, death, "
+        "founding, publication, event). There is no fixed number — cover the content, don't pad.\n\n"
+        "2) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
         "   - Both source and target MUST be entities from step 1, using the EXACT SAME "
         "surface string you wrote there. Never relate something you did not name.\n"
         "   - Each relationship has 1-3 short lowercase labels that read SOURCE then TARGET. "
@@ -212,14 +223,20 @@ class HaikuExtractor:
         "   - Keep voice as written: \"X founded by Y\" may be source \"Y\" target \"X\" label "
         "\"founded\", OR source \"X\" target \"Y\" label \"founded_by\" — but never silently flip "
         "a label's voice. \"founded\" and \"founded_by\" are different and both are fine.\n"
+        "   - TIME: when the content says WHEN something happened, relate the thing to its date "
+        "entity — source the thing, target the date, label the time predicate. A person "
+        "born_on / died_on a date; an org or thing founded_in / established_in a date; a work "
+        "published_in / released_in a date; an event occurred_on a date. (Use \"born_in\" for a "
+        "birth PLACE, \"born_on\" for a birth DATE.)\n"
         "   - For a mutually symmetric relationship (works_with, married_to, sibling_of) emit "
         "it once, in one direction only.\n"
         "   - Use natural predicate names. Prefer one of these common forms when it genuinely "
         "fits, otherwise coin your own short lowercase predicate — this list is a HINT, NOT a "
         "fixed vocabulary: founded, founded_by, works_with, member_of, located_in, part_of, "
         "parent_of, child_of, created, created_by, discovered, employed_by, succeeded_by, "
-        "influenced_by. Similar labels are consolidated automatically downstream, so do not "
-        "try to match any canonical form yourself.\n"
+        "influenced_by, born_on, died_on, founded_in, published_in, occurred_on. Similar labels "
+        "are consolidated automatically downstream, so do not try to match any canonical form "
+        "yourself.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "Call emit_graph exactly once."
     )
@@ -255,15 +272,13 @@ class HaikuExtractor:
     def _reflexion(self, text: str, first: Extraction) -> Extraction:
         if not self.config.reflexion:
             return first
-        tags = ", ".join(first.tags) or "(none)"
         ents = ", ".join(e.name for e in first.entities) or "(none)"
         prompt = (
             f"Content:\n{text[:4000]}\n\n"
-            f"First pass found these tags: {tags}\n"
-            f"and these entities: {ents}.\n\n"
+            f"First pass found these entities/concepts: {ents}.\n\n"
             "Now do a focused recall check. List ONLY items you OMITTED:\n"
-            "- any salient entity in the content missing above (with its type),\n"
-            "- any important topical tag not already emitted,\n"
+            "- any salient named entity in the content missing above (with its type),\n"
+            "- any distinct theme/topic the content is about, as a concept entity,\n"
             "- any clearly-stated directed relationship between entities you missed "
             "(source and target must be named entities; labels read source→target).\n\n"
             "Do not repeat anything already found. If you omitted nothing, return empty "
@@ -350,20 +365,26 @@ class HeuristicExtractor:
                 continue
             seen.add(low)
             entities.append(ExtractedEntity(name=name, type=_classify(name)))
-        # tags: frequent topical content words
+        # concepts: frequent topical content words become CONCEPT entities (the offline
+        # stand-in for what the LLM emits as themes) — one unified entity vocabulary, no
+        # separate tag list.
         words = Counter(w for w in _WORD.findall(body.lower()) if w not in _STOP)
-        tags = [w for w, _ in words.most_common(10)]
+        for w, _ in words.most_common(10):
+            if w not in seen:
+                seen.add(w)
+                entities.append(ExtractedEntity(name=w, type=EntityType.CONCEPT))
         # relations: co-occurrence of the top entity with the rest (low-confidence).
         # The offline heuristic can't name a real predicate, so it emits the generic
         # "related_to" label — which still flows through relation consolidation.
         rels = []
-        if len(entities) >= 2:
-            hub = entities[0].name
-            for e in entities[1:6]:
+        named = [e for e in entities if e.type != EntityType.CONCEPT]
+        if len(named) >= 2:
+            hub = named[0].name
+            for e in named[1:6]:
                 rels.append(ExtractedRelation(
                     source=hub, target=e.name, labels=["related_to"],
                     provenance=Provenance.INFERRED, confidence=0.4))
-        return Extraction(entities=entities, tags=tags, relations=rels)
+        return Extraction(entities=entities, relations=rels)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         labels = [l.strip() for l in (label_hint or "").split(",") if l.strip()]
@@ -371,7 +392,7 @@ class HeuristicExtractor:
             labels = ["photo"]
         entities = [ExtractedEntity(name=l, type=EntityType.CONCEPT) for l in labels]
         desc = f"A photo containing {', '.join(labels)}."
-        return Extraction(entities=entities, tags=labels, description=desc)
+        return Extraction(entities=entities, description=desc)
 
 
 # --------------------------------------------------------------------------- #

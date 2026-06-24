@@ -33,6 +33,8 @@ def now_iso() -> str:
 # overlap). On the directed store they're pinned to a canonical (min,max) orientation
 # so a pair yields exactly ONE row — otherwise the kNN pass would add both a→b and
 # b→a and the undirected traversal projection would double-count their weight.
+# SHARED_TAG is legacy (no longer minted — see kg/models.py) but stays in this set so a
+# graph loaded from an old dump still treats its SHARED_TAG edges as symmetric.
 _SYMMETRIC_ETYPES = {EdgeType.SIMILAR_TO.value, EdgeType.SHARED_TAG.value,
                      EdgeType.SHARED_ENTITY.value}
 
