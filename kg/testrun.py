@@ -600,6 +600,8 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     steps: list[dict] = []
     agg_nodes = agg_edges = 0
     agg_tagged = agg_episodes = 0                          # pooled tags-per-object (not mean-of-means)
+    agg_related = 0                    # total RELATED_TO fact edges across the run
+    agg_rel_pairs = agg_rel_edges = 0  # pooled rel-tags-per-pair (per-instance mirror of _rel_pair_stats)
     cum_vocab = {"objects": 0, "tags": 0, "entities": 0, "relations": 0, "communities": 0}
     ingest_cost = 0.0
     ingest_tokens = ingest_llm = ingest_in = ingest_out = 0
@@ -628,6 +630,10 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         agg_edges += stats["edges"]
         agg_tagged += stats["by_edge_type"].get("TAGGED_AS", 0)
         agg_episodes += stats["by_node_type"].get("episode", 0)
+        agg_related += stats["by_edge_type"].get("RELATED_TO", 0)
+        rps = _rel_pair_stats(g.store)   # per-instance (each instance's graph is torn down next iteration)
+        agg_rel_pairs += rps["pairs"]
+        agg_rel_edges += rps["rel_edges"]
         v = _vocab(stats)
         for key in cum_vocab:
             cum_vocab[key] += v.get(key, 0)
@@ -683,11 +689,14 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     ingest_totals = {
         "docs": len(instances), "items": total_sessions,
         "nodes": agg_nodes, "edges": agg_edges,
-        "by_node_type": {}, "by_edge_type": {},
+        "by_node_type": {}, "by_edge_type": {"RELATED_TO": agg_related},
         "vocab": dict(cum_vocab),
         # pooled across the whole run (total TAGGED_AS / total episodes), not a mean-of-means
         "avg_tags_per_object": round(agg_tagged / agg_episodes, 3) if agg_episodes else 0.0,
-        "avg_rel_tags_per_pair": 0.0, "pairs": 0, "rel_edges": 0,
+        # pooled rel-tags-per-pair + total RELATED_TO fact edges; accumulated per-instance since
+        # each instance's graph is torn down before the next (so _rel_pair_stats can't run at the end).
+        "avg_rel_tags_per_pair": round(agg_rel_edges / agg_rel_pairs, 3) if agg_rel_pairs else 0.0,
+        "pairs": agg_rel_pairs, "rel_edges": agg_rel_edges,
         "seconds": ingest_seconds,
         "llm_calls": ingest_llm, "input_tokens": ingest_in, "output_tokens": ingest_out,
         "cache_read": ingest_cr, "cache_write": ingest_cw,

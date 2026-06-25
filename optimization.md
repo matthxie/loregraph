@@ -13,8 +13,6 @@
   (`judge_cost_usd`); stale "agentic ask() traversal" wording fixed.
 - ✅ **Lever 2 — ingest output cap — TESTED + PARTLY SHIPPED.** Window-widening **refuted** by
   two A/Bs; the one real win — **`extract_max_tokens` 1500→4000** — is **shipped**. See below.
-- ⏸ **Lever 3 — UNTESTED, deferred.** Harness is built; live test runs are paused (on
-  personal funds until the business account is live — see *Next steps*).
 
 ## Where the money goes (baseline)
 
@@ -77,19 +75,6 @@ quarter-to-half of the graph disappears. If those entities are redundant, wideni
 
 ---
 
-## Lever 3 — output side  `[UNTESTED · harness ready · deferred]`
-
-Targets the expensive 5× output side. The config-driven A/B harness + `truncated` metric from
-lever 2 now exist, so this is a flag-flip away from being measured — but it is **deferred**
-until the larger run (testing is paused, see *Next steps*).
-
-### 3. Stop re-listing known entities across chunks (output dedup)
-For chunks after the first, thread the running entity/tag names into the prompt with an "emit only
-**new** entities/tags, still emit **every** relation" instruction (the trick reflexion already uses)
-in `extract_text_sectioned` (`kg/extractors.py:367`). Suppresses re-*listing* entities, never the
-facts connecting them. **Saves ~$0.12/100 standalone — erodes now that widening is dead** (chunks
-stay at 6000, so cross-chunk overlap is modest). Bank the *measured* number. Risk: low. **Gate: A/B.**
-
 > **Removed — Lever 5 (judge sampling).** The judge is eval-only, never touches production cost, and
 > certifies answer correctness on **every** test round. Full `--judge` stays on always.
 
@@ -139,8 +124,7 @@ sample's 48), so a *full* per-instance pass is ~$100+/variant. Cheaper read: `--
    The n=8 "don't widen" verdict is provisional pending this.
 2. **Confirm the shipped free win on accuracy.** Verify `extract_max_tokens=4000` ≥ baseline accuracy
    (today it's justified on "stop discarding truncated output" + richness, not on answers).
-3. **Lever 3** (output dedup) — A/B on the bigger tier; measure realized savings.
-4. **Reflexion ablation (gated).** The recall pass is ~$1/100 — the biggest single ingest line. Test
+3. **Reflexion ablation (gated).** The recall pass is ~$1/100 — the biggest single ingest line. Test
    conditional/off against accuracy; quality-unsafe to decide at n=8, decidable at n=100.
 
 ---
@@ -152,7 +136,7 @@ sample's 48), so a *full* per-instance pass is ~$100+/variant. Cheaper read: `--
 - ❌ **Prefix prompt-caching / pad `_SYS` past 4,096 tok:** +$1.31/100 cache-miss downside vs ~$0.52
   upside, and padding risks anchoring extraction and **shrinking** entity/tag diversity. Negative EV.
 - ❌ **Reflexion fully off (~$1.02/100):** biggest single number but removes the recall pass that
-  recovers missed entities/relations. Quality-unsafe; only behind a hard accuracy A/B (queued, #4 above).
+  recovers missed entities/relations. Quality-unsafe; only behind a hard accuracy A/B (queued, #3 above).
 - ❌ **Single un-sectioned call / window past the input cap without lifting it:** silently drops the
   tail of long sessions (now config-driven via `--extract-max-chars`, but widening is dead anyway).
 - ❌ **Cross-session batching (pack many sessions per call):** collapses differently-dated episodes
