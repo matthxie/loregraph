@@ -1,37 +1,45 @@
-"""Ingestion pipeline (docs/ARCHITECTURE.md §6).
+"""Ingestion pipeline (docs/ARCHITECTURE.md §6) — the episodic / semantic split.
 
-Per object: intake → SHA256 cache check (skip/supersede) → normalize → extract
-(directly from raw content, no summary) → canonicalize tags/entities → embed →
-write ObjectNode + TagNodes + EntityNodes + edges (with provenance + confidence).
-Then a global pass derives ObjectNode↔ObjectNode edges (shared tags/entities +
-embedding kNN), since the corpus has no free hyperlinks.
+Per entry: intake → SHA256 cache check → normalize → extract (directly from raw content)
+→ write an immutable **Episode** + one immutable **Mention** per entity occurrence
+(MENTIONED_IN → episode, RESOLVES_TO → a lean canonical **Entity** anchor) → canonicalize
+tags/entities/relations → resolve each relationship through the bi-temporal fact logic
+(kg/temporal.py: open / confirm / close / supersede). Then a global pass derives
+Episode↔Episode edges (shared tags/entities + embedding kNN).
 
-LLM extraction fans out under a bounded-concurrency semaphore; all graph mutation
-happens sequentially in the main thread so shared state stays consistent.
+Embeddings are written ONLY to immutable nodes (episode text, mention surfaces) — never to
+the canonical entity anchors — so embedding cost is strictly proportional to new data and
+nothing is ever re-embedded on an update (the re-embedding problem is designed out).
+
+LLM extraction fans out under a bounded-concurrency semaphore; all graph mutation happens
+sequentially in the main thread so shared state stays consistent.
 """
 from __future__ import annotations
 
 import hashlib
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 
 from .canonicalize import Canonicalizer
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
 from .extractors import Extraction, Extractor, extract_text_sectioned
-from .models import (Edge, EdgeType, EntityType, Modality, Provenance, object_node)
+from .models import (Edge, EdgeType, EntityType, Modality, NodeType, Provenance,
+                     episode_node, mention_node)
 from .store import GraphStore, now_iso
+from .temporal import apply_fact
 
 
 @dataclass
 class IngestReport:
-    ingested: int = 0
+    ingested: int = 0           # episodes written
     skipped: int = 0
-    superseded: int = 0
     failed: int = 0
+    mentions: int = 0
+    facts: int = 0              # fact-edge actions (open/close/supersede/confirm)
     extraction_failures: int = 0
     seconds: float = 0.0
     extractor: str = ""
@@ -41,10 +49,9 @@ class IngestReport:
     def __str__(self) -> str:
         warn = (f"  ⚠ {self.extraction_failures} extraction failures"
                 if self.extraction_failures else "")
-        return (f"ingested={self.ingested} skipped={self.skipped} "
-                f"superseded={self.superseded} failed={self.failed} "
-                f"in {self.seconds:.1f}s  (extractor={self.extractor}, "
-                f"embedder={self.embedder}){warn}")
+        return (f"episodes={self.ingested} mentions={self.mentions} facts={self.facts} "
+                f"skipped={self.skipped} failed={self.failed} in {self.seconds:.1f}s  "
+                f"(extractor={self.extractor}, embedder={self.embedder}){warn}")
 
 
 def _sha256(*parts: str) -> str:
@@ -62,35 +69,36 @@ class Ingestor:
         self.embedder = embedder
         self.canon = canon
         self.config = config
+        # mention ids are globally unique + stable across ingests
+        self._mention_seq = sum(1 for n in store.nodes.values()
+                                if n.ntype == NodeType.MENTION)
 
     # ------------------------------------------------------------------ public
     def ingest(self, items: list[CorpusItem]) -> IngestReport:
         t0 = time.time()
         report = IngestReport(extractor=self.extractor.name, embedder=self.embedder.name)
 
-        # 1. intake + cache/supersede decisions (sequential, cheap)
-        pending: list[tuple[CorpusItem, str, str, str | None]] = []  # item, hash, obj_id, supersedes
+        # 1. intake + cache decisions. Episodes are APPEND-ONLY: identical content is
+        #    skipped; changed content under a known id appends a new immutable episode
+        #    version (the old one stays — both are real historical entries).
+        pending: list[tuple[CorpusItem, str, str]] = []  # item, hash, episode_id
         for item in items:
             content = item.text if item.modality == "text" else (item.image_path or "")
             h = _sha256(item.modality, content)
             if h in self.store.hash_cache:
                 report.skipped += 1
                 continue
-            base_id = f"obj_{item.id}"
-            supersedes = None
-            obj_id = base_id
+            base_id = f"ep_{item.id}"
+            ep_id = base_id
             if self.store.has_node(base_id):
-                existing = self.store.get_node(base_id)
-                if existing.content_hash == h:
+                if self.store.get_node(base_id).content_hash == h:
                     report.skipped += 1
                     continue
-                # changed content → new versioned node, soft-invalidate the old
                 v = 1
                 while self.store.has_node(f"{base_id}_v{v}"):
                     v += 1
-                obj_id = f"{base_id}_v{v}"
-                supersedes = base_id
-            pending.append((item, h, obj_id, supersedes))
+                ep_id = f"{base_id}_v{v}"
+            pending.append((item, h, ep_id))
 
         if not pending:
             report.seconds = time.time() - t0
@@ -100,47 +108,49 @@ class Ingestor:
         extractions, errors = self._extract_all([p[0] for p in pending])
         report.extraction_failures = len(errors)
         if errors:
-            # surface systemic failures (e.g. a bad/absent API key) instead of
-            # silently building an empty graph
             report.notes.append(f"extraction failed for {len(errors)} item(s); "
                                 f"first error: {errors[0]}")
 
-        # 3. embed object surfaces in one batch (raw text / image description)
+        # 3. embed episode surfaces (raw text / image description) in one batch
         surfaces = [self._embed_surface(item, ext)
                     for (item, *_), ext in zip(pending, extractions)]
-        obj_vecs = self.embedder.embed(surfaces)
+        ep_vecs = self.embedder.embed(surfaces)
 
-        # 3b. batch-embed every tag/entity surface up front (huge speedup vs. per-resolve)
-        tag_ent_surfaces: list[str] = []
+        # 3b. batch-embed every tag/entity/relation surface for canonicalization
+        canon_surfaces: list[str] = []
+        ment_surfaces: list[str] = []
         for ext in extractions:
-            tag_ent_surfaces.extend(e.name for e in ext.entities)
+            canon_surfaces.extend(ext.tags)
+            for e in ext.entities:
+                canon_surfaces.append(e.name)
+                ment_surfaces.append(e.name)
             for r in ext.relations:
-                tag_ent_surfaces.append(r.source)
-                tag_ent_surfaces.append(r.target)
-                tag_ent_surfaces.extend(r.labels)   # relationship-label embeddings too
-        self.canon.prime_embeddings(tag_ent_surfaces)
+                canon_surfaces.extend([r.source, r.target, *r.labels])
+        self.canon.prime_embeddings(canon_surfaces)
 
-        # 4. write each object (sequential)
-        for (item, h, obj_id, supersedes), ext, vec in zip(pending, extractions, obj_vecs):
+        # 3c. batch-embed mention surfaces (the immutable mention layer's embeddings)
+        uniq_ments = sorted({s for s in ment_surfaces if s.strip()})
+        ment_vecs = dict(zip(uniq_ments, self.embedder.embed(uniq_ments))) if uniq_ments else {}
+
+        # 4. write each episode (sequential)
+        for (item, h, ep_id), ext, vec in zip(pending, extractions, ep_vecs):
             try:
-                self._write_object(item, h, obj_id, supersedes, ext, vec)
+                m, f = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
                 report.ingested += 1
-                if supersedes:
-                    report.superseded += 1
+                report.mentions += m
+                report.facts += f
             except Exception as e:  # noqa: BLE001
                 report.failed += 1
                 report.notes.append(f"{item.id}: {e!r}")
 
-        # 5. derive ObjectNode↔ObjectNode edges across the whole graph
-        self._derive_object_edges()
+        # 5. derive Episode↔Episode edges across the whole graph
+        self._derive_episode_edges()
 
         report.seconds = time.time() - t0
         return report
 
     # ----------------------------------------------------------------- extract
     def _extract_all(self, items: list[CorpusItem]) -> tuple[list[Extraction], list[str]]:
-        """Returns (extractions, error_messages). A failed item degrades to an empty
-        Extraction so the batch survives, but the error is recorded (not swallowed)."""
         def work(item: CorpusItem) -> tuple[Extraction, str | None]:
             try:
                 if item.modality == "image":
@@ -155,71 +165,78 @@ class Ingestor:
         return extractions, errors
 
     def _extract_text(self, text: str, title: str) -> Extraction:
-        """Section-by-section for very long docs (§9 risk 4), else one shot."""
-        return extract_text_sectioned(self.extractor, text, title,
-                                      self.config.long_doc_chars)
+        return extract_text_sectioned(self.extractor, text, title, self.config.long_doc_chars)
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
         if item.modality == "image":
             return ext.description or (item.label_hint or "an image")
         text = item.text or ""
         if len(text) > self.config.long_doc_chars:
-            return text[:self.config.lead_chars]   # lead section for long docs
+            return text[:self.config.lead_chars]
         return text
 
     # ------------------------------------------------------------------- write
-    def _write_object(self, item: CorpusItem, h: str, obj_id: str,
-                      supersedes: str | None, ext: Extraction, vec) -> None:
-        # honour the corpus item's own time (mixed temporal stream) so the node's
-        # created_at/last_modified reflect the synthetic timeline; fall back to the
-        # wall clock for sources that don't carry a timestamp.
+    def _write_episode(self, item: CorpusItem, h: str, ep_id: str,
+                       ext: Extraction, vec, ment_vecs: dict) -> tuple[int, int]:
         ts = item.created_at or now_iso()
         modality = Modality.IMAGE if item.modality == "image" else Modality.TEXT
         raw = None if item.modality == "image" else item.text
-        node = object_node(obj_id, modality=modality, source_ref=item.source_ref,
-                           raw_text=raw, content_hash=h, ts=ts,
-                           description=ext.description)
+        node = episode_node(ep_id, modality=modality, source_ref=item.source_ref,
+                            raw_text=raw, content_hash=h, ts=ts,
+                            description=ext.description, ingested_at=now_iso())
         node.name = item.title or item.id
         self.store.add_node(node)
-        self.store.vectors.add("object", obj_id, vec)
-        self.store.hash_cache[h] = obj_id
-        if supersedes:
-            self._retract(supersedes)              # undo the old version's df/hash
-            self.store.supersede_node(supersedes, obj_id)
+        self.store.vectors.add("episode", ep_id, vec)
+        self.store.hash_cache[h] = ep_id
 
-        # entities & concepts → MENTIONS (+ provenance back-pointer). Tags were retired:
-        # what used to be a topical "tag" is now a CONCEPT entity in this ONE vocabulary, so
-        # there is no separate tag node / TAGGED_AS edge — and therefore no tag↔entity
-        # duplication possible (the same surface resolves to a single entity node).
+        # tags → TAGGED_AS (Episode → Tag)
+        seen_tags: set[str] = set()
+        for t in ext.tags:
+            tid = self.canon.resolve_tag(t)
+            if not tid:
+                continue
+            self.store.add_edge(Edge(src=ep_id, dst=tid, etype=EdgeType.TAGGED_AS,
+                                    provenance=Provenance.EXTRACTED, confidence=1.0))
+            if tid not in seen_tags:          # df = # episodes referencing the tag (dedup
+                self.canon.bump_doc_frequency(tid)   # duplicate surfaces / re-canonicalized
+                seen_tags.add(tid)                   # variants within one episode)
+            cname = self.store.get_node(tid).name
+            if cname not in node.tags:
+                node.tags.append(cname)
+
+        # entities → an immutable Mention (MENTIONED_IN → episode, RESOLVES_TO → entity)
         ent_map: dict[str, str] = {}
+        seen_ents: set[str] = set()
+        n_mentions = 0
         for e in ext.entities:
             eid = self.canon.resolve_entity(e.name, e.type)
             if not eid:
                 continue
             ent_map[e.name.lower()] = eid
-            self.store.add_edge(Edge(src=obj_id, dst=eid, etype=EdgeType.MENTIONS,
-                                    provenance=Provenance.EXTRACTED, confidence=0.9))
-            self.canon.bump_doc_frequency(eid)
-            en = self.store.get_node(eid)
-            if obj_id not in en.provenance_objs:
-                en.provenance_objs.append(obj_id)
-            # keep node.tags as a denormalised display list of the object's THEMES (its
-            # concept entities) so inspect / viz / agent still surface topics cheaply
-            if en.entity_type == EntityType.CONCEPT and en.name not in node.tags:
-                node.tags.append(en.name)
+            mid = f"men_{self._mention_seq:05d}"
+            self._mention_seq += 1
+            span = self._char_span(item.text, e.name)
+            self.store.add_node(mention_node(mid, surface=e.name, etype=e.type,
+                                            episode_id=ep_id, ts=ts, char_span=span))
+            mv = ment_vecs.get(e.name)
+            if mv is not None:
+                self.store.vectors.add("mention", mid, mv)
+            self.store.add_edge(Edge(src=mid, dst=ep_id, etype=EdgeType.MENTIONED_IN,
+                                    provenance=Provenance.EXTRACTED, confidence=1.0))
+            self.store.add_edge(Edge(src=mid, dst=eid, etype=EdgeType.RESOLVES_TO,
+                                    provenance=Provenance.EXTRACTED, confidence=1.0))
+            n_mentions += 1
+            if eid not in seen_ents:          # df = # episodes referencing the entity
+                self.canon.bump_doc_frequency(eid)
+                seen_ents.add(eid)
 
-        # relations → directed RELATED_TO between entities, labelled with the
-        # consolidated relationship-tag set (gated by confidence)
+        # relations → bi-temporal facts (open / confirm / close / supersede)
+        n_facts = 0
         for r in ext.relations:
             s = ent_map.get(r.source.lower()) or self.canon.resolve_entity(r.source, EntityType.OTHER)
             t = ent_map.get(r.target.lower()) or self.canon.resolve_entity(r.target, EntityType.OTHER)
-            if not s or not t or s == t:
+            if not s or not t or s == t or r.confidence < 0.1:
                 continue
-            if r.confidence < 0.1:   # link gate: drop near-zero-confidence inferences
-                continue
-            # consolidate each free-form label into a canonical relationship-tag node,
-            # and emit ONE directed edge per relation (rev 4 — parallel typed edges),
-            # so each carries its own provenance/confidence/timestamp
             already = set(self.store.edge_rel_tags(s, t))
             seen_here: set[str] = set()
             for label in r.labels[:self.config.max_relation_labels]:
@@ -227,84 +244,75 @@ class Ingestor:
                 if not rid or rid in seen_here:
                     continue
                 seen_here.add(rid)
-                # idempotent df: bump only when this (s→t, rid) edge is genuinely new,
-                # so re-ingesting identical content can't double-count relation frequency
                 if rid not in already:
                     self.canon.bump_doc_frequency(rid)
-                self.store.add_edge(Edge(src=s, dst=t, etype=EdgeType.RELATED_TO,
-                                        provenance=r.provenance, confidence=r.confidence,
-                                        weight=r.confidence, rel_tag=rid))
+                action = apply_fact(self.store, src=s, dst=t, rel_tag=rid,
+                                    status=r.status, at=ts, valid_from=r.valid_from,
+                                    valid_to=r.valid_to, provenance=r.provenance,
+                                    confidence=r.confidence, episode_id=ep_id)
+                if action != "skip":
+                    n_facts += 1
+        return n_mentions, n_facts
 
-    def _retract(self, old_id: str) -> None:
-        """Undo a soon-to-be-superseded object's side effects: decrement the
-        doc_frequency it contributed to each tag/entity, and free its content hash
-        so identical content can be re-ingested later."""
-        old = self.store.get_node(old_id)
-        if not old:
-            return
-        for nbr, data in self.store.neighbors(old_id, valid_only=False):
-            # MENTIONS covers entities/concepts; TAGGED_AS is kept only so superseding a node
-            # loaded from a legacy (pre-rev-5) dump still retracts its old tag-node df.
-            if data["etype"] in (EdgeType.MENTIONS.value, EdgeType.TAGGED_AS.value):
-                n = self.store.get_node(nbr)
-                if n and n.doc_frequency > 0:
-                    n.doc_frequency -= 1
-        if old.content_hash and old.content_hash in self.store.hash_cache:
-            self.store.hash_cache.pop(old.content_hash, None)
+    @staticmethod
+    def _char_span(text: str | None, surface: str) -> list[int] | None:
+        if not text or not surface:
+            return None
+        i = text.lower().find(surface.lower())
+        return [i, i + len(surface)] if i >= 0 else None
 
     # --------------------------------------------------------- derived edges
-    def _derive_object_edges(self) -> None:
-        """SHARED_ENTITY (overlap × IDF) + object embedding kNN.
+    def _derive_episode_edges(self) -> None:
+        """SHARED_TAG / SHARED_ENTITY (overlap × IDF) + episode-embedding kNN, over the
+        full episode set (paid once at MVP scale)."""
+        episodes = [n.id for n in self.store.nodes_of_type(NodeType.EPISODE)]
 
-        Runs over the full valid-object set each ingest. At MVP scale (one-shot
-        ingest of ~200 objects) this is paid once; incremental scoping to only the
-        newly-written objects is the noted optimization if ingest goes online.
+        tag_eps: dict[str, list[str]] = defaultdict(list)
+        for eid in episodes:
+            for nbr, data in self.store.neighbors(eid, etypes={EdgeType.TAGGED_AS},
+                                                  direction="out"):
+                tag_eps[nbr].append(eid)
 
-        (No SHARED_TAG: tags were retired into the CONCEPT-entity vocabulary, so concept
-        overlap flows through SHARED_ENTITY like every other entity. SHARED_TAG remains a
-        legacy edge type only for reading older graph dumps — see kg/models.py.)
-        """
-        from .models import NodeType
-        objects = [n.id for n in self.store.nodes_of_type(NodeType.OBJECT)]  # valid only
-        invalid = {n.id for n in self.store.nodes_of_type(NodeType.OBJECT, valid_only=False)
-                   if not n.valid}
+        # entity → episodes, via the mention star
+        ent_eps: dict[str, list[str]] = defaultdict(list)
+        for m in self.store.nodes_of_type(NodeType.MENTION):
+            ep = m.episode_id
+            if not ep or not self.store.has_node(ep):
+                continue
+            for nbr, _d in self.store.neighbors(m.id, etypes={EdgeType.RESOLVES_TO},
+                                                direction="out"):
+                ent_eps[nbr].append(ep)
 
-        # inverted index entity/concept -> objects (via MENTIONS)
-        ent_objs: dict[str, list[str]] = defaultdict(list)
-        for oid in objects:
-            for nbr, data in self.store.neighbors(oid):
-                if data["etype"] == EdgeType.MENTIONS.value:
-                    ent_objs[nbr].append(oid)
+        self._add_shared_edges(tag_eps, EdgeType.SHARED_TAG)
+        self._add_shared_edges(ent_eps, EdgeType.SHARED_ENTITY)
 
-        self._add_shared_edges(ent_objs, EdgeType.SHARED_ENTITY)
-
-        # object embedding kNN → SIMILAR_TO (skip superseded objects)
-        for oid in objects:
-            qv = self.store.vectors.get("object", oid)
+        # episode embedding kNN → SIMILAR_TO
+        for eid in episodes:
+            qv = self.store.vectors.get("episode", eid)
             if qv is None:
                 continue
             for other, cos in self.store.vectors.search(
-                    "object", qv, k=self.config.object_knn_k + 1,
-                    floor=self.config.object_knn_floor, exclude={oid} | invalid):
-                self.store.add_edge(Edge(src=oid, dst=other, etype=EdgeType.SIMILAR_TO,
+                    "episode", qv, k=self.config.episode_knn_k + 1,
+                    floor=self.config.episode_knn_floor, exclude={eid}):
+                self.store.add_edge(Edge(src=eid, dst=other, etype=EdgeType.SIMILAR_TO,
                                         provenance=Provenance.SIMILAR,
                                         confidence=round(cos, 3), weight=round(cos, 3)))
 
-    def _add_shared_edges(self, hub_objs: dict[str, list[str]], etype: EdgeType) -> None:
+    def _add_shared_edges(self, hub_eps: dict[str, list[str]], etype: EdgeType) -> None:
         pair_weight: dict[tuple[str, str], float] = defaultdict(float)
-        pair_count: dict[tuple[str, str], int] = defaultdict(int)  # # shared hubs
-        for hub_id, objs in hub_objs.items():
-            if len(objs) < 2:
+        pair_count: dict[tuple[str, str], int] = defaultdict(int)
+        for hub_id, eps in hub_eps.items():
+            uniq = sorted(set(eps))
+            if len(uniq) < 2:
                 continue
-            w = self.canon.idf_weight(hub_id)   # specificity: rare shared tags weigh more
-            uniq = sorted(set(objs))
+            w = self.canon.idf_weight(hub_id)   # rare shared tags/entities weigh more
             for i in range(len(uniq)):
                 for j in range(i + 1, len(uniq)):
                     pair_weight[(uniq[i], uniq[j])] += w
                     pair_count[(uniq[i], uniq[j])] += 1
         for (a, b), w in pair_weight.items():
             if pair_count[(a, b)] < self.config.shared_min_overlap:
-                continue  # require at least this many shared tags/entities
+                continue
             self.store.add_edge(Edge(src=a, dst=b, etype=etype,
                                     provenance=Provenance.DERIVED,
                                     confidence=min(1.0, w / 3.0), weight=round(w, 3)))

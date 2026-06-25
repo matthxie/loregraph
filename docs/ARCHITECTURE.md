@@ -2,7 +2,22 @@
 
 # Knowledge Graph Architecture & Decisions
 
-A concrete design for an LLM-traversable, directed knowledge graph over multimodal content, synthesized from 10 sources. (Rev 3: open-vocabulary, consolidated, multi-label relationship tags on a directed graph — see §2.)
+A concrete design for an episodic, bi-temporal knowledge graph over multimodal content, synthesized from 10 sources. (Rev 3: open-vocabulary, consolidated, multi-label relationship tags on a directed graph — see §2.)
+
+> **Revision 6 (2026-06-24) — episodic/semantic split + bi-temporal facts + retrieve-then-read.**
+> The node model moved to the HippoRAG/Graphiti **Episode / Mention / Entity** split, superseding the
+> single `ObjectNode → MENTIONS → EntityNode` shape below (read "ObjectNode" as "**Episode**" and the
+> direct `MENTIONS` edge as the two-hop `Mention —MENTIONED_IN→ Episode` / `Mention —RESOLVES_TO→
+> Entity` star). **Episodes and Mentions are immutable and append-only** and hold all embeddings; the
+> **Entity** is a lean canonical anchor with no embedding and no text (resolution is by alias/centroid),
+> so nothing is re-embedded on an update. **Facts (`RELATED_TO`) are bi-temporal** (`valid_at` /
+> `invalid_at` + `belief`) and evolve by *supersede-not-overwrite*; per-predicate functional/symmetric
+> cardinality drives open/close/supersede — see [TEMPORAL.md](TEMPORAL.md). The **query path no longer
+> uses an LLM to traverse**: PPR (over the temporally-filtered, symmetrized projection) builds a RAG
+> context and a **single** LLM call answers (`kg ask`, [kg/rag.py](../kg/rag.py)); the prior per-hop
+> agentic tool-loop is retired. The `seen`/visited-flag and `ObjectNode` versioning/`supersede_node` are
+> gone (episodes are append-only; evolution lives on the fact edges). Sections below are otherwise
+> current; where they say "object" read "episode".
 
 > **Revision 2 (2026-06-21):** (a) **No summary step** — extract tags/entities *directly* from raw content; the object's raw text (not a generated summary) is the primary embedding/retrieval surface. Images are the exception (no text → the vision model still emits tags + a one-line description as its only searchable text). (b) **Per-node timestamps** `created_at` / `last_modified`, plus a `valid` / `superseded_by` soft-invalidation flag. (c) Refinements adopted from production frameworks (cognee, mem0, graphiti) — see new **§10** and [FRAMEWORKS.md](FRAMEWORKS.md). Sections below are updated in place; older summary-first prose is superseded by §10 and this banner.
 
@@ -47,16 +62,6 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 ## 2. Graph model
 
 ### Node types
-
-> **Update (rev 5) — tags retired into one entity/concept vocabulary.** What were "topical
-> tags" are now `concept`-typed **EntityNode**s: the extractor emits a single open-vocabulary
-> entity list (named things *and* themes *and* dates), so the same surface is never stored
-> twice as both a tag and an entity. **TagNode / `TAGGED_AS` / `SHARED_TAG` are legacy** —
-> nothing mints them anymore (the enum members are kept only so an old store still
-> deserializes); objects connect to concepts via `MENTIONS`, and ObjectNode↔ObjectNode
-> overlap is `SHARED_ENTITY`. The drift-control machinery below applies unchanged to the
-> unified entity vocabulary. A new `date` entity type carries concrete dates (canonicalized by
-> `normalize_date`), so temporal facts become edges like `born_on` / `died_on` / `founded_in`.
 
 | Node type | Source / object | Notes |
 |---|---|---|

@@ -17,7 +17,7 @@ from __future__ import annotations
 from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import get_embedder
-from .models import EntityType, Modality, object_node
+from .models import EntityType, Modality, episode_node
 from .store import GraphStore
 
 # (a, b, should_merge, category)
@@ -57,8 +57,8 @@ def _fresh(cfg: Config) -> Canonicalizer:
     pollute later ones."""
     store = GraphStore(cfg)
     for i in range(10):
-        store.add_node(object_node(f"obj_{i}", modality=Modality.TEXT, source_ref="u",
-                                   raw_text="x", content_hash=str(i), ts="t"))
+        store.add_node(episode_node(f"ep_{i}", modality=Modality.TEXT, source_ref="u",
+                                    raw_text="x", content_hash=str(i), ts="t"))
     return Canonicalizer(store, get_embedder(cfg), cfg)
 
 

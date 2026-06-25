@@ -21,7 +21,8 @@ from .graph import KnowledgeGraph
 from .models import EdgeType, NodeType
 from .store import GraphStore
 
-_OBJ_EDGES = {EdgeType.SHARED_ENTITY.value, EdgeType.SIMILAR_TO.value}
+_OBJ_EDGES = {EdgeType.SHARED_TAG.value, EdgeType.SHARED_ENTITY.value,
+              EdgeType.SIMILAR_TO.value}
 
 
 # --------------------------------------------------------------------------- #
@@ -47,16 +48,16 @@ def _obj_meta(store: GraphStore, oid: str) -> dict:
     n = store.get_node(oid)
     modality = (n.modality.value if n and n.modality else "text")
     label = (n.name or oid)
-    return {"id": oid, "label": label[:60], "type": "object", "modality": modality,
+    return {"id": oid, "label": label[:60], "type": "episode", "modality": modality,
             "tags": (n.tags[:8] if n else [])}
 
 
 # --------------------------------------------------------------------------- #
-# overview: the object graph + build order
+# overview: the episode graph + build order
 # --------------------------------------------------------------------------- #
 def object_subgraph(store: GraphStore) -> nx.Graph:
     G = nx.Graph()
-    for n in store.nodes_of_type(NodeType.OBJECT):
+    for n in store.nodes_of_type(NodeType.EPISODE):
         G.add_node(n.id)
     for u, v, d in store.all_edges():
         if not d.get("valid", True) or d["etype"] not in _OBJ_EDGES:
@@ -111,17 +112,17 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
     store = g.store
     result_objs = [oid for oid, _ in ranked]
     seed_objs = [s for s in seeds if store.get_node(s)
-                 and store.get_node(s).ntype == NodeType.OBJECT]
+                 and store.get_node(s).ntype == NodeType.EPISODE]
     obj_set = list(dict.fromkeys(seed_objs + result_objs))  # ordered unique
 
-    # entity/concept hubs that connect these objects (the things the traversal hops through)
+    # tag hubs that connect these episodes (the things the traversal hops through)
     hub_hits: dict[str, int] = {}
     for oid in obj_set:
-        for nbr, d in store.neighbors(oid, etypes={EdgeType.MENTIONS}):
+        for nbr, d in store.neighbors(oid, etypes={EdgeType.TAGGED_AS}):
             hub_hits[nbr] = hub_hits.get(nbr, 0) + 1
-    # also include any entity/concept nodes that were themselves seeds
+    # also include any tag/entity nodes that were themselves seeds
     seed_hubs = [s for s in seeds if store.get_node(s)
-                 and store.get_node(s).ntype == NodeType.ENTITY]
+                 and store.get_node(s).ntype in (NodeType.TAG, NodeType.ENTITY)]
     hubs = [h for h, c in sorted(hub_hits.items(), key=lambda kv: -kv[1]) if c >= 2]
     hubs = list(dict.fromkeys(seed_hubs + hubs))[:max_hubs]
 
@@ -159,7 +160,7 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         n = store.get_node(nid)
         if n is None:
             continue
-        if n.ntype == NodeType.OBJECT:
+        if n.ntype == NodeType.EPISODE:
             entry = _obj_meta(store, nid)
         else:
             entry = {"id": nid, "label": (n.name or nid)[:40],
@@ -172,7 +173,7 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
             roles.append("result")
             entry["rank"] = rank_of[nid]
             entry["score"] = round(float(score_of[nid]), 4)
-        if n.ntype == NodeType.ENTITY:
+        if n.ntype in (NodeType.TAG, NodeType.ENTITY):
             roles.append("hub")
         entry["roles"] = roles
         nodes.append(entry)
@@ -197,93 +198,41 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
             "ranked": ranked_list, "seeds": list(seeds), "hops": hops}
 
 
-def agent_trace_payload(answer, store: GraphStore, max_hubs: int = 28) -> dict:
-    """Map an AgentAnswer (kg/agent.py) onto the viewer's
-    {query, mode, nodes, edges, ranked, seeds, hops} schema — the SAME shape query_trace
-    emits — so the existing HTML/JS viewer renders an agentic run with no changes. The
-    focused subgraph is driven by answer.seeds / .touched / .citations: seed nodes are
-    gold, cited objects are the red ranked results, tag/entity nodes the agent touched are
-    the hubs it hopped through."""
+# Node types the dashboard's force graph actually draws (episodes + the two anchor kinds).
+_DRAWN = {NodeType.EPISODE, NodeType.ENTITY, NodeType.TAG}
+
+
+def rag_trace_payload(ans, store: GraphStore) -> dict:
+    """Map a RagAnswer (kg/rag.py) onto the dashboard's per-query subgraph schema
+    {query, mode, ranked, seeds, hops}. There is no per-hop LLM walk to replay, so the
+    'hops' are the retrieve-then-read layers PPR produced — seeds → the entity/tag anchors
+    it touched → the episodes it surfaced — revealed in order over the ingest graph. Ids
+    are filtered to the node types the graph draws so the animation never references a node
+    that isn't on screen (e.g. mention seeds)."""
     def is_t(nid, *types) -> bool:
         n = store.get_node(nid)
         return n is not None and n.ntype in types
 
-    result_objs = [c for c in answer.citations if is_t(c, NodeType.OBJECT)]
-    if not result_objs:
-        result_objs = [o for o in answer.object_ids if is_t(o, NodeType.OBJECT)][:8]
-    seed_objs = [s for s in answer.seeds if is_t(s, NodeType.OBJECT)]
-    other_objs = [t for t in answer.touched
-                  if is_t(t, NodeType.OBJECT) and t not in set(seed_objs) | set(result_objs)]
-    obj_set = list(dict.fromkeys(seed_objs + result_objs + other_objs))[:40]
-
-    seed_hubs = [s for s in answer.seeds if is_t(s, NodeType.ENTITY)]
-    hub_ids = [t for t in answer.touched if is_t(t, NodeType.ENTITY)]
-    hubs = list(dict.fromkeys(seed_hubs + hub_ids))[:max_hubs]
-
-    keep = set(obj_set) | set(hubs)
-    sub = nx.Graph()
-    for nid in keep:
-        sub.add_node(nid)
-    for oid in obj_set:
-        for nbr, d in store.neighbors(oid):
-            if nbr in keep and not sub.has_edge(oid, nbr):
-                sub.add_edge(oid, nbr, etype=d["etype"], weight=float(d["weight"]))
-    # directed entity→entity relationship edges (one parallel edge per relation)
-    rel_by_pair: dict[tuple[str, str], list[str]] = {}
-    for src in keep:
-        sn = store.get_node(src)
-        if not sn or sn.ntype != NodeType.ENTITY:
-            continue
-        for dst, d in store.neighbors(src, etypes={EdgeType.RELATED_TO}, direction="out"):
-            if dst not in keep:
-                continue
-            rn = store.get_node(d.get("rel_tag")) if d.get("rel_tag") else None
-            if rn:
-                rel_by_pair.setdefault((src, dst), []).append(rn.name)
-    for (src, dst), names in rel_by_pair.items():
-        sub.add_edge(src, dst, etype="RELATED_TO", weight=1.0, directed=True,
-                     dsrc=src, dtgt=dst, rel=", ".join(names))
-    pos = _layout(sub, seed=7)
-
-    rank_of = {oid: i + 1 for i, oid in enumerate(result_objs)}
-    seed_set = set(answer.seeds)
-    nodes = []
-    for nid in sub.nodes():
-        n = store.get_node(nid)
-        if n is None:
-            continue
-        if n.ntype == NodeType.OBJECT:
-            entry = _obj_meta(store, nid)
-        else:
-            entry = {"id": nid, "label": (n.name or nid)[:40], "type": n.ntype.value,
-                     "modality": None, "tags": []}
-        entry["x"], entry["y"] = pos.get(nid, [0.5, 0.5])
-        roles = []
-        if nid in seed_set:
-            roles.append("seed")
-        if nid in rank_of:
-            roles.append("result")
-            entry["rank"] = rank_of[nid]
-        if n.ntype == NodeType.ENTITY:
-            roles.append("hub")
-        entry["roles"] = roles
-        nodes.append(entry)
-
-    edges = []
-    for u, v, d in sub.edges(data=True):
-        if d.get("directed"):
-            edges.append({"s": d.get("dsrc", u), "t": d.get("dtgt", v),
-                          "etype": d["etype"], "directed": True, "rel": d.get("rel", "")})
-        else:
-            edges.append({"s": u, "t": v, "etype": d["etype"]})
-
-    hops = _bfs_hops(sub, seed_objs or obj_set[:1])
-    ranked_list = [{"id": oid, "rank": rank_of[oid], "score": "",
-                    "label": _obj_meta(store, oid)["label"],
-                    "modality": _obj_meta(store, oid)["modality"]}
-                   for oid in result_objs]
-    return {"query": answer.query, "mode": "agent", "nodes": nodes, "edges": edges,
-            "ranked": ranked_list, "seeds": list(answer.seeds), "hops": hops}
+    seeds = [s for s in ans.seeds if is_t(s, *_DRAWN)]
+    episodes = [o for o in ans.object_ids if is_t(o, NodeType.EPISODE)]
+    anchors = [t for t in ans.touched if is_t(t, NodeType.ENTITY, NodeType.TAG)]
+    seen = set(seeds)
+    hops = [list(dict.fromkeys(seeds))]
+    layer2 = [a for a in anchors if a not in seen]
+    if layer2:
+        hops.append(layer2)
+        seen |= set(layer2)
+    layer3 = [e for e in episodes if e not in seen]
+    if layer3:
+        hops.append(layer3)
+    ranked = []
+    for i, oid in enumerate(episodes):
+        n = store.get_node(oid)
+        ranked.append({"id": oid, "rank": i + 1, "score": "",
+                       "label": (n.name or oid) if n else oid,
+                       "modality": (n.modality.value if n and n.modality else "text")})
+    return {"query": ans.query, "mode": "rag", "nodes": [], "edges": [],
+            "ranked": ranked, "seeds": seeds, "hops": [h for h in hops if h]}
 
 
 def _bfs_hops(graph: nx.Graph, sources: list[str], max_hops: int = 4) -> list[list[str]]:
@@ -329,7 +278,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <title>kg — knowledge graph viewer</title>
 <style>
   :root{ --bg:#0e1116; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --mut:#8b949e;
-         --obj-text:#4f8ef7; --obj-image:#2ec27e; --entity:#b06ff0;
+         --obj-text:#4f8ef7; --obj-image:#2ec27e; --tag:#f5a623; --entity:#b06ff0;
          --seed:#ffd24d; --result:#ff5d8f; --edge:#3a4250; --edge-hi:#ffae57; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
@@ -405,7 +354,8 @@ _HTML_TEMPLATE = r"""<!doctype html>
       <div class="legend" style="margin-top:8px">
         <span><i class="dot" style="background:var(--obj-text)"></i>article</span>
         <span><i class="dot" style="background:var(--obj-image)"></i>image</span>
-        <span><i class="dot" style="background:var(--entity)"></i>entity / concept</span>
+        <span><i class="dot" style="background:var(--tag)"></i>tag</span>
+        <span><i class="dot" style="background:var(--entity)"></i>entity</span>
         <span><i class="dot" style="background:var(--seed)"></i>seed</span>
         <span><i class="dot" style="background:var(--result)"></i>result</span>
         <span style="color:var(--entity)">→ relationship (directed)</span>
@@ -443,9 +393,9 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <script>
 const DATA = /*__DATA__*/;
 const NS="http://www.w3.org/2000/svg";
-const COLORS={object_text:"#4f8ef7",object_image:"#2ec27e",entity:"#b06ff0",community:"#9aa4af"};
-function colorOf(n){ if(n.type==="object") return n.modality==="image"?COLORS.object_image:COLORS.object_text; return COLORS[n.type]||"#9aa4af"; }
-function radius(n){ if(n.type==="object") return 5+Math.min(7,(n.deg||0)*0.5); return 3; }
+const COLORS={episode_text:"#4f8ef7",episode_image:"#2ec27e",tag:"#f5a623",entity:"#b06ff0",mention:"#7a8699",community:"#9aa4af"};
+function colorOf(n){ if(n.type==="episode") return n.modality==="image"?COLORS.episode_image:COLORS.episode_text; return COLORS[n.type]||"#9aa4af"; }
+function radius(n){ if(n.type==="episode") return 5+Math.min(7,(n.deg||0)*0.5); return n.type==="tag"?3.5:3; }
 
 const svg=document.getElementById("svg"), view=document.getElementById("view");
 const gLinks=document.getElementById("links"), gNodes=document.getElementById("nodes"),
@@ -511,7 +461,7 @@ function render(nodes, edges, opts={}){
     }
     if(n.rank){ const t=document.createElementNS(NS,"text"); t.setAttribute("class","rank");
       t.setAttribute("x",x);t.setAttribute("y",y); t.textContent=n.rank; gLabels.appendChild(t); }
-    else if(opts.labels && n.type!=="object" || (opts.labels && n.deg>=opts.labelDeg)){
+    else if(opts.labels && n.type!=="episode" || (opts.labels && n.deg>=opts.labelDeg)){
       const t=document.createElementNS(NS,"text"); t.setAttribute("class","lbl");
       t.setAttribute("x",x+radius(n)+2);t.setAttribute("y",y+3); t.textContent=n.label; gLabels.appendChild(t);
     }
@@ -540,7 +490,7 @@ svg.addEventListener("dblclick",clearFocus);
 // ============ OVERVIEW (build animation) ============
 const G=DATA.graph;
 document.getElementById("subtitle").textContent =
-  `${G.stats.by_node_type.object||0} objects · ${G.edges.length} object↔object edges`;
+  `${G.stats.by_node_type.episode||0} episodes · ${G.edges.length} episode↔episode edges`;
 let buildN=G.build_order.length;
 function showOverview(limit){
   viewMode="overview";

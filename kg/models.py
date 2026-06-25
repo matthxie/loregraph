@@ -1,10 +1,28 @@
-"""Graph data model (docs/ARCHITECTURE.md §2).
+"""Graph data model — Episode / Mention / Entity (docs/ARCHITECTURE.md §2).
 
-Nodes are dataclasses kept in the GraphStore's `nodes` dict; NetworkX holds only
-topology + edge attributes for the graph algorithms. Every node carries timestamps
-and a `valid`/`superseded_by` soft-invalidation flag (rev 2) plus the `seen` debug
-flag. Every edge carries `provenance` + `confidence` so traversal can down-weight or
-drop low-trust relationships.
+The store follows the HippoRAG / Graphiti episodic-semantic split:
+
+  * **Episode** (immutable, append-only) — one per ingested entry (article paragraph,
+    note, image). Holds the raw text/description (the embedding & retrieval surface),
+    content hash, modality, source ref, and a bi-temporal stamp (`created_at` = event
+    time, `ingested_at` = transaction time). Never edited, never re-embedded.
+  * **Mention** (immutable, append-only) — one per *occurrence* of an entity inside an
+    episode. Carries the exact surface form, a type guess, a char span, and a
+    back-pointer to its episode. Embedded once; never edited. This is the atom that
+    makes re-embedding unnecessary: new data appends mentions, it never mutates them.
+  * **Entity** (lean canonical anchor) — ONE identity node per real-world thing. Holds
+    only id / canonical name / type / aliases / doc-frequency — no raw text, no growing
+    summary blob. Mentions point at it in a STAR (not a clique), so it stays a small,
+    addressable identity rather than a high-degree hub that wrecks PPR.
+
+Facts live on **edges with bi-temporal validity** (`valid_at` / `invalid_at` +
+`belief`): a state change closes the old fact's window and opens a new one instead of
+overwriting or re-embedding anything ("Becky lives in Toronto" → "…Berlin" is an
+`invalid_at` on one edge plus a new edge). See docs/TEMPORAL.md.
+
+Nodes live in GraphStore.nodes; NetworkX holds only topology + edge attributes for the
+graph algorithms. Every fact edge carries `provenance` + `confidence` so traversal can
+down-weight or drop low-trust relationships.
 """
 from __future__ import annotations
 
@@ -13,15 +31,19 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 
+# Special canonical node id for the first-person self anchor (personal-web mode)
+SELF_ENTITY_ID = "entity_self"
+
+
 # --------------------------------------------------------------------------- #
 # Enumerations
 # --------------------------------------------------------------------------- #
 class NodeType(str, Enum):
-    OBJECT = "object"
-    ENTITY = "entity"
-    TAG = "tag"             # LEGACY: tags were retired into the CONCEPT-entity vocabulary;
-                            # kept only so an old store's tag nodes still deserialize.
-    RELATION = "relation"   # canonical relationship-tag node (predicate vocabulary)
+    EPISODE = "episode"     # immutable ingested entry (the document/note/image unit)
+    MENTION = "mention"     # immutable per-episode occurrence of an entity
+    ENTITY = "entity"       # lean canonical identity anchor
+    TAG = "tag"             # canonical topical-tag vocabulary
+    RELATION = "relation"   # canonical relationship-tag (predicate) vocabulary
     COMMUNITY = "community"
 
 
@@ -37,49 +59,28 @@ class EntityType(str, Enum):
     CONCEPT = "concept"
     WORK = "work"
     EVENT = "event"
-    DATE = "date"      # a specific date / time-point (canonicalized by normalize_date)
+    DATE = "date"
     OTHER = "other"
 
 
-class RelationType(str, Enum):
-    """Legacy coarse relation vocabulary (rev 3).
+class Belief(str, Enum):
+    """Transaction-time belief state of a fact edge (docs/TEMPORAL.md §3).
 
-    Relations are now open-vocabulary, LLM-generated, multi-label *relationship
-    tags* that are consolidated over time (see RelationTagNode / NodeType.RELATION
-    and Canonicalizer.resolve_relation). This enum is kept only as a coarse
-    fallback / back-compat for the single `Edge.relation` slot; the live payload is
-    the canonical relationship-tag id in `Edge.rel_tag` (one per parallel edge).
-    """
-    PART_OF = "part_of"
-    LOCATED_IN = "located_in"
-    CREATED_BY = "created_by"
-    INSTANCE_OF = "instance_of"
-    CAUSES = "causes"
-    MENTIONS = "mentions"
-    RELATED_TO = "related_to"  # catch-all
-
-    @classmethod
-    def coerce(cls, value: str | None) -> "RelationType":
-        if not value:
-            return cls.RELATED_TO
-        try:
-            return cls(value.strip().lower().replace(" ", "_"))
-        except ValueError:
-            return cls.RELATED_TO
+    `asserted` = we currently believe this fact held over its valid window;
+    `retracted` = a better source contradicted the *recorded* belief — it was never
+    actually valid (a correction, distinct from a fact whose valid window simply ended)."""
+    ASSERTED = "asserted"
+    RETRACTED = "retracted"
 
 
 class EdgeType(str, Enum):
-    MENTIONS = "MENTIONS"          # ObjectNode  → EntityNode (entities AND concepts)
-    TAGGED_AS = "TAGGED_AS"        # LEGACY (read-only): ObjectNode → TagNode. Tags were retired
-                                   #   into CONCEPT entities (rev 5); never minted anymore, kept
-                                   #   only so older graph dumps still deserialize.
-    RELATED_TO = "RELATED_TO"      # EntityNode  → EntityNode (directed; ONE per canonical
-                                   #   relationship in `rel_tag` — parallel edges per pair)
-    SIMILAR_TO = "SIMILAR_TO"      # any ↔ any   (embedding synonymy)
-    SHARED_TAG = "SHARED_TAG"      # LEGACY (read-only): ObjectNode ↔ ObjectNode shared-tag
-                                   #   overlap. Superseded by SHARED_ENTITY now that concepts
-                                   #   are entities; kept only for back-compat with old dumps.
-    SHARED_ENTITY = "SHARED_ENTITY"
+    MENTIONED_IN = "MENTIONED_IN"  # Mention  → Episode (provenance of an occurrence)
+    RESOLVES_TO = "RESOLVES_TO"    # Mention  → Entity  (the star spoke to the anchor)
+    TAGGED_AS = "TAGGED_AS"        # Episode  → Tag
+    RELATED_TO = "RELATED_TO"      # Entity   → Entity  (a bi-temporal FACT edge)
+    SIMILAR_TO = "SIMILAR_TO"      # immutable ↔ immutable (embedding synonymy)
+    SHARED_TAG = "SHARED_TAG"      # Episode  ↔ Episode  (derived, overlap-weighted)
+    SHARED_ENTITY = "SHARED_ENTITY"  # Episode ↔ Episode (share a resolved entity)
     IN_COMMUNITY = "IN_COMMUNITY"  # node → CommunityNode
     HYPERLINKS_TO = "HYPERLINKS_TO"  # optional deterministic enrichment
 
@@ -88,7 +89,7 @@ class Provenance(str, Enum):
     EXTRACTED = "EXTRACTED"  # the LLM pulled it straight from the content
     INFERRED = "INFERRED"    # the LLM reasoned it (lower trust)
     SIMILAR = "SIMILAR"      # embedding cosine
-    DERIVED = "DERIVED"      # deterministic (shared tags / kNN / hyperlinks)
+    DERIVED = "DERIVED"      # deterministic (shared tags / kNN / hyperlinks / structure)
 
 
 # --------------------------------------------------------------------------- #
@@ -96,39 +97,43 @@ class Provenance(str, Enum):
 # --------------------------------------------------------------------------- #
 @dataclass
 class Node:
-    """Base node. Subtypes add fields; everything round-trips through a JSON payload."""
+    """Base node. Subtypes use a subset of the fields; everything round-trips through a
+    single JSON payload so one SQLite table serialises every node type."""
     id: str
     ntype: NodeType
     name: str = ""
-    created_at: str = ""
+    created_at: str = ""        # event time (when the fact/content is about)
     last_modified: str = ""
+    ingested_at: str = ""       # transaction time (when we recorded it)
     valid: bool = True
     superseded_by: str | None = None
-    seen: bool = False  # visited-set / debug flag (§5)
 
-    # type-specific payload (kept loose so one table serialises every node type)
+    # ---- Episode ----
     modality: Modality | None = None
-    raw_text: str | None = None          # ObjectNode: the embedding surface
-    description: str | None = None        # ObjectNode(image): the VLM one-liner
-    content_hash: str | None = None       # ObjectNode
-    source_ref: str | None = None         # ObjectNode: url / file path / title
-    tags: list[str] = field(default_factory=list)  # ObjectNode: denormalised filter copy
+    raw_text: str | None = None          # the embedding / retrieval surface
+    description: str | None = None        # image: the VLM one-liner
+    content_hash: str | None = None
+    source_ref: str | None = None         # url / file path / title
+    tags: list[str] = field(default_factory=list)  # denormalised filter copy
 
-    entity_type: EntityType | None = None  # EntityNode
-    aliases: list[str] = field(default_factory=list)  # TagNode
+    # ---- Mention ----
+    episode_id: str | None = None         # back-pointer to the asserting episode
+    char_span: list[int] | None = None    # [start, end] in the episode text (best-effort)
+
+    # ---- Entity / Tag / Relation (canonical anchors) ----
+    entity_type: EntityType | None = None
+    aliases: list[str] = field(default_factory=list)
     tag_description: str | None = None     # TagNode (L3)
-    doc_frequency: int = 0                 # EntityNode / TagNode (for IDF specificity)
-    provenance_objs: list[str] = field(default_factory=list)  # back-pointers (§2)
+    doc_frequency: int = 0                 # # episodes referencing it (IDF specificity)
+    functional: bool = False               # RelationNode: single-valued (lives_in, employed_by)
+    symmetric: bool = False                # RelationNode: orientation-free (works_with)
 
-    members: list[str] = field(default_factory=list)  # CommunityNode
-    summary: str | None = None                        # CommunityNode
+    # ---- Community ----
+    members: list[str] = field(default_factory=list)
+    summary: str | None = None
 
     def to_payload(self) -> str:
         d = asdict(self)
-        # enums → str
-        for k in ("ntype", "modality", "entity_type"):
-            if d.get(k) is not None and isinstance(d[k], Enum):
-                d[k] = d[k].value
         d["ntype"] = self.ntype.value
         if self.modality is not None:
             d["modality"] = self.modality.value
@@ -144,7 +149,9 @@ class Node:
             d["modality"] = Modality(d["modality"])
         if d.get("entity_type") is not None:
             d["entity_type"] = EntityType(d["entity_type"])
-        return cls(**d)
+        # tolerate stores written before a field existed
+        known = cls.__dataclass_fields__
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 # --------------------------------------------------------------------------- #
@@ -158,34 +165,45 @@ class Edge:
     provenance: Provenance = Provenance.DERIVED
     confidence: float = 1.0
     weight: float = 1.0
-    relation: RelationType | None = None  # legacy coarse class (back-compat only)
-    # canonical relationship-tag node id labelling a directed RELATED_TO edge (rev 4).
-    # ONE per edge: A→B [is_friend_of] and A→B [works_with] are two PARALLEL edges in
-    # the MultiDiGraph, each with its own provenance / confidence / timestamp — the
-    # idiomatic KG-triple / property-graph shape (one relation per edge).
-    rel_tag: str | None = None
-    valid: bool = True
-    created_at: str = ""
+    rel_tag: str | None = None            # canonical RelationNode id (RELATED_TO only)
+
+    # ---- bi-temporal fact fields (RELATED_TO; docs/TEMPORAL.md) ----
+    valid_at: str = ""                    # valid-time start ("" = unknown)
+    invalid_at: str = ""                  # valid-time end   ("" = ∞ / currently true)
+    belief: Belief = Belief.ASSERTED      # transaction-time belief state
+    episode_id: str = ""                  # provenance: the episode that asserted this fact
+
+    valid: bool = True                    # structural soft-invalidation
+    created_at: str = ""                  # transaction time
 
     def key(self) -> tuple:
-        """Identity of an edge — the per-relation key in the MultiDiGraph. For a
-        RELATED_TO edge the discriminator is the canonical relationship-tag id, so
-        each relationship between a pair becomes its own parallel edge."""
-        rel = self.rel_tag or (self.relation.value if self.relation else "")
-        return (self.etype.value, rel)
+        """Per-edge identity in the MultiDiGraph. For a RELATED_TO fact the
+        discriminator is (canonical relationship id, valid_at) so a *reopened* fact and
+        its closed predecessor between the same pair are distinct parallel edges; the
+        common case (one open fact per predicate) collapses naturally."""
+        rel = self.rel_tag or ""
+        disc = self.valid_at if self.etype == EdgeType.RELATED_TO else ""
+        return (self.etype.value, rel, disc)
 
 
 # --------------------------------------------------------------------------- #
 # Convenience constructors
 # --------------------------------------------------------------------------- #
-def object_node(node_id: str, *, modality: Modality, source_ref: str,
-                raw_text: str | None, content_hash: str, ts: str,
-                description: str | None = None) -> Node:
+def episode_node(node_id: str, *, modality: Modality, source_ref: str,
+                 raw_text: str | None, content_hash: str, ts: str,
+                 description: str | None = None, ingested_at: str = "") -> Node:
     return Node(
-        id=node_id, ntype=NodeType.OBJECT, name=source_ref, modality=modality,
+        id=node_id, ntype=NodeType.EPISODE, name=source_ref, modality=modality,
         source_ref=source_ref, raw_text=raw_text, description=description,
         content_hash=content_hash, created_at=ts, last_modified=ts,
+        ingested_at=ingested_at or ts,
     )
+
+
+def mention_node(node_id: str, *, surface: str, etype: EntityType, episode_id: str,
+                 ts: str, char_span: list[int] | None = None) -> Node:
+    return Node(id=node_id, ntype=NodeType.MENTION, name=surface, entity_type=etype,
+                episode_id=episode_id, char_span=char_span, created_at=ts, last_modified=ts)
 
 
 def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str) -> Node:
@@ -193,11 +211,19 @@ def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str) -> Node:
                 entity_type=etype, created_at=ts, last_modified=ts)
 
 
-def relation_tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
-    """A canonical relationship-tag node (predicate vocabulary). Parallel to
-    TagNode — it carries `aliases` and `doc_frequency` so the relation vocabulary
-    is consolidated and IDF-weighted exactly like the topical-tag vocabulary."""
+def tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
+    return Node(id=node_id, ntype=NodeType.TAG, name=canonical,
+                created_at=ts, last_modified=ts)
+
+
+def relation_tag_node(node_id: str, *, canonical: str, ts: str,
+                      functional: bool = False, symmetric: bool = False) -> Node:
+    """A canonical relationship-tag node (predicate vocabulary). Like TagNode it carries
+    `aliases` + `doc_frequency`, plus per-predicate cardinality flags (docs/TEMPORAL.md
+    §5): `functional` predicates (lives_in, employed_by) are single-valued so a new value
+    supersedes the old; `symmetric` predicates (works_with) store one orientation only."""
     return Node(id=node_id, ntype=NodeType.RELATION, name=canonical,
+                functional=functional, symmetric=symmetric,
                 created_at=ts, last_modified=ts)
 
 

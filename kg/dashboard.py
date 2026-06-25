@@ -156,11 +156,11 @@ td{padding:5px 8px;border-bottom:1px solid #1d232b}
 # Shared JS: a pan/zoom graph widget + a tiny SVG line/bar chart kit.
 _GRAPHJS = r"""
 const NS="http://www.w3.org/2000/svg";
-const COL={object_text:"#4f8ef7",object_image:"#2ec27e",tag:"#f5a623",entity:"#b06ff0",
+const COL={episode_text:"#4f8ef7",episode_image:"#2ec27e",tag:"#f5a623",entity:"#b06ff0",
   relation:"#b06ff0",community:"#9aa4af"};
-function colorOf(n){ if(n.type==="object") return n.modality==="image"?COL.object_image:COL.object_text;
+function colorOf(n){ if(n.type==="episode") return n.modality==="image"?COL.episode_image:COL.episode_text;
   return COL[n.type]||"#9aa4af"; }
-function radius(n){ if(n.type==="object") return 4+Math.min(7,(n.deg||0)*0.5); return n.type==="tag"?3.2:2.8; }
+function radius(n){ if(n.type==="episode") return 4+Math.min(7,(n.deg||0)*0.5); return n.type==="tag"?3.2:2.8; }
 function esc(s){ return (s+"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function el(tag,attrs,kids){ const e=document.createElement(tag); for(const k in (attrs||{})){
   if(k==="html")e.innerHTML=attrs[k]; else if(k==="text")e.textContent=attrs[k]; else e.setAttribute(k,attrs[k]); }
@@ -649,7 +649,7 @@ const Input=(function(){
     const m=n.meta||{}; let h=`<div class="row" style="justify-content:space-between;align-items:baseline">
       <h2 style="margin:0">${esc(n.label||n.id)}</h2>
       <span class="pill" style="background:${n.raw?'rgba(46,194,126,.15)':'rgba(79,142,247,.15)'}">${n.raw?'raw entry':'created'} · ${esc(n.type)}</span></div>`;
-    if(n.type==="object"){
+    if(n.type==="episode"){
       h+=`<div class="mut" style="font-size:11px;margin-top:2px">${esc(m.modality||"")}${m.created_at?(" · "+esc(m.created_at)):""}</div>`;
       if((m.tags||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:8px">tags (${m.n_tags})</div><div>${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`;
       if((m.entities||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${m.entities.map(t=>`<span class="tag" style="border-color:#4f8ef7">${esc(t)}</span>`).join("")}</div>`;

@@ -27,6 +27,7 @@ def _record(item: CorpusItem, ext: Extraction) -> dict:
         "title": item.title,
         "modality": item.modality,
         "entities": [{"name": e.name, "type": e.type.value} for e in ext.entities],
+        "tags": list(ext.tags),
         "relations": [{"source": r.source, "target": r.target,
                        "labels": list(r.labels), "confidence": r.confidence}
                       for r in ext.relations],
@@ -49,7 +50,7 @@ def extract_corpus(extractor: Extractor, items: list[CorpusItem],
             return _record(item, ext), None
         except Exception as e:  # noqa: BLE001 — keep the batch alive, record the error
             rec = {"id": item.id, "title": item.title, "modality": item.modality,
-                   "entities": [], "relations": [], "description": None,
+                   "entities": [], "tags": [], "relations": [], "description": None,
                    "error": repr(e)}
             return rec, f"{item.id}: {e!r}"
 
@@ -61,23 +62,21 @@ def extract_corpus(extractor: Extractor, items: list[CorpusItem],
 
 
 def summarize(records: list[dict], label: str) -> dict:
-    """Aggregate vocabulary stats for one mode — the comparable artifact across models.
-    Tags were retired into the entity vocabulary, so the former "tag" stats are now the
-    `concept`-typed slice of the entities (what the extractor surfaces as themes/topics)."""
+    """Aggregate vocabulary stats for one mode — the comparable artifact across models."""
+    tag_counts: Counter[str] = Counter()
     ent_types: Counter[str] = Counter()
     rel_labels: Counter[str] = Counter()
-    concept_counts: Counter[str] = Counter()
     uniq_ents: set[str] = set()
     n_ents = n_rels = n_failed = 0
     for r in records:
         if r.get("error"):
             n_failed += 1
+        for t in r["tags"]:
+            tag_counts[t] += 1
         for e in r["entities"]:
             ent_types[e["type"]] += 1
             uniq_ents.add(e["name"].lower())
             n_ents += 1
-            if e["type"] == "concept":
-                concept_counts[e["name"].lower()] += 1
         for rel in r["relations"]:
             n_rels += 1
             for lab in rel["labels"]:
@@ -89,9 +88,9 @@ def summarize(records: list[dict], label: str) -> dict:
         "entities_total": n_ents,
         "unique_entities": len(uniq_ents),
         "entity_types": dict(ent_types.most_common()),
-        "concepts_total": sum(concept_counts.values()),
-        "unique_concepts": len(concept_counts),
-        "top_concepts": concept_counts.most_common(25),
+        "tags_total": sum(tag_counts.values()),
+        "unique_tags": len(tag_counts),
+        "top_tags": tag_counts.most_common(25),
         "relations_total": n_rels,
         "unique_relation_labels": len(rel_labels),
         "top_relation_labels": rel_labels.most_common(25),

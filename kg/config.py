@@ -1,8 +1,7 @@
 """Central configuration — every tunable from the design lives here.
 
-The thresholds map directly to docs/ARCHITECTURE.md §3 (drift control), §4
-(embeddings) and §5 (retrieval). They are deliberately conservative / link-biased
-(under-merge) per §9 risk 1.
+The thresholds map to docs/ARCHITECTURE.md §3 (drift control), §4 (embeddings) and §5
+(retrieval). They are deliberately conservative / link-biased (under-merge) per §9 risk 1.
 """
 from __future__ import annotations
 
@@ -33,62 +32,51 @@ class Config:
     entropy_min_bits: float = 2.0     # min Shannon entropy (chars) to allow fuzzy merge
 
     # ---- relationship-tag consolidation (§3b — open-vocab relation canonicalization)
-    # Predicate labels are consolidated like topical tags, but with a HIGHER merge
-    # bar: antonyms/inverses ("is_friend_of" vs "is_enemy_of", "manages" vs
-    # "managed_by") sit close in embedding space, so we merge conservatively and
-    # never auto-link across them.
     rel_syn_merge_threshold: float = 0.95
     max_relation_labels: int = 3      # cap labels carried by one connection
 
     # ---- L3 selective LLM canonicalization tie-breaker (§3 L3 — SHIP DISABLED) ----
-    # Fires ONLY on the residual ambiguous band the deterministic L1/L2 tiers can't
-    # confidently resolve, and (for relations) ONLY behind the deterministic antonym/
-    # inverse/passive veto in canonicalize.py. Decided INSIDE resolve_* before a node is
-    # minted (sequential, main-thread), so a MERGE just returns the existing id — no
-    # provisional node, no edge rewrite. Default OFF and auto-skipped with no
-    # ANTHROPIC_API_KEY, so the offline path is byte-for-byte unchanged. Enable only
-    # after `python -m kg eval-canon` shows zero antonym/inverse false-merges. See docs/MVP.md.
     l3_enabled: bool = False
-    l3_model: str = "claude-haiku-4-5-20251001"  # pinned adjudicator model (temperature=0)
-    rel_gray_floor: float = 0.90      # relation gray band = [rel_gray_floor, rel_syn_merge_threshold)
-    # entity/tag gray band reuses [syn_link_threshold, syn_merge_threshold) = [0.85, 0.93)
+    l3_model: str = "claude-haiku-4-5-20251001"
+    rel_gray_floor: float = 0.90
 
     # ---- derived edges (§2 / §6.5) ------------------------------------------
-    object_knn_k: int = 6             # SIMILAR_TO neighbours per object
-    object_knn_floor: float = 0.55    # min cosine for an object↔object SIMILAR_TO edge
+    episode_knn_k: int = 6            # SIMILAR_TO neighbours per episode
+    episode_knn_floor: float = 0.55   # min cosine for an episode↔episode SIMILAR_TO edge
     shared_min_overlap: int = 1       # min shared tags/entities for a SHARED_* edge
 
     # ---- retrieval (§5) ------------------------------------------------------
     ppr_damping: float = 0.5          # HippoRAG personalization damping
     seed_k: int = 10                  # seed nodes from fused embedding+BM25
-    top_k: int = 8                    # objects returned to the caller
+    top_k: int = 8                    # episodes returned to the caller
     mmr_lambda: float = 0.6           # MMR relevance↔diversity tradeoff
     inferred_confidence_floor: float = 0.3  # drop INFERRED edges below this in traversal
 
-    # ---- agentic query (§5 — the reserved LLM-guided-traversal path) ---------
-    # An LLM answers a prompt by calling read-only graph tools (seed-and-spread,
-    # keyword/vector search, neighbors, find_path, read_object, browse_themes) and
-    # synthesizing a cited answer. Mirrors the extractor's real⇄offline split: with
-    # no key (or backend="offline") a deterministic OfflineAgent runs the same tools,
-    # so the path is byte-for-byte offline and tests stay deterministic.
-    agent_backend: str = "auto"       # "auto" | "claude" | "offline"
-    agent_model: str = "claude-haiku-4-5-20251001"  # reuse the cheap model; overridable
-    agent_max_steps: int = 8          # tool-call rounds (the runaway-loop bound)
-    agent_max_tokens: int = 1024      # per-turn output cap
-    agent_result_chars: int = 2000    # max chars per tool_result fed back into the prompt
-    agent_read_chars: int = 2000      # read_object truncation (mirrors lead_chars)
-    agent_node_budget: int = 80       # §5 ~80-node-per-prompt traversal ceiling
-    agent_max_path_hops: int = 5      # find_path bound
-    agent_offline_floor: float = 0.05  # offline agent escalates below this PPR score
+    # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----
+    # The query path is retrieve-then-read: PPR (or as-of-T PPR) assembles a context blob
+    # of the top episodes + the currently-valid facts among the touched entities, then a
+    # SINGLE LLM call answers over it with citations. No per-hop LLM walking. With no key
+    # (or backend="offline") a deterministic extractive answerer runs instead, so `kg ask`
+    # and every test run fully offline.
+    rag_backend: str = "auto"         # "auto" | "claude" | "offline"
+    rag_model: str = "claude-haiku-4-5-20251001"
+    rag_max_tokens: int = 1024        # answer output cap
+    rag_context_episodes: int = 6     # episodes whose text enters the context blob
+    rag_episode_chars: int = 1200     # per-episode text budget in the context
+    rag_max_facts: int = 30           # currently-valid facts surfaced in the context
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids
 
-    # ---- graph direction (§2 rev 3) -----------------------------------------
-    # Edges are stored DIRECTED (MultiDiGraph) so relationship semantics survive
-    # (src→dst). Traversal/diffusion (PPR, BFS) runs over a SYMMETRIZED projection
-    # so recall is unchanged (HippoRAG runs PPR undirected); see retrieval.py.
+    # ---- graph direction (§2) -----------------------------------------------
     directed: bool = True
+
+    # ---- personal-web mode (optional) ---------------------------------------
+    # When on, first-person references ("i"/"me"/"my"/…) resolve to ONE stable
+    # canonical "self" anchor so the narrator's relationships form on a single node.
+    # OFF by default — the offline path is byte-for-byte unchanged when off.
+    self_entity: bool = False     # personal-web first-person resolution
+    self_name: str = "self"       # display name of the self anchor
 
     # ---- misc ----------------------------------------------------------------
     random_seed: int = 42

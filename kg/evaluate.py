@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 
 from .graph import KnowledgeGraph
-from .models import EdgeType, NodeType
+from .models import NodeType
 
 _STOP = set("the a an of to in on and or for with from this that".split())
 _W = re.compile(r"[A-Za-z][A-Za-z0-9'-]+")
@@ -50,7 +50,7 @@ class ModeScore:
 # --------------------------------------------------------------------------- #
 def single_article_questions(g: KnowledgeGraph, limit: int | None = None) -> list[Question]:
     qs = []
-    for n in g.store.nodes_of_type(NodeType.OBJECT):
+    for n in g.store.nodes_of_type(NodeType.EPISODE):
         if n.modality and n.modality.value == "image":
             continue
         text = n.raw_text or ""
@@ -68,16 +68,16 @@ def single_article_questions(g: KnowledgeGraph, limit: int | None = None) -> lis
 
 
 def cross_article_questions(g: KnowledgeGraph, limit: int | None = None) -> list[Question]:
-    """Entities mentioned by ≥2 articles → multi-hop questions (gold = that set)."""
+    """Entities referenced by ≥2 episodes → multi-hop questions (gold = that set). The
+    episode set is reached through the mention star (entity ← RESOLVES_TO ← mention →
+    MENTIONED_IN → episode), so traversal — not a flat vector hit — must connect them."""
     ent_objs: dict[str, set[str]] = {}
     for n in g.store.nodes_of_type(NodeType.ENTITY):
-        objs = set()
-        for nbr, data in g.store.neighbors(n.id, etypes={EdgeType.MENTIONS}):
-            on = g.store.get_node(nbr)
-            if on and on.ntype == NodeType.OBJECT and on.modality.value == "text":
-                objs.add(nbr)
-        if len(objs) >= 2:
-            ent_objs[n.id] = objs
+        eps = {ep for ep in g.store.entity_episodes(n.id)
+               if (on := g.store.get_node(ep)) and on.modality
+               and on.modality.value == "text"}
+        if len(eps) >= 2:
+            ent_objs[n.id] = eps
     qs = []
     for eid, objs in sorted(ent_objs.items(), key=lambda kv: -len(kv[1])):
         ent = g.store.get_node(eid)
@@ -126,10 +126,10 @@ def evaluate(g: KnowledgeGraph, questions: list[Question],
         agg_r, agg_m = 0.0, 0.0
         per = {kind: {"n": 0, "r": 0.0, "m": 0.0} for kind in kinds}
         for q in questions:
-            # "agent" routes through the §5 agentic traversal (offline backend for a
-            # deterministic, key-free comparison); its .object_ids (citations ∪ surfaced
-            # objects) drops into the same recall@k/MRR math as a RetrievalResult.
-            res = (g.ask(q.query, backend="offline", k=k) if mode == "agent"
+            # "rag" routes through the §5 graph-RAG answer flow (offline backend for a
+            # deterministic, key-free comparison); its .object_ids (the PPR ranking it read
+            # over) drops into the same recall@k/MRR math as a RetrievalResult.
+            res = (g.ask(q.query, backend="offline", k=k) if mode == "rag"
                    else g.query(q.query, mode=mode, k=k))
             ranked = res.object_ids
             r = _recall_at_k(ranked, q.gold, k)

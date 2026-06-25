@@ -11,11 +11,11 @@ between:
            graph (with a layout + build order) is captured so the dashboard can
            animate the structure forming.
 
-  QUERY  — run every `dataset/retrieval/questions.jsonl` question through the
-           agentic `KnowledgeGraph.ask`, capturing the traversal subgraph
-           (`viz.agent_trace_payload`), the nodes the agent touched, tokens +
-           cost, retrieval accuracy (recall@k / MRR / citation-grounding) and an
-           optional LLM-judge response score.
+  QUERY  — run every `dataset/retrieval/questions.jsonl` question through
+           `KnowledgeGraph.ask` (PPR retrieves a context, ONE LLM call answers — the
+           LLM does not traverse), capturing the retrieval subgraph
+           (`viz.rag_trace_payload`), the nodes PPR touched, tokens + cost, retrieval
+           accuracy (recall@k / MRR / citation-grounding) and an optional LLM-judge score.
 
 The result is written to `runs/<run_id>/run.json` (consumed by the dashboard
 server) plus a self-contained `runs/<run_id>/dashboard.html` static export, and
@@ -40,7 +40,7 @@ from .evaluate import _mrr, _recall_at_k
 from .graph import KnowledgeGraph
 from .metering import UsageMeter, totals_of
 from .models import EdgeType, NodeType
-from .viz import agent_trace_payload
+from .viz import rag_trace_payload
 
 QUESTIONS_PATH = os.path.join("dataset", "retrieval", "questions.jsonl")
 DEFAULT_OUT = "runs"
@@ -55,29 +55,42 @@ def _now() -> str:
 # --------------------------------------------------------------------------- #
 def _vocab(stats: dict) -> dict:
     bt = stats["by_node_type"]
-    return {"objects": bt.get("object", 0), "tags": bt.get("tag", 0),
+    # "objects" = episodes (the raw-entry count); key kept for the dashboard's chart labels
+    return {"objects": bt.get("episode", 0), "tags": bt.get("tag", 0),
             "entities": bt.get("entity", 0), "relations": bt.get("relation", 0),
             "communities": bt.get("community", 0)}
 
 
 def _avg_tags_per_object(stats: dict) -> float:
-    n_obj = stats["by_node_type"].get("object", 0)
+    n_ep = stats["by_node_type"].get("episode", 0)
     tagged = stats["by_edge_type"].get("TAGGED_AS", 0)
-    return round(tagged / n_obj, 3) if n_obj else 0.0
+    return round(tagged / n_ep, 3) if n_ep else 0.0
+
+
+def _episode_entities(store, ep_id: str):
+    """The entities an episode references, via its mention star
+    (episode ← MENTIONED_IN ← mention → RESOLVES_TO → entity)."""
+    out, seen = [], set()
+    for mid, _d in store.neighbors(ep_id, etypes={EdgeType.MENTIONED_IN}, direction="in"):
+        for eid, _d2 in store.neighbors(mid, etypes={EdgeType.RESOLVES_TO}, direction="out"):
+            if eid not in seen:
+                seen.add(eid)
+                out.append(eid)
+    return out
 
 
 def _doc_footprint(store, obj_id: str, max_rel: int = 8) -> dict:
-    """What this object contributes/touches: its canonical tags, the entities it
-    MENTIONS, and the directed relation labels among those entities."""
+    """What this episode contributes/touches: its canonical tags, the entities it mentions
+    (via the mention star), and the directed relation labels among those entities."""
     node = store.get_node(obj_id)
     tags = list(node.tags)[:14] if node else []
     ents, rel_tags = [], []
-    for nbr, _d in store.neighbors(obj_id, etypes={EdgeType.MENTIONS}, direction="out"):
-        en = store.get_node(nbr)
+    for eid in _episode_entities(store, obj_id):
+        en = store.get_node(eid)
         if not en:
             continue
         ents.append(en.name)
-        for _t, rd in store.neighbors(nbr, etypes={EdgeType.RELATED_TO}, direction="out"):
+        for _t, rd in store.neighbors(eid, etypes={EdgeType.RELATED_TO}, direction="out"):
             rid = rd.get("rel_tag")
             rn = store.get_node(rid) if rid else None
             if rn and rn.name not in rel_tags:
@@ -111,35 +124,52 @@ def _rel_pair_stats(store) -> dict:
             "avg_rel_tags_per_pair": round(n_edges / n_pairs, 3) if n_pairs else 0.0}
 
 
-_DIRECTED_ETYPES = {EdgeType.TAGGED_AS.value, EdgeType.MENTIONS.value,
+# The collapsed Episode→Entity link drawn in place of the (mention → episode/entity) star,
+# so the dashboard graph stays Episode/Entity/Tag-only. Labelled "MENTIONS" so the viewer's
+# existing edge styling/legend applies unchanged.
+_MENTIONS_ETYPE = "MENTIONS"
+_DIRECTED_ETYPES = {EdgeType.TAGGED_AS.value, _MENTIONS_ETYPE,
                     EdgeType.RELATED_TO.value, EdgeType.HYPERLINKS_TO.value}
 
 
 def _full_graph(store) -> dict:
-    """Obsidian-style graph payload for the Input view's force graph: ALL node types
-    drawn together — OBJECT nodes are the *raw entries* (green), TAG/ENTITY nodes are
-    *created* (blue) — plus ALL edges between them (directed where meaningful, with the
-    RELATED_TO predicate as an edge label). Relation-tag and community nodes are NOT drawn
-    as nodes (relations have no incident edges — they ride on RELATED_TO edges as labels;
-    communities are out of scope), keeping the graph to things that actually connect.
+    """Obsidian-style graph payload for the Input view's force graph: EPISODE nodes are the
+    *raw entries* (green), TAG/ENTITY nodes are *created* (blue), plus the edges between
+    them. The immutable mention layer is COLLAPSED into a direct Episode→Entity 'MENTIONS'
+    edge (the mention nodes themselves aren't drawn), keeping the graph to things that
+    connect. Relation-tag and community nodes are not drawn (relations ride on RELATED_TO
+    edges as labels; communities are out of scope).
 
-    Each node carries `appear` — the ingestion step (object index) at which it first shows
-    up — so the dashboard can *grow* the graph in generation order, `deg`/`indeg` (the
-    client sizes nodes by in-degree), plus `meta` for the click-to-inspect panel. The
-    client settles a static layout once (no perpetual physics)."""
+    Each node carries `appear` — the ingestion step at which it first shows up — so the
+    dashboard can *grow* the graph in generation order, `deg`/`indeg` (the client sizes
+    nodes by in-degree), plus `meta` for the click-to-inspect panel."""
     NT, ET = NodeType, EdgeType
-    objs = sorted(store.nodes_of_type(NT.OBJECT), key=lambda n: (n.created_at or "", n.id))
+    objs = sorted(store.nodes_of_type(NT.EPISODE), key=lambda n: (n.created_at or "", n.id))
     build_order = [n.id for n in objs]
     appear: dict[str, int] = {oid: i for i, oid in enumerate(build_order)}
+    drawn = (NT.EPISODE, NT.ENTITY, NT.TAG)
 
     deg: dict[str, int] = {}
     indeg: dict[str, int] = {}  # edges pointing AT a node (sizes the node in the view)
     edges, seen = [], set()
+
+    def add_edge(u, v, et, rel, directed):
+        key = (u, v, et, rel)
+        if key in seen:
+            return
+        seen.add(key)
+        edges.append({"s": u, "t": v, "etype": et, "directed": directed, "rel": rel})
+        deg[u] = deg.get(u, 0) + 1
+        deg[v] = deg.get(v, 0) + 1
+        if directed:                          # only directed edges "point at" a node;
+            indeg[v] = indeg.get(v, 0) + 1    # symmetric shared/similar edges don't.
+
+    # real Episode↔Episode / Episode→Tag / Entity→Entity edges (skip mention/community)
+    skip = {ET.IN_COMMUNITY.value, ET.MENTIONED_IN.value, ET.RESOLVES_TO.value}
     for u, v, d in store.all_edges():
-        if not d.get("valid", True) or d.get("etype") == ET.IN_COMMUNITY.value:
+        if not d.get("valid", True) or d.get("etype") in skip:
             continue
         un, vn = store.get_node(u), store.get_node(v)
-        drawn = (NT.OBJECT, NT.ENTITY, NT.TAG)
         if not un or not vn or un.ntype not in drawn or vn.ntype not in drawn:
             continue
         et = d.get("etype")
@@ -147,31 +177,24 @@ def _full_graph(store) -> dict:
         if et == ET.RELATED_TO.value and d.get("rel_tag"):
             rn = store.get_node(d["rel_tag"])
             rel = rn.name if rn else ""
-        key = (u, v, et, rel)
-        if key in seen:
-            continue
-        seen.add(key)
-        directed = et in _DIRECTED_ETYPES
-        edges.append({"s": u, "t": v, "etype": et, "directed": directed, "rel": rel})
-        deg[u] = deg.get(u, 0) + 1
-        deg[v] = deg.get(v, 0) + 1
-        if directed:                          # only directed edges "point at" a node;
-            indeg[v] = indeg.get(v, 0) + 1    # symmetric shared/similar edges don't.
-        # → tags/entities (targets of TAGGED_AS / MENTIONS) become the hubs, sized by how
-        #   many documents reference them; documents stay small leaves.
+        add_edge(u, v, et, rel, et in _DIRECTED_ETYPES)
 
-    # propagate appear to created nodes: the step of the earliest object they touch
-    for i, oid in enumerate(build_order):
-        for nbr, d in store.neighbors(oid):
-            if d.get("etype") == ET.IN_COMMUNITY.value:
-                continue
-            if nbr not in appear:
-                appear[nbr] = i
+    # collapsed Episode→Entity "MENTIONS" edges (the mention star, drawn as one hop)
+    for ep in build_order:
+        for eid in _episode_entities(store, ep):
+            if store.get_node(eid):
+                add_edge(ep, eid, _MENTIONS_ETYPE, "", True)
+
+    # propagate appear to created nodes: the step of the earliest episode they touch
+    for i, ep in enumerate(build_order):
+        for eid in _episode_entities(store, ep):
+            appear.setdefault(eid, i)
+        for nbr, d in store.neighbors(ep, etypes={ET.TAGGED_AS}, direction="out"):
+            appear.setdefault(nbr, i)
 
     def meta(n) -> dict:
-        if n.ntype == NT.OBJECT:
-            ents = [store.get_node(e).name
-                    for e, _ in store.neighbors(n.id, etypes={ET.MENTIONS}, direction="out")
+        if n.ntype == NT.EPISODE:
+            ents = [store.get_node(e).name for e in _episode_entities(store, n.id)
                     if store.get_node(e)]
             return {"modality": n.modality.value if n.modality else "text",
                     "created_at": n.created_at, "source_ref": n.source_ref,
@@ -184,9 +207,9 @@ def _full_graph(store) -> dict:
 
     nodes = []
     for n in store.nodes.values():
-        if n.ntype not in (NT.OBJECT, NT.ENTITY, NT.TAG) or not n.valid:
+        if n.ntype not in drawn or not n.valid:
             continue
-        nodes.append({"id": n.id, "type": n.ntype.value, "raw": n.ntype == NT.OBJECT,
+        nodes.append({"id": n.id, "type": n.ntype.value, "raw": n.ntype == NT.EPISODE,
                       "label": (n.name or n.id), "deg": deg.get(n.id, 0),
                       "indeg": indeg.get(n.id, 0),
                       "appear": appear.get(n.id, len(build_order) - 1), "meta": meta(n)})
@@ -202,14 +225,16 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _article(oid: str) -> str:
-    """Collapse a mixed-stream chunk object id to its source article/image id:
-    `obj_wiki_062#p003` -> `obj_wiki_062`, `obj_img_013#p000` -> `obj_img_013`.
-    The retrieval questions' gold is article-level (`obj_wiki_010`), but ingesting the
-    temporal `mixed` stream creates per-paragraph chunk objects — so retrieval accuracy
-    is scored at the article level: a question is satisfied when the agent surfaces ANY
-    chunk derived from the gold article. Article-level gold ids (no `#`) pass through
-    unchanged, so this is a no-op for a non-chunked corpus."""
-    return oid.split("#", 1)[0]
+    """Collapse a mixed-stream chunk id to its source article/image id AND strip the node
+    prefix, so retrieval is scored at the article level and is robust across the
+    object→episode rename: `ep_wiki_062#p003` -> `wiki_062`, and a gold id authored under
+    the old prefix (`obj_wiki_010`) -> `wiki_010`, so the two still match. A question is
+    satisfied when retrieval surfaces ANY chunk derived from the gold article."""
+    base = oid.split("#", 1)[0]
+    for prefix in ("ep_", "obj_"):
+        if base.startswith(prefix):
+            return base[len(prefix):]
+    return base
 
 
 def _dedup(seq):
@@ -332,7 +357,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     log = progress or (lambda *_: None)
     cfg = config or Config.default()
     if backend:
-        cfg.agent_backend = backend
+        cfg.rag_backend = backend
     kk = k or cfg.top_k
 
     # fresh store every run so per-document deltas start from an empty graph
@@ -358,7 +383,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         cur_ids = set(g.store.nodes.keys())
         added = cur_ids - prev_ids
         obj_id = next((nid for nid in added
-                       if g.store.get_node(nid).ntype == NodeType.OBJECT), None)
+                       if g.store.get_node(nid).ntype == NodeType.EPISODE), None)
         tok = totals_of(recs)
         delta = {t: after["by_node_type"].get(t, 0) - prev_stats["by_node_type"].get(t, 0)
                  for t in set(after["by_node_type"]) | set(prev_stats["by_node_type"])}
@@ -411,15 +436,14 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
 
     # ---------------------------------------------------------------- QUERY half
     questions = load_questions(questions_path, limit=n_queries)
-    log(f"running {len(questions)} queries through the agentic ask() ...")
+    log(f"running {len(questions)} queries through the PPR→RAG ask() ...")
     judge_meter = UsageMeter()
     jclient = judge_client
     if judge and jclient is None and (agent_client is None):
         jclient = _build_judge_client(cfg.l3_model)
     qrecords: list[dict] = []
     for q in questions:
-        ans = g.ask(q["query"], backend=backend, k=kk, max_steps=max_steps,
-                    client=agent_client)
+        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
         ranked = ans.object_ids
         gold = set(q.get("gold", []))
         # article-collapsed matching (mixed-chunk graph vs article-level gold)
@@ -451,7 +475,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
             "steps": ans.steps, "stopped": ans.stopped, "backend": ans.backend,
             "trace": ans.trace, "seeds": ans.seeds, "touched": ans.touched,
             "n_touched": len(ans.touched),
-            "subgraph": agent_trace_payload(ans, g.store),
+            "subgraph": rag_trace_payload(ans, g.store),
             "llm_calls": ans.usage.get("llm_calls", 0),
             "input_tokens": ans.usage.get("input_tokens", 0),
             "output_tokens": ans.usage.get("output_tokens", 0),
@@ -466,15 +490,17 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
 
     # ---------------------------------------------------------------- assemble
     run_id = label or datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    backends = g.stats()["backends"]
+    backends.setdefault("agent", backends.get("answerer", "offline"))  # dashboard alias
     run = {
         "run_id": run_id, "label": label or run_id, "created_at": _now(),
-        "backends": g.stats()["backends"],
-        "models": {"extractor": cfg.llm_model, "agent": cfg.agent_model,
+        "backends": backends,
+        "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
                    "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
         "dataset": {"input": "mixed", "n_input": len(items),
                     "queries": os.path.basename(questions_path), "n_queries": len(questions)},
-        "config": {"k": kk, "agent_backend": cfg.agent_backend,
-                   "agent_max_steps": cfg.agent_max_steps, "reflexion": cfg.reflexion,
+        "config": {"k": kk, "agent_backend": cfg.rag_backend,
+                   "answerer": "ppr-rag", "reflexion": cfg.reflexion,
                    "l3_enabled": cfg.l3_enabled, "communities": communities,
                    "match": "article-collapsed (chunk->orig_id vs article-level gold)"},
         "cost_usd": round(ingest_totals["cost_usd"] + query_totals["cost_usd"], 6),

@@ -119,16 +119,19 @@ def test_heuristic_extractor_meter_is_empty():
 # article-collapsed scoring (mixed chunk graph vs article-level gold)
 # --------------------------------------------------------------------------- #
 def test_article_collapse_and_recall():
-    assert _article("obj_wiki_062#p003") == "obj_wiki_062"
-    assert _article("obj_img_013#p000") == "obj_img_013"
-    assert _article("obj_wiki_010") == "obj_wiki_010"   # already article-level: no-op
-    ranked = ["obj_wiki_062#p003", "obj_wiki_062#p007", "obj_wiki_005#p001"]
+    # _article strips both the chunk suffix AND the node prefix, so episode ids (ep_) match
+    # gold authored under the old object prefix (obj_).
+    assert _article("ep_wiki_062#p003") == "wiki_062"
+    assert _article("obj_wiki_062#p003") == "wiki_062"   # cross-rename: same article
+    assert _article("ep_img_013#p000") == "img_013"
+    assert _article("obj_wiki_010") == "wiki_010"        # already article-level: just de-prefix
+    ranked = ["ep_wiki_062#p003", "ep_wiki_062#p007", "ep_wiki_005#p001"]
     ranked_art = _dedup(_article(o) for o in ranked)
-    assert ranked_art == ["obj_wiki_062", "obj_wiki_005"]   # deduped, order kept
-    gold = {"obj_wiki_062"}
+    assert ranked_art == ["wiki_062", "wiki_005"]        # deduped, order kept
+    gold = {_article(x) for x in {"obj_wiki_062"}}        # gold authored under the old prefix
     assert _recall_at_k(ranked_art, gold, 8) == 1.0
     assert _mrr(ranked_art, gold) == 1.0
-    assert _recall_at_k(_dedup(_article(o) for o in ["obj_wiki_099#p0"]), gold, 8) == 0.0
+    assert _recall_at_k(_dedup(_article(o) for o in ["ep_wiki_099#p0"]), gold, 8) == 0.0
 
 
 # --------------------------------------------------------------------------- #

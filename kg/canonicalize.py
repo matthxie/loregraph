@@ -25,13 +25,22 @@ import numpy as np
 
 from .config import Config
 from .embedders import Embedder
-from .models import (Edge, EdgeType, EntityType, NodeType, Provenance,
-                     entity_node, relation_tag_node)
+from .metering import UsageMeter
+from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
+                     Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
 
 _PUNCT = re.compile(r"[^\w\s]")
 _WS = re.compile(r"\s+")
 _REL_SEP = re.compile(r"[\s\-]+")
+
+# First-person pronoun forms (personal-web mode, optional). These are already the
+# OUTPUTS of normalize_key() on {"I","me","my","mine","myself"} — normalize_key is
+# idempotent on them (lowercases, strips punctuation, leaves these short tokens alone),
+# so the resolve_entity() guard matches by normalize_key(name) ∈ _FIRST_PERSON. "we"/"us"
+# are deliberately excluded; "I" colliding with a Roman-numeral entity is an accepted
+# limitation of personal-web mode (best on natural, non-numeral corpora).
+_FIRST_PERSON = frozenset({"i", "me", "my", "mine", "myself"})
 
 # Relational function words stripped when computing a relation's *match key*, so
 # "is_friend_of" and "is_friends_with" reduce to the same content word ("friend").
@@ -54,6 +63,19 @@ _ANTONYM_LEMMAS = (
     frozenset({"employer", "employee"}), frozenset({"leader", "follower"}),
     frozenset({"owner", "owned"}), frozenset({"love", "hate"}),
 )
+
+
+# Per-predicate cardinality (docs/TEMPORAL.md §5), defined over READABLE predicate
+# surfaces and reduced to content keys at import so they match whatever
+# relation_content_key() produces (which mangles inflections deterministically).
+# Functional = single-valued: a new value supersedes the old (you can't live in two
+# cities). Symmetric = orientation-free: A↔B is one fact (works_with, married_to).
+_FUNCTIONAL_SURFACES = ("lives_in", "located_in", "employed_by", "born_in",
+                        "died_in", "based_in", "headquartered_in", "capital_of", "ceo_of",
+                        "president_of", "spouse_of", "married_to", "moved_to")
+_SYMMETRIC_SURFACES = ("works_with", "collaborates_with", "married_to", "spouse_of",
+                       "sibling_of", "friend_of", "is_friend_of", "colleague_of",
+                       "partnered_with", "co_founder_of")
 
 
 def relation_merge_vetoed(a: str, b: str) -> bool:
@@ -150,24 +172,48 @@ def normalize_relation(s: str) -> str:
     return re.sub(r"_+", "_", s).strip("_")
 
 
+def _verb_stem(w: str) -> str:
+    """Collapse common verb inflections so TENSE variants of one predicate share a key
+    (docs/TEMPORAL.md §7 — fold tense onto the base predicate): lives/lived/living → liv,
+    moves/moved → mov, works/worked → work. Deterministic and conservative; the "_by"
+    passive marker and distinct content words are untouched, so inverses/antonyms stay
+    distinct. Falls back to noun-singularization for non-verb tokens."""
+    if len(w) > 5 and w.endswith("ing"):
+        w = w[:-3]
+    elif len(w) > 4 and w.endswith("ed"):
+        w = w[:-2]
+    return _singularize(w)
+
+
 def relation_content_key(s: str) -> str:
-    """Match key for relation consolidation — drop relational function words and
-    singularize the remaining content tokens, so surface / inflectional variants of
-    the same predicate collapse while genuinely different predicates don't:
+    """Match key for relation consolidation — drop relational function words and stem the
+    remaining content tokens (tense + number), so surface / inflectional / tense variants
+    of the same predicate collapse while genuinely different predicates don't:
 
         is_friend_of / is_friends_with / friends-with → "friend"   (merge)
-        works_with   / work with                      → "work"     (merge)
+        lives_in / lived_in / living_in               → "liv"      (merge — tense folded)
         is_friend_of vs is_enemy_of                   → friend / enemy   (distinct: content word)
-        manages      vs managed_by                    → manag / managed_by (distinct: "by" kept)
+        manages      vs managed_by                    → manag / manag_by (distinct: "by" kept)
 
-    If a label is *only* function words ("is_a"), fall back to the full form so it
-    still resolves to a stable key.
+    If a label is *only* function words ("is_a"), fall back to the full form so it still
+    resolves to a stable key.
     """
     norm = normalize_relation(s)
     if not norm:
         return ""
-    content = [_singularize(t) for t in norm.split("_") if t not in _REL_FUNCTION_WORDS]
+    content = [_verb_stem(t) for t in norm.split("_") if t not in _REL_FUNCTION_WORDS]
     return "_".join(content) if content else norm
+
+
+# Cardinality lexicons reduced to content keys (see _FUNCTIONAL_SURFACES above).
+FUNCTIONAL_KEYS = frozenset(relation_content_key(s) for s in _FUNCTIONAL_SURFACES)
+SYMMETRIC_KEYS = frozenset(relation_content_key(s) for s in _SYMMETRIC_SURFACES)
+
+
+def predicate_cardinality(surface: str) -> tuple[bool, bool]:
+    """(functional, symmetric) for a relation surface, by content key."""
+    ck = relation_content_key(surface)
+    return ck in FUNCTIONAL_KEYS, ck in SYMMETRIC_KEYS
 
 
 def normalize_key(s: str) -> str:
@@ -178,81 +224,6 @@ def normalize_key(s: str) -> str:
     if toks:
         toks[-1] = _singularize(toks[-1])
     return " ".join(toks)
-
-
-# --------------------------------------------------------------------------- #
-# Date canonicalization (EntityType.DATE)
-# --------------------------------------------------------------------------- #
-# Date entities are consolidated on a *structured* key, not on embeddings: "1896"
-# and "1897" sit close in vector space but are distinct dates, so DATE never goes
-# through the fuzzy L2/L3 merge (resolve_entity routes it here). Surface variants of
-# the SAME instant collapse ("July 18, 1896" == "18 July 1896" == "1896-07-18") while
-# different GRANULARITIES stay distinct ("July 4" ≠ "1896" ≠ "July 1896") so we never
-# lose specificity. Unparseable temporal phrases ("the 1890s", "early 20th century")
-# return None and fall back to the generic string handling — conservative under-merge.
-_MONTHS = {
-    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
-    "december": 12, "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
-    "aug": 8, "sept": 9, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-}
-_ORDINAL = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b")
-_ISO_DATE = re.compile(r"^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$")
-_MONTH_NAME = re.compile(r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True)) + r")\b")
-_YEAR = re.compile(r"\b(\d{4})\b")
-
-
-def _date_key(year: int | None, month: int | None, day: int | None) -> str | None:
-    """A granularity-aware canonical key: present components only, so coarser dates
-    can't collide with finer ones (year `1896` vs full `1896-07-18` vs bare month-day
-    `--07-04`). ISO-8601-flavoured (`--MM-DD` is the standard recurring month-day)."""
-    if year and month and day:
-        return f"{year:04d}-{month:02d}-{day:02d}"
-    if year and month:
-        return f"{year:04d}-{month:02d}"
-    if year:
-        return f"{year:04d}"
-    if month and day:
-        return f"--{month:02d}-{day:02d}"
-    if month:
-        return f"--{month:02d}"
-    return None
-
-
-def normalize_date(s: str) -> str | None:
-    """Parse a date surface into a granularity-aware canonical key, or None if it
-    isn't a recognizable concrete date. Deliberately bounded (common English forms +
-    ISO), never a full date parser — anything it can't confidently read returns None."""
-    raw = (s or "").strip().lower()
-    if not raw:
-        return None
-    t = _ORDINAL.sub(r"\1", raw)                      # "4th" → "4"
-    t = _WS.sub(" ", t)                               # collapse runs of whitespace so the
-                                                      # adjacency windows below can't truncate
-    m = _ISO_DATE.match(t.strip())                    # 1896-07-18 / 1896/7/18 / 1896-07
-    if m:
-        y, mo = int(m.group(1)), int(m.group(2))
-        d = int(m.group(3)) if m.group(3) else None
-        if 1 <= mo <= 12 and (d is None or 1 <= d <= 31):
-            return _date_key(y, mo, d)
-    mn = _MONTH_NAME.search(t)
-    month = _MONTHS[mn.group(1)] if mn else None
-    ym = _YEAR.search(t)
-    year = int(ym.group(1)) if ym and 1000 <= int(ym.group(1)) <= 2100 else None
-    day = None
-    if month:
-        # only read a day IMMEDIATELY adjacent to the month token ("July 18", "18 July"),
-        # never a stray numeral elsewhere in the string ("page 12 of May 1896" → no day, so
-        # it dedups with the bare "May 1896"). The 4-digit year can't match \d{1,2}\b.
-        after = re.match(r"\s*,?\s*(\d{1,2})\b", t[mn.end():mn.end() + 5])
-        before = re.search(r"\b(\d{1,2})\s*$", t[max(0, mn.start() - 5):mn.start()])
-        for cand in (after, before):
-            if cand and 1 <= int(cand.group(1)) <= 31:
-                day = int(cand.group(1))
-                break
-    if month or year:
-        return _date_key(year, month, day)
-    return None
 
 
 def char_entropy(s: str) -> float:
@@ -269,14 +240,14 @@ class Canonicalizer:
         self.store = store
         self.embedder = embedder
         self.config = config
+        self._tag_keys: dict[str, str] = {}     # normalized key -> tag node id
         self._entity_keys: dict[str, str] = {}   # normalized key -> entity node id
         self._relation_keys: dict[str, str] = {}  # normalized key -> relation-tag id
         self._emb_cache: dict[str, np.ndarray] = {}  # surface -> embedding (batch primed)
         self._next = Counter()
         self._l3_client = _L3_UNSET                   # lazy anthropic client (L3 tie-breaker)
         self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
-        from .metering import UsageMeter
-        self.meter = UsageMeter()                     # L3 token/cost (empty unless L3 fires)
+        self.meter = UsageMeter()                     # L3 token/cost accounting (testrun)
         self._reindex()
 
     def prime_embeddings(self, surfaces: list[str]) -> None:
@@ -297,24 +268,28 @@ class Canonicalizer:
         return v
 
     def _reindex(self) -> None:
-        """Rebuild key→id maps from a loaded store. (NodeType.TAG is legacy: tags were
-        retired into the CONCEPT-entity vocabulary, so new stores hold none; any in an old
-        store are simply ignored here.)"""
+        """Rebuild key→id maps from a loaded store."""
         for n in self.store.nodes.values():
-            if n.ntype == NodeType.ENTITY:
+            if n.ntype == NodeType.TAG:
+                self._tag_keys[normalize_key(n.name)] = n.id
+                for a in n.aliases:
+                    self._tag_keys.setdefault(normalize_key(a), n.id)
+            elif n.ntype == NodeType.ENTITY:
                 self._entity_keys[normalize_key(n.name)] = n.id
-                if n.entity_type == EntityType.DATE:    # also key on the structured date form
-                    dk = normalize_date(n.name)
-                    if dk:
-                        self._entity_keys.setdefault(f"date:{dk}", n.id)
             elif n.ntype == NodeType.RELATION:
                 self._relation_keys[relation_content_key(n.name)] = n.id
                 for a in n.aliases:
                     self._relation_keys.setdefault(relation_content_key(a), n.id)
+        self._next["tag"] = sum(1 for n in self.store.nodes.values()
+                                if n.ntype == NodeType.TAG)
         self._next["entity"] = sum(1 for n in self.store.nodes.values()
                                    if n.ntype == NodeType.ENTITY)
         self._next["rel"] = sum(1 for n in self.store.nodes.values()
                                 if n.ntype == NodeType.RELATION)
+        # personal-web: a reloaded store still routes first-person forms to the persisted
+        # self anchor (OFF-path never touches this — the existing offline path is unchanged).
+        if self.config.self_entity and self.store.has_node(SELF_ENTITY_ID):
+            self._ensure_self()
 
     def _new_id(self, prefix: str) -> str:
         nid = f"{prefix}_{self._next[prefix]:04d}"
@@ -387,7 +362,7 @@ class Canonicalizer:
             msg = client.messages.create(
                 model=self.config.l3_model, max_tokens=300, temperature=0,
                 system=_L3_SYS, messages=[{"role": "user", "content": prompt}])
-            self.meter.record("l3", self.config.l3_model, msg, label=kind)
+            self.meter.record("l3", self.config.l3_model, msg, label=surface)
             text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
             data = _extract_json(text) or {}
             verdict = str(data.get("verdict", "NEW")).strip()
@@ -406,35 +381,88 @@ class Canonicalizer:
                  if not relation_merge_vetoed(surface, self._node_name(cid))]
         return self._l3_adjudicate("relation", surface, cands)
 
+    # -------------------------------------------------------------------- tags
+    def resolve_tag(self, surface: str) -> str | None:
+        surface = (surface or "").strip()
+        if not surface:
+            return None
+        key = normalize_key(surface)
+        if not key:
+            return None
+        if key in self._tag_keys:                      # L1 hit
+            tid = self._tag_keys[key]
+            self._add_alias(tid, surface)
+            return tid
+        vec = self._embed(surface)
+        # L2 merge gate (high bar) — only if entropy guard allows. NOTE: this uses a
+        # single global cosine threshold; TaxoCom's local-neighborhood thresholding
+        # (§3) is an accepted MVP simplification at ~1k tags.
+        if self._entropy_ok(surface):
+            hits = self.store.vectors.search("tag", vec, k=5,
+                                            floor=self.config.syn_link_threshold)
+            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
+                tid = hits[0][0]
+                self._add_alias(tid, surface)
+                self._tag_keys[key] = tid
+                return tid
+            # L3: gray band [syn_link, syn_merge) → ask the LLM merge-or-new (no-op if disabled)
+            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
+            tid = self._l3_adjudicate("tag", surface, gray)
+            if tid:
+                self._add_alias(tid, surface)
+                self._tag_keys[key] = tid
+                return tid
+        tid = self._new_id("tag")
+        node = tag_node(tid, canonical=surface.lower(), ts=now_iso())
+        self.store.add_node(node)
+        self.store.vectors.add("tag", tid, vec)
+        self._tag_keys[key] = tid
+        self._synonymy("tag", surface, vec, tid)       # link (not merge)
+        return tid
+
+    def _add_alias(self, tag_id: str, surface: str) -> None:
+        node = self.store.get_node(tag_id)
+        if node and surface.lower() != node.name and surface.lower() not in node.aliases:
+            node.aliases.append(surface.lower())
+            self._tag_keys.setdefault(normalize_key(surface), tag_id)
+
+    # -------------------------------------------------------------- self anchor
+    def _ensure_self(self) -> str:
+        """Idempotently create/return the canonical first-person "self" anchor
+        (personal-web mode). Mints a lean PERSON entity at SELF_ENTITY_ID on first call,
+        embeds its NAME once (mirroring resolve_entity), and (re)registers every
+        first-person form + the display name's key so "i"/"me"/"my"/… all route here —
+        including after a reload. Safe to call repeatedly. Only ever reached behind the
+        config.self_entity guard, so the OFF-path is untouched."""
+        node = self.store.get_node(SELF_ENTITY_ID)
+        if node is None:
+            node = entity_node(SELF_ENTITY_ID, name=self.config.self_name,
+                               etype=EntityType.PERSON, ts=now_iso())
+            self.store.add_node(node)
+        elif node.name != self.config.self_name:   # honour a changed --self across sessions
+            node.name = self.config.self_name
+            node.last_modified = now_iso()
+        # The self anchor carries NO entity embedding ON PURPOSE: it is resolved only by the
+        # first-person pronoun guard + the lexical routes below, never by embedding
+        # similarity. Keeping it out of the "entity" vector index is what makes a --self
+        # that happens to share a real entity's NAME (another "Jude") unable to L2-merge that
+        # entity into self — neither the name key nor a name embedding routes here, only the
+        # pronouns. The forms persist as aliases so a reload reconstructs the routes (_reindex).
+        node.aliases = sorted(set(node.aliases) | set(_FIRST_PERSON))
+        for key in _FIRST_PERSON:
+            self._entity_keys[key] = SELF_ENTITY_ID
+        return SELF_ENTITY_ID
+
     # ---------------------------------------------------------------- entities
     def resolve_entity(self, name: str, etype: EntityType) -> str | None:
+        # personal-web: first-person references collapse onto ONE stable self anchor,
+        # BEFORE the normal L1 lookup. OFF by default → this never fires and resolution
+        # is byte-for-byte the existing path.
+        if self.config.self_entity and normalize_key(name) in _FIRST_PERSON:
+            return self._ensure_self()
         name = (name or "").strip()
         if not name:
             return None
-        # DATE: consolidate on the deterministic structured key only — never the fuzzy
-        # embedding gate (adjacent dates sit close in vector space but are distinct).
-        if etype == EntityType.DATE:
-            dk = normalize_date(name)
-            if dk:
-                date_key = f"date:{dk}"
-                if date_key in self._entity_keys:
-                    return self._entity_keys[date_key]
-                # also dedup against the plain surface so the same string already minted
-                # under another type (e.g. "1896" as a concept) is reused, not duplicated —
-                # order-independent with the generic same-surface-shares-a-node policy.
-                nk = normalize_key(name)
-                if nk in self._entity_keys:
-                    eid = self._entity_keys[nk]
-                    self._entity_keys.setdefault(date_key, eid)
-                    return eid
-                eid = self._new_id("entity")
-                node = entity_node(eid, name=name, etype=EntityType.DATE, ts=now_iso())
-                self.store.add_node(node)
-                self.store.vectors.add("entity", eid, self._embed(name))  # still a retrieval seed
-                self._entity_keys[date_key] = eid
-                self._entity_keys.setdefault(nk, eid)
-                return eid
-            # unparseable temporal phrase → fall through to generic string handling
         key = normalize_key(name)
         if not key:
             return None
@@ -511,7 +539,9 @@ class Canonicalizer:
                 self._relation_keys[key] = rid
                 return rid
         rid = self._new_id("rel")
-        node = relation_tag_node(rid, canonical=display, ts=now_iso())
+        functional, symmetric = predicate_cardinality(surface)
+        node = relation_tag_node(rid, canonical=display, ts=now_iso(),
+                                 functional=functional, symmetric=symmetric)
         self.store.add_node(node)
         self.store.vectors.add("relation", rid, vec)
         self._relation_keys[key] = rid
@@ -532,7 +562,7 @@ class Canonicalizer:
     def idf_weight(self, node_id: str) -> float:
         """1 / (1 + df) style specificity — generic tags downranked (HippoRAG/TaxoGen)."""
         n = self.store.get_node(node_id)
-        n_objs = max(1, self.store.object_count())
+        n_eps = max(1, self.store.episode_count())
         if n is None or n.doc_frequency <= 0:
             return 1.0
-        return math.log(1 + n_objs / n.doc_frequency)
+        return math.log(1 + n_eps / n.doc_frequency)
