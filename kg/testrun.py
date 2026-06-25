@@ -604,6 +604,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     ingest_cost = 0.0
     ingest_tokens = ingest_llm = ingest_in = ingest_out = 0
     ingest_cr = ingest_cw = 0          # prompt-cache read/write rollup (caching signal)
+    ingest_trunc = 0                   # # extract calls that hit max_tokens (silent payload cut)
     total_sessions = 0
     rep_graph: dict | None = None
     rep_nodes = -1
@@ -637,6 +638,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         ingest_out += tok["output_tokens"]
         ingest_cr += tok["cache_read"]
         ingest_cw += tok["cache_write"]
+        ingest_trunc += tok["truncated"]
         atpo = _avg_tags_per_object(stats)
 
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
@@ -689,6 +691,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "seconds": ingest_seconds,
         "llm_calls": ingest_llm, "input_tokens": ingest_in, "output_tokens": ingest_out,
         "cache_read": ingest_cr, "cache_write": ingest_cw,
+        "truncated": ingest_trunc,
         "tokens": ingest_tokens, "cost_usd": round(ingest_cost, 6),
     }
     query_totals = _query_totals(qrecords, judge_meter, kk)

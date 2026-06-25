@@ -740,14 +740,15 @@ const Query=(function(){
     const kinds=Object.entries(T.by_kind||{}).map(([k,v])=>({k,v:v.recall_at_k,c:"#4f8ef7"}));
     host.innerHTML=`
       <div class="statbar">
-        ${statEl("queries",T.n,"","Eval questions run through the agentic ask() traversal.")}
+        ${statEl("queries",T.n,"","Eval questions answered via the PPR→RAG ask() path (retrieve-then-read): the non-LLM retriever builds the context, one LLM call answers. No agentic per-hop traversal.")}
         ${statEl("recall@k",pct(T.recall_at_k),"","Mean recall@k — fraction of each question's gold evidence sessions retrieved in the top-k episodes.")}
         ${statEl("MRR",(T.mrr||0).toFixed(3),"","Mean reciprocal rank of the first gold evidence session across questions.")}
         ${statEl("hit rate",pct(T.hit_rate),"","Fraction of questions where at least one gold evidence session was retrieved in the top-k.")}
         ${statEl("cite grounding",pct(T.citation_grounding),"","Mean fraction of gold evidence sessions the agent actually cited (citations ∩ gold).")}
         ${statEl("resp acc",T.response_accuracy!=null?pct(T.response_accuracy):"–","judge","Mean LLM-judge score of the answer text vs the reference answer (live runs only; – when offline).")}
         ${statEl("avg steps",T.avg_steps,"","Average number of tool-call rounds the agent took per question.")}
-        ${statEl("query cost",fmtUSD(T.cost_usd),"","Total USD on the agent (plus judge) LLM calls across all queries.")}
+        ${statEl("query cost (prod)",fmtUSD(T.agent_cost_usd ?? T.cost_usd),"","Production USD: the single PPR→RAG answer call per query, summed across all queries. Excludes the eval-only judge — this is what production actually pays.")}
+        ${statEl("eval judge",fmtUSD(T.judge_cost_usd ?? 0),"eval-only","Eval-only USD: the LLM grader that certifies answer correctness during testing. Runs every test round but is NOT paid in production.")}
       </div>
       <div class="qlayout">
         <div>

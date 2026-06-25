@@ -37,6 +37,15 @@ def _config(args) -> Config:
         cfg.rag_model = args.model
     if getattr(args, "backend", None):        # answerer backend override (ask)
         cfg.rag_backend = args.backend
+    if getattr(args, "long_doc_chars", None) is not None:   # lever-2 window A/B (optimization.md)
+        cfg.long_doc_chars = args.long_doc_chars
+        # keep the per-call cap >= the window so a section is never truncated; an explicit
+        # --extract-max-chars below can still raise it further.
+        cfg.extract_max_chars = max(cfg.extract_max_chars, args.long_doc_chars)
+    if getattr(args, "extract_max_chars", None) is not None:
+        cfg.extract_max_chars = args.extract_max_chars
+    if getattr(args, "extract_max_tokens", None) is not None:   # max_tokens A/B (optimization.md)
+        cfg.extract_max_tokens = args.extract_max_tokens
     if getattr(args, "l3", False):
         cfg.l3_enabled = True
     if getattr(args, "self", None):           # personal-web: --self NAME enables the anchor
@@ -425,6 +434,17 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
     pt.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pt.add_argument("--model", default=None, help="override the LLM model id")
+    pt.add_argument("--long-doc-chars", type=int, default=None, dest="long_doc_chars",
+                    help="lever-2 window A/B: section size above which a doc is split (default "
+                         "6000). Raises the per-call input cap to match. Use a huge value "
+                         "(e.g. 200000) for whole-session, no-sectioning extraction.")
+    pt.add_argument("--extract-max-chars", type=int, default=None, dest="extract_max_chars",
+                    help="per-call input cap inside extract_text (default 12000); normally left "
+                         "to track --long-doc-chars, override only to cap independently.")
+    pt.add_argument("--extract-max-tokens", type=int, default=None, dest="extract_max_tokens",
+                    help="output ceiling (max_tokens) on the emit_graph call (default 1500). A "
+                         "section whose graph exceeds it is truncated; raise it (e.g. 4000/8000) "
+                         "when widening --long-doc-chars. run.json reports the truncated-call count.")
     pt.add_argument("--k", type=int, default=8, help="episodes per query / recall@k")
     pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
     pt.add_argument("--no-judge", action="store_true",

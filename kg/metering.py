@@ -58,6 +58,7 @@ class CallRecord:
     cache_write: int = 0
     usd: float = 0.0
     label: str = ""    # doc id / query id, for per-item attribution
+    truncated: bool = False   # response hit max_tokens (output ceiling) → payload cut short
 
 
 def _usage_fields(usage) -> tuple[int, int, int, int]:
@@ -77,6 +78,7 @@ def totals_of(records: list[CallRecord]) -> dict:
         "cache_write": sum(r.cache_write for r in records),
         "tokens": sum(r.input_tokens + r.output_tokens for r in records),
         "cost_usd": round(sum(r.usd for r in records), 6),
+        "truncated": sum(1 for r in records if r.truncated),
     }
 
 
@@ -103,7 +105,8 @@ class UsageMeter:
         i, o, cr, cw = _usage_fields(usage)
         rec = CallRecord(site=site, model=model, input_tokens=i, output_tokens=o,
                          cache_read=cr, cache_write=cw,
-                         usd=price(model, i, o, cr, cw), label=label)
+                         usd=price(model, i, o, cr, cw), label=label,
+                         truncated=(getattr(msg, "stop_reason", None) == "max_tokens"))
         with self._lock:
             self.records.append(rec)
         return rec
