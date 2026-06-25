@@ -1,7 +1,17 @@
 """Test suite for the kg episodic/temporal graph.
 
-Runs fully offline/deterministic (hashing embedder + heuristic extractor) so it needs no
-API key, no model download, and no network. Run: python -m pytest -q
+The kg library is LIVE-ONLY (the offline heuristic extractor / hashing embedder / offline
+answerer were removed). This suite stays deterministic + FREE + offline anyway by:
+
+  * embedder  — the real local sentence-transformers bge-small (``embedder="st"``):
+                deterministic, no key, no network once the model is cached.
+  * extraction — a ``ScriptedExtractor`` ({episode_text: Extraction}) injected as
+                ``g.extractor`` so the graph build runs on KNOWN facts (no LLM call).
+  * answering  — a fake Anthropic client injected via ``g.ask(..., client=...)`` so the
+                RAG ``ClaudeAnswerer`` runs without touching the API.
+
+No test calls the real Anthropic API and no ``ANTHROPIC_API_KEY`` is required. Run:
+    python -m pytest tests/test_kg.py -q
 """
 from __future__ import annotations
 
@@ -17,8 +27,9 @@ from kg import Config, KnowledgeGraph
 from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
                              normalize_relation, predicate_cardinality, relation_merge_vetoed)
 from kg.corpus import CorpusItem, load_longmemeval, load_longmemeval_questions
-from kg.embedders import HashingEmbedder, get_embedder
-from kg.extractors import HeuristicExtractor, get_extractor
+from kg.embedders import SentenceTransformerEmbedder, get_embedder
+from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation, HaikuExtractor,
+                          ScriptedExtractor, get_extractor)
 from kg.models import (Belief, Edge, EdgeType, Modality, Node, NodeType, Provenance,
                        EntityType, episode_node, entity_node,
                        mention_node, relation_tag_node)
@@ -28,9 +39,20 @@ from kg.vectors import VectorIndex
 
 def cfg() -> Config:
     c = Config.default()
-    c.embedder = "hashing"
-    c.extractor = "heuristic"
+    c.embedder = "st"          # real local bge-small: deterministic, free, no key/network
     return c
+
+
+@pytest.fixture(autouse=True)
+def _no_live_extractor(monkeypatch):
+    """KnowledgeGraph.__init__ eagerly calls get_extractor(), which is LIVE-ONLY and RAISES
+    without a key (and would otherwise hold a real Anthropic client). Patch the reference the
+    graph builds against so EVERY KnowledgeGraph.open(...) in this file gets a deterministic,
+    keyless ScriptedExtractor — tests that need real extractions still overwrite g.extractor
+    with their own table afterward. This patches kg.graph.get_extractor only; the tests that
+    assert get_extractor's real live behavior import it from kg.extractors and are untouched."""
+    import kg.graph as _graph
+    monkeypatch.setattr(_graph, "get_extractor", lambda config: ScriptedExtractor({}))
 
 
 def tmp_store() -> str:
@@ -53,6 +75,79 @@ def sample_items():
         CorpusItem(id="d", modality="image", source_ref="img/d.jpg",
                    image_path="img/d.jpg", label_hint="dog, frisbee, person"),
     ]
+
+
+# A deterministic extraction table for the four sample items, keyed on the EXACT episode
+# text the ingest pipeline feeds the extractor (the full item text; for the image item,
+# the label_hint). Entities/tags/relations are rich enough that the assertions about the
+# mention star, SHARED_ENTITY / SHARED_TAG structure, and retrieval targets still hold.
+def _sample_table() -> dict[str, Extraction]:
+    items = {it.id: it for it in sample_items()}
+    return {
+        items["a"].text: Extraction(
+            entities=[ExtractedEntity("Alan Turing", EntityType.PERSON),
+                      ExtractedEntity("Bletchley Park", EntityType.PLACE),
+                      ExtractedEntity("computer science", EntityType.CONCEPT)],
+            tags=["cryptography", "codebreaking", "computer science",
+                  "mathematics", "world war ii"],
+            relations=[ExtractedRelation(source="Alan Turing", target="Bletchley Park",
+                                         labels=["worked_at"], provenance=Provenance.EXTRACTED,
+                                         confidence=0.9)],
+        ),
+        items["b"].text: Extraction(
+            entities=[ExtractedEntity("Bletchley Park", EntityType.PLACE),
+                      ExtractedEntity("Alan Turing", EntityType.PERSON),
+                      ExtractedEntity("Enigma machine", EntityType.OTHER)],
+            tags=["cryptography", "codebreaking", "world war ii", "enigma"],
+            relations=[ExtractedRelation(source="Alan Turing", target="Bletchley Park",
+                                         labels=["worked_at"], provenance=Provenance.EXTRACTED,
+                                         confidence=0.9)],
+        ),
+        items["c"].text: Extraction(
+            entities=[ExtractedEntity("Photosynthesis", EntityType.CONCEPT),
+                      ExtractedEntity("Chlorophyll", EntityType.CONCEPT)],
+            tags=["photosynthesis", "biology", "plants", "chlorophyll"],
+            relations=[ExtractedRelation(source="Chlorophyll", target="Photosynthesis",
+                                         labels=["part_of"], provenance=Provenance.EXTRACTED,
+                                         confidence=0.85)],
+        ),
+        # image item: ScriptedExtractor.extract_image keys on the label_hint
+        items["d"].label_hint: Extraction(
+            entities=[ExtractedEntity("dog", EntityType.OTHER),
+                      ExtractedEntity("person", EntityType.PERSON)],
+            tags=["dog", "frisbee", "person", "outdoors"],
+            relations=[],
+            description="A photo of a dog, a frisbee, and a person.",
+        ),
+    }
+
+
+def scripted_graph(items_extractor: dict[str, Extraction] | None = None) -> KnowledgeGraph:
+    """A KnowledgeGraph whose extractor is a deterministic ScriptedExtractor (NO live LLM).
+    Defaults to the sample-item table so the end-to-end ingest/retrieval tests run offline."""
+    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g.extractor = ScriptedExtractor(_sample_table() if items_extractor is None
+                                    else items_extractor)
+    return g
+
+
+# --------------------------------------------------------------------------- #
+# Fake Anthropic client for the RAG answerer (no API call). Shape matches what
+# kg.rag.ClaudeAnswerer.answer reads off the message and what kg.metering.UsageMeter
+# .record reads off msg.usage.
+# --------------------------------------------------------------------------- #
+class _FakeAnthropic:
+    def __init__(self, answer="", citations=None):
+        self._a, self._c = answer, (citations or [])
+        self.messages = self
+        self.calls: list[dict] = []
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        blk = types.SimpleNamespace(type="tool_use", name="submit_answer",
+                                    input={"answer": self._a, "citations": self._c})
+        usage = types.SimpleNamespace(input_tokens=0, output_tokens=0)
+        return types.SimpleNamespace(content=[blk], usage=usage, stop_reason="tool_use")
 
 
 # --------------------------------------------------------------------------- #
@@ -254,15 +349,17 @@ def test_l3_disabled_by_default():
 # extract-dump + eval-canon (offline)
 # --------------------------------------------------------------------------- #
 def test_extract_dump_runs_and_summarizes():
+    # run the extraction-dump path on a deterministic ScriptedExtractor (no live LLM)
     from kg.extract_dump import extract_corpus, summarize
-    ext = HeuristicExtractor(cfg())
+    ext = ScriptedExtractor(_sample_table())
     records, errors = extract_corpus(ext, sample_items(), cfg())
     assert len(records) == 4 and not errors
-    s = summarize(records, "heuristic")
+    s = summarize(records, "scripted")
     assert s["items"] == 4 and s["unique_tags"] > 0
 
 
 def test_eval_canon_gate_passes_offline():
+    # run_gate only canonicalizes (no extraction) — runs offline on the bge embedder
     from kg.eval_canon import run_gate
     rep = run_gate(cfg())
     assert rep["gate_pass"] is True
@@ -283,23 +380,46 @@ def test_extractor_termination_normalizes_to_ended():
 
 
 # --------------------------------------------------------------------------- #
-# embedders / extractors / factories
+# embedders / extractors / factories (LIVE-ONLY behavior)
 # --------------------------------------------------------------------------- #
-def test_hashing_embedder_deterministic_and_unit_norm():
-    e = HashingEmbedder(dim=64)
+def test_get_embedder_returns_sentence_transformer():
+    """The factory always returns the semantic sentence-transformers embedder (the offline
+    hashing embedder was removed). Verify it embeds to unit-norm float32 vectors."""
+    e = get_embedder(cfg())
+    assert isinstance(e, SentenceTransformerEmbedder)
     a = e.embed(["knowledge graph"])
+    assert a.dtype == np.float32
+    assert abs(np.linalg.norm(a[0]) - 1.0) < 1e-4
+    # deterministic: same text → same vector
     assert np.allclose(a, e.embed(["knowledge graph"]))
-    assert abs(np.linalg.norm(a[0]) - 1.0) < 1e-5
 
 
-def test_extractor_auto_without_key(monkeypatch):
+def test_get_extractor_raises_without_key(monkeypatch):
+    """Extraction is live-only: get_extractor returns a HaikuExtractor, and RAISES when no
+    ANTHROPIC_API_KEY is set (the offline heuristic fallback was removed)."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert isinstance(get_extractor(Config.default()), HeuristicExtractor)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        get_extractor(cfg())
 
 
-def test_heuristic_extract_image_uses_labels():
-    r = HeuristicExtractor(cfg()).extract_image("x.jpg", "dog, frisbee")
-    assert "dog" in r.tags and "frisbee" in r.tags
+def test_get_extractor_returns_haiku_with_key(monkeypatch):
+    """With a key present, the factory yields the live HaikuExtractor (constructed only — no
+    API call is made until extract_text/extract_image)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-used")
+    ext = get_extractor(cfg())
+    assert isinstance(ext, HaikuExtractor) and ext.name == "haiku"
+
+
+def test_rag_answerer_raises_without_client_or_key(monkeypatch):
+    """The query/answer path is live-only: RagAnswerer with neither an injected client nor a
+    key RAISES (no offline answerer to silently degrade to)."""
+    from kg.rag import RagAnswerer
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    store = GraphStore(cfg())
+    c = cfg()
+    canon = Canonicalizer(store, get_embedder(c), c)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        RagAnswerer(store, get_embedder(c), canon, c, client=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -385,7 +505,7 @@ def test_fact_active_current_vs_asof():
 # end-to-end ingest
 # --------------------------------------------------------------------------- #
 def test_ingest_builds_episodic_graph():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     rep = g.ingest(sample_items())
     assert rep.ingested == 4 and rep.mentions > 0
     s = g.stats()
@@ -402,7 +522,7 @@ def test_ingest_builds_episodic_graph():
 def test_entity_anchor_is_lean():
     """The canonical entity is an identity anchor — no raw text, no embedding in the
     retrieval index (embeddings live only on the immutable episode/mention layer)."""
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     for e in g.store.nodes_of_type(NodeType.ENTITY):
         assert e.raw_text is None and e.summary is None
@@ -412,12 +532,12 @@ def test_entity_anchor_is_lean():
 
 def test_store_is_directed():
     import networkx as nx
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     assert isinstance(g.store.g, nx.MultiDiGraph)
 
 
 def test_ingest_cache_skips_on_rerun():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     rep2 = g.ingest(sample_items())
     assert rep2.ingested == 0 and rep2.skipped == 4
@@ -426,7 +546,7 @@ def test_ingest_cache_skips_on_rerun():
 def test_ingest_appends_new_version_on_change():
     """Episodes are append-only: changed content under a known id adds a NEW immutable
     episode; the old one stays valid (history is preserved, not overwritten)."""
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest([sample_items()[0]])
     changed = CorpusItem(id="a", modality="text", source_ref="u/a", title="Alan Turing",
                          text="Completely different content about marine biology and coral reefs.")
@@ -439,7 +559,6 @@ def test_ingest_appends_new_version_on_change():
 def test_tag_doc_frequency_dedup_within_episode():
     """Duplicate tags in one episode (or variants that canonicalize to the same node) must
     bump doc_frequency once — df = #episodes referencing the tag, not #occurrences."""
-    from kg.extractors import Extraction, ScriptedExtractor
     g = KnowledgeGraph.open(tmp_store(), cfg())
     g.extractor = ScriptedExtractor(
         {"a body": Extraction(entities=[], tags=["python", "Python", "ai"], relations=[])})
@@ -468,7 +587,7 @@ def test_extraction_failures_are_surfaced():
 # retrieval
 # --------------------------------------------------------------------------- #
 def test_retrievers_run_and_find_relevant():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     for mode in ("ppr", "bfs", "vector"):
         res = g.query("cryptography codebreaking at Bletchley", mode=mode, k=3)
@@ -477,7 +596,7 @@ def test_retrievers_run_and_find_relevant():
 
 
 def test_empty_and_blank_query_do_not_crash():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     g.build_communities()
     for mode in ("ppr", "bfs", "vector"):
@@ -487,7 +606,7 @@ def test_empty_and_blank_query_do_not_crash():
 
 
 def test_communities_and_global_route():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     assert g.build_communities() >= 1
     res = g.query("what are the main themes", mode="auto")
@@ -495,7 +614,7 @@ def test_communities_and_global_route():
 
 
 def test_ppr_excludes_community_edges():
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     before = g.query("cryptography Bletchley", mode="ppr", k=4).object_ids
     g.build_communities()
@@ -505,18 +624,38 @@ def test_ppr_excludes_community_edges():
 # --------------------------------------------------------------------------- #
 # eval
 # --------------------------------------------------------------------------- #
-def test_eval_metrics_and_rag_mode():
+def test_eval_metrics_and_retrieval_modes():
+    """recall@k / MRR helpers + evaluate() over the retrieval modes. 'rag' is excluded here
+    because evaluate() routes it through the LIVE Claude answerer (no client injection
+    seam); the RAG answer path is exercised separately in test_rag_answer_with_fake_client."""
     from kg.evaluate import (_mrr, _recall_at_k, cross_article_questions, evaluate,
                              single_article_questions)
     assert _recall_at_k(["a", "b", "c"], {"b"}, 3) == 1.0
     assert _mrr(["a", "b"], {"b"}) == 0.5
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     qs = single_article_questions(g, limit=3) + cross_article_questions(g, limit=3)
     assert qs
-    scores = evaluate(g, qs, modes=("ppr", "vector", "rag"), k=5)
-    assert len(scores) == 3
+    scores = evaluate(g, qs, modes=("ppr", "vector"), k=5)
+    assert len(scores) == 2
     assert all(0.0 <= s.recall_at_k <= 1.0 for s in scores)
+
+
+def test_rag_answer_with_fake_client():
+    """The §5 graph-RAG answer flow (PPR-retrieve → context → ONE answer call) runs through
+    ClaudeAnswerer over an INJECTED fake Anthropic client — no real API call. Citations that
+    name an episode actually in the retrieved context survive validation."""
+    g = scripted_graph()
+    g.ingest(sample_items())
+    fake = _FakeAnthropic(answer="Turing worked at Bletchley Park on cryptography.",
+                          citations=["ep_a"])
+    ans = g.ask("Where did Alan Turing work on cryptography?", client=fake)
+    assert fake.calls, "the answerer never called the (fake) client"
+    assert ans.backend == "claude"
+    assert ans.answer == "Turing worked at Bletchley Park on cryptography."
+    # ep_a is in the retrieved context, so the citation is kept (not dropped)
+    assert "ep_a" in ans.citations
+    assert "ep_a" not in ans.dropped_citations
 
 
 # --------------------------------------------------------------------------- #
@@ -524,7 +663,7 @@ def test_eval_metrics_and_rag_mode():
 # --------------------------------------------------------------------------- #
 def test_viz_payloads_and_html():
     from kg.viz import graph_payload, query_trace, render_html
-    g = KnowledgeGraph.open(tmp_store(), cfg())
+    g = scripted_graph()
     g.ingest(sample_items())
     gp = graph_payload(g.store)
     assert gp["nodes"] and len(gp["build_order"]) == len(gp["nodes"])

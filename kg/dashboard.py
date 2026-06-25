@@ -297,11 +297,15 @@ function makeForce(stage, tip, h){
   let N=[],E=[],byId={},owner={};
   let tx=0,ty=0,scale=1, step=-1, revN=[],revE=[];
   let sel=null,hover=null,drag=null,pan=null,moved=0;
-  let raf=null, alpha=0, autofit=true;
-  // STATIC layout: spread once on creation (repulsion + links + center gravity), with a
-  // hard position-based collision pass so nodes never overlap — then freeze. No perpetual
-  // physics: stepping/selecting/zooming just redraw the settled positions.
-  const REPEL=820, LINK=30, LINKK=0.08, GRAV=0.045, VD=0.84, PAD=3.5, TH=1.2;
+  let raf=null, running=false, autofit=true, alpha=1, alphaTarget=0;
+  // Obsidian-style CONTINUOUS force sim (the d3-force model Obsidian's Center/Repel/Link/
+  // Link-distance controls map to: many-body charge + link springs + weak center, velocity-
+  // Verlet integration, alpha cooling). It IDLES at 0 CPU once settled (alpha<A_MIN & not
+  // reheated) and REHEATS on drag so neighbours follow the dragged node, then re-cools.
+  // Repulsion uses a spatial-hash grid with a distanceMax cutoff (local, ~O(n·k)) so it stays
+  // smooth at hundreds–thousands of nodes without an O(n²) all-pairs pass (Barnes-Hut's role).
+  const A_MIN=0.001, A_DECAY=0.0228, V_DECAY=0.5;           // ~300-tick cool; 50% velocity kept
+  const CHARGE=-160, DMAX=360, DMIN2=1, LINKDIST=46, LINKK=0.9, CENTERK=0.07, TH=1.2;
   const ELABEL={TAGGED_AS:"tagged",MENTIONS:"mentions",SHARED_TAG:"shared tag",
                 SHARED_ENTITY:"shared entity",SIMILAR_TO:"similar",HYPERLINKS_TO:"links to"};
   function edgeLabel(e){ if(e.etype==="RELATED_TO") return e.rel||"related to";
@@ -312,14 +316,35 @@ function makeForce(stage, tip, h){
   function Wld(sx,sy){ return [(sx-tx-W/2)/scale, (sy-ty-H/2)/scale]; }
 
   function load(nodes,edges){
-    N=nodes.map((n,i)=>{ const a=i*2.39996, r=14*Math.sqrt(i+1);
-      return Object.assign({},n,{x:Math.cos(a)*r,y:Math.sin(a)*r,vx:0,vy:0,rad:rad(n)}); });
+    // Organic SEED for the live sim: each node starts on a random ring around the first
+    // already-placed node it connects to (episodes anchor their own cluster, spread on a
+    // ring), so the simulation starts hub-clustered and never from a grid/origin pile-up.
+    // Then the continuous force sim (reheat below) takes over and settles it.
+    const TAU=6.2832;
+    N=nodes.map(n=>Object.assign({},n,{x:0,y:0,vx:0,vy:0,fx:null,fy:null,rad:rad(n),_p:false}));
     byId={}; N.forEach(n=>byId[n.id]=n);
     E=edges.filter(e=>byId[e.s]&&byId[e.t]).map(e=>({etype:e.etype,directed:e.directed,rel:e.rel,a:byId[e.s],b:byId[e.t]}));
+    const adj={}, deg={}; N.forEach(n=>{adj[n.id]=[]; deg[n.id]=0;});
+    for(const e of E){ adj[e.a.id].push(e.b); adj[e.b.id].push(e.a); deg[e.a.id]++; deg[e.b.id]++; }
+    N.forEach(n=>n._k=deg[n.id]||1); E.forEach(e=>{ e.ka=e.a._k; e.kb=e.b._k; });  // link-strength degrees
+    const order=N.slice().sort((a,b)=>((a.appear||0)-(b.appear||0))||((b.deg||0)-(a.deg||0)));
+    let roots=0;
+    for(const n of order){
+      let p=null;
+      if(!n.raw){ for(const m of adj[n.id]){ if(m._p){ p=m; break; } } }  // episodes anchor own cluster
+      if(p){ const a=Math.random()*TAU, r=p.rad+n.rad+20+Math.random()*60; n.x=p.x+Math.cos(a)*r; n.y=p.y+Math.sin(a)*r; }
+      else { const a=Math.random()*TAU, r=roots?300*Math.sqrt(roots):0; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; roots++; }
+      n._p=true;
+    }
     owner={}; const best={};
     N.forEach(n=>{ const L=n.label||n.id,d=(n.indeg||n.deg||0); if(best[L]===undefined||d>best[L]){best[L]=d;owner[L]=n.id;} });
     step=N.length; revN=N.slice(); revE=E.slice();
-    settle();           // one-time spread over the whole graph, then static
+    // SYNCHRONOUS WARMUP: run most of the cool off-screen so the graph appears already
+    // organized (force-graph's warmupTicks) — instant settled layout, no 5s wait, and not
+    // dependent on rAF frame-rate. The live loop then just finishes the cool + handles drag.
+    alpha=1; alphaTarget=0; autofit=true;
+    for(let i=0;i<250 && alpha>A_MIN;i++) stepPhysics();
+    autofit=true; reheat(0);   // brief live finish (frames + settles), then idles; drag reheats it
   }
   // Stepping only changes WHAT is drawn — positions are fixed by the one-time settle.
   function revealStep(i){ step=i; const ok=new Set();
@@ -328,39 +353,43 @@ function makeForce(stage, tip, h){
     revE=E.filter(e=>ok.has(e.a.id)&&ok.has(e.b.id));
     draw();
   }
-  function settle(){ alpha=1; autofit=true; if(!raf)raf=requestAnimationFrame(tick); }
+  function reheat(target){ if(target!=null) alphaTarget=target;
+    if(target>0 && alpha<0.3) alpha=0.3;            // wake a settled sim so it reacts to drag
+    if(!running){ running=true; raf=requestAnimationFrame(tick); } }
   function easeFit(){ const pts=revN.length?revN:N; if(!pts.length)return; let a=1e9,b=1e9,c=-1e9,d=-1e9;
     for(const n of pts){ if(n.x<a)a=n.x; if(n.x>c)c=n.x; if(n.y<b)b=n.y; if(n.y>d)d=n.y; }
     const bw=Math.max(1,c-a),bh=Math.max(1,d-b),cx=(a+c)/2,cy=(b+d)/2;
     const ts=Math.max(0.1,Math.min(3,Math.min(W*0.88/bw,H*0.88/bh)));
     scale+=(ts-scale)*0.1; tx+=(-cx*ts-tx)*0.1; ty+=(-cy*ts-ty)*0.1; }
-  function tick(){ raf=null;
-    if(alpha>0.02){ physics(); alpha*=0.95; if(autofit)easeFit(); draw(); raf=requestAnimationFrame(tick); }
-    else { collide(4); autofit=false; draw(); }   // final hard de-overlap, then FREEZE
-  }
-  function physics(){
-    const cell=72, grid={};
+  function tick(){ raf=null; if(!running) return;
+    stepPhysics(); draw();
+    if(alpha<A_MIN && alphaTarget===0){ running=false; autofit=false; }   // settled → idle (0 CPU)
+    else raf=requestAnimationFrame(tick); }
+  function stepPhysics(){
+    alpha += (alphaTarget - alpha) * A_DECAY;
+    // 1) many-body CHARGE (repulsion): spatial-hash grid + distanceMax cutoff (local, fast)
+    const cell=DMAX, grid={}, dmax2=DMAX*DMAX;
     for(const n of N){ const k=Math.floor(n.x/cell)+","+Math.floor(n.y/cell); (grid[k]||(grid[k]=[])).push(n); }
     for(const n of N){ const cx=Math.floor(n.x/cell),cy=Math.floor(n.y/cell);
       for(let gx=cx-1;gx<=cx+1;gx++)for(let gy=cy-1;gy<=cy+1;gy++){ const arr=grid[gx+","+gy]; if(!arr)continue;
-        for(const m of arr){ if(m===n)continue; let dx=n.x-m.x,dy=n.y-m.y,d2=dx*dx+dy*dy;
-          if(d2<0.5){dx=rnd();dy=rnd();d2=dx*dx+dy*dy+0.01;} if(d2>cell*cell*4)continue;
-          const f=REPEL/d2*alpha; n.vx+=dx*f; n.vy+=dy*f;
-          const d=Math.sqrt(d2),min=n.rad+m.rad+PAD;             // hard no-overlap
-          if(d<min){ const p=(min-d)/d*0.5; n.x+=dx*p; n.y+=dy*p; m.x-=dx*p; m.y-=dy*p; } } } }
-    for(const e of E){ let dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,d=Math.hypot(dx,dy)||1;
-      const f=(d-LINK)*LINKK*alpha, ux=dx/d,uy=dy/d; e.a.vx+=ux*f;e.a.vy+=uy*f;e.b.vx-=ux*f;e.b.vy-=uy*f; }
-    for(const n of N){ n.vx-=n.x*GRAV*alpha; n.vy-=n.y*GRAV*alpha; n.vx*=VD; n.vy*=VD;
-      const sp=Math.hypot(n.vx,n.vy); if(sp>30){n.vx*=30/sp;n.vy*=30/sp;} n.x+=n.vx; n.y+=n.vy; }
+        for(const m of arr){ if(m===n)continue; let dx=m.x-n.x,dy=m.y-n.y,l2=dx*dx+dy*dy;
+          if(l2>dmax2)continue;
+          if(l2<DMIN2){ dx=(Math.random()-0.5)*1e-2; dy=(Math.random()-0.5)*1e-2; l2=dx*dx+dy*dy+1e-6; }
+          const w=CHARGE*alpha/l2; n.vx+=dx*w; n.vy+=dy*w; } } }   // CHARGE<0 ⇒ pushes n away from m
+    // 2) LINK springs toward LINKDIST, degree-normalised so hubs stay put (hub-and-spoke look)
+    for(const e of E){ const a=e.a,b=e.b;
+      let dx=(b.x+b.vx)-(a.x+a.vx), dy=(b.y+b.vy)-(a.y+a.vy), l=Math.sqrt(dx*dx+dy*dy)||1e-6;
+      const ll=(l-LINKDIST)/l*alpha*(LINKK/Math.min(e.ka,e.kb)), bias=e.ka/(e.ka+e.kb);
+      dx*=ll; dy*=ll; b.vx-=dx*bias; b.vy-=dy*bias; a.vx+=dx*(1-bias); a.vy+=dy*(1-bias); }
+    // 3) weak CENTER pull (compactness, no axis/grid) + 4) integrate w/ friction; pin dragged
+    const ck=CENTERK*alpha;
+    for(const n of N){ n.vx+=(-n.x)*ck; n.vy+=(-n.y)*ck;
+      if(n.fx!=null){ n.x=n.fx; n.y=n.fy; n.vx=0; n.vy=0; }
+      else { n.vx*=(1-V_DECAY); n.vy*=(1-V_DECAY);
+             const sp=Math.hypot(n.vx,n.vy); if(sp>50){ n.vx*=50/sp; n.vy*=50/sp; }   // anti-blowup
+             n.x+=n.vx; n.y+=n.vy; } }
+    if(autofit) easeFit();
   }
-  function collide(iters){ const cell=72;
-    for(let it=0;it<iters;it++){ const grid={};
-      for(const n of N){ const k=Math.floor(n.x/cell)+","+Math.floor(n.y/cell); (grid[k]||(grid[k]=[])).push(n); }
-      for(const n of N){ const cx=Math.floor(n.x/cell),cy=Math.floor(n.y/cell);
-        for(let gx=cx-1;gx<=cx+1;gx++)for(let gy=cy-1;gy<=cy+1;gy++){ const arr=grid[gx+","+gy]; if(!arr)continue;
-          for(const m of arr){ if(m===n)continue; let dx=n.x-m.x,dy=n.y-m.y,d=Math.hypot(dx,dy);
-            if(d<0.5){dx=rnd();dy=rnd();d=Math.hypot(dx,dy)+0.01;} const min=n.rad+m.rad+PAD;
-            if(d<min){ const p=(min-d)/d*0.5; n.x+=dx*p; n.y+=dy*p; m.x-=dx*p; m.y-=dy*p; } } } } } }
 
   function focusSet(){ if(!sel)return null; const s=new Set([sel.id]);
     for(const e of E){ if(e.a.id===sel.id)s.add(e.b.id); if(e.b.id===sel.id)s.add(e.a.id); } return s; }
@@ -381,15 +410,23 @@ function makeForce(stage, tip, h){
       ctx.beginPath(); ctx.arc(x,y,r,0,6.2832);
       ctx.fillStyle=n.raw?(dim?"rgba(46,194,126,0.16)":"#2ec27e"):(dim?"rgba(79,142,247,0.16)":"#4f8ef7"); ctx.fill();
       if(n===sel){ ctx.strokeStyle="#ffd24d"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.stroke(); } }
-    // edge labels: ALL of a selected node's connections (focus), plus relations on zoom
-    ctx.textAlign="center"; ctx.textBaseline="middle";
+    // edge labels: ALL of a selected node's connections (focus), plus relations on zoom.
+    // Multiple relationships between the SAME pair (e.g. "hosts" + "hosted by", or several
+    // parallel rel_tags) are GROUPED by node-pair and STACKED vertically around the midpoint
+    // so they read as a list instead of overprinting into a blur.
+    ctx.font="10px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    const lblGroups={};
     for(const e of revE){ const inc=F&&(e.a.id===sel.id||e.b.id===sel.id);
       const zoomRel=e.etype==="RELATED_TO"&&e.rel&&scale>=TH&&!(F&&!(F.has(e.a.id)&&F.has(e.b.id)));
       if(!inc&&!zoomRel)continue; const lbl=edgeLabel(e); if(!lbl)continue;
-      const [x1,y1]=S(e.a.x,e.a.y),[x2,y2]=S(e.b.x,e.b.y), mx=(x1+x2)/2,my=(y1+y2)/2;
-      ctx.font="10px sans-serif"; const w=ctx.measureText(lbl).width+8;
-      ctx.fillStyle="rgba(11,14,19,0.82)"; ctx.fillRect(mx-w/2,my-8,w,16);
-      ctx.fillStyle=inc?"#d7b6ff":"rgba(176,111,240,0.95)"; ctx.fillText(lbl,mx,my); }
+      const key=e.a.id<e.b.id?e.a.id+""+e.b.id:e.b.id+""+e.a.id;
+      const [x1,y1]=S(e.a.x,e.a.y),[x2,y2]=S(e.b.x,e.b.y);
+      let g=lblGroups[key]; if(!g){ g=lblGroups[key]={mx:(x1+x2)/2,my:(y1+y2)/2,inc:false,labels:[]}; }
+      if(!g.labels.includes(lbl)) g.labels.push(lbl); if(inc) g.inc=true; }
+    for(const key in lblGroups){ const g=lblGroups[key], n=g.labels.length, LH=14;
+      for(let i=0;i<n;i++){ const lbl=g.labels[i], yy=g.my+(i-(n-1)/2)*LH, w=ctx.measureText(lbl).width+8;
+        ctx.fillStyle="rgba(11,14,19,0.86)"; ctx.fillRect(g.mx-w/2,yy-7,w,13);
+        ctx.fillStyle=g.inc?"#d7b6ff":"rgba(176,111,240,0.95)"; ctx.fillText(lbl,g.mx,yy); } }
     ctx.font="11px sans-serif"; ctx.textBaseline="top";
     for(const n of revN){ if(owner[n.label||n.id]!==n.id)continue;
       const show=n===sel||(F&&F.has(n.id))||scale>=TH||(n.indeg||0)>=10; if(!show)continue;
@@ -400,17 +437,20 @@ function makeForce(stage, tip, h){
     const d=(x-sx)*(x-sx)+(y-sy)*(y-sy); if(d<r*r&&d<bd){bd=d;best=n;} } return best; }
 
   cv.addEventListener("mousedown",e=>{ const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
-    moved=0; const n=nodeAt(sx,sy); if(n){drag={n};}else{pan={x:e.clientX,y:e.clientY,tx,ty};} cv.style.cursor="grabbing"; });
+    moved=0; const n=nodeAt(sx,sy);
+    if(n){ const [wx,wy]=Wld(sx,sy); n.fx=wx; n.fy=wy; drag={n}; }   // pin (reheat only once it actually moves)
+    else { pan={x:e.clientX,y:e.clientY,tx,ty}; } cv.style.cursor="grabbing"; });
   window.addEventListener("mousemove",e=>{ const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
-    if(drag){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false; const [wx,wy]=Wld(sx,sy); drag.n.x=wx;drag.n.y=wy; draw(); }
+    if(drag){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false;
+      const [wx,wy]=Wld(sx,sy); drag.n.fx=wx; drag.n.fy=wy; reheat(0.3); }   // pinned node tracks cursor; sim hot ⇒ neighbours follow
     else if(pan){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false; tx=pan.tx+(e.clientX-pan.x); ty=pan.ty+(e.clientY-pan.y); draw(); }
     else { const n=nodeAt(sx,sy); cv.style.cursor=n?"pointer":"grab"; if(n!==hover){ hover=n;
       if(n&&tip){ tip.style.display="block"; tip.style.left=(r.left+sx+14+window.scrollX)+"px"; tip.style.top=(r.top+sy+14+window.scrollY)+"px";
         tip.innerHTML="<b>"+esc(n.label||n.id)+"</b><br><span class='mut'>"+n.type+(n.raw?" · raw entry":" · created")+" · "+(n.indeg||0)+" in / deg "+(n.deg||0)+"</span>"; }
       else if(tip) tip.style.display="none"; } } });
   window.addEventListener("mouseup",()=>{ if(tip)tip.style.display="none";
-    if(drag){ const click=moved<4,n=drag.n; drag=null; cv.style.cursor="grab";
-      if(click){ sel=n; if(h.onNode)h.onNode(n); } draw(); }
+    if(drag){ const click=moved<4,n=drag.n; n.fx=null; n.fy=null; drag=null; cv.style.cursor="grab";   // release pin ⇒ rejoins the sim
+      if(click){ sel=n; if(h.onNode)h.onNode(n); draw(); } else { reheat(0); } }   // click: just select; drag-end: cool & re-settle
     else if(pan){ const click=moved<4; pan=null; cv.style.cursor="grab"; if(click){ sel=null; if(h.onBackground)h.onBackground(); draw(); } } });
   cv.addEventListener("wheel",e=>{ e.preventDefault(); autofit=false; const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
     const dy=Math.max(-40,Math.min(40,e.deltaY||0)); const [wx,wy]=Wld(sx,sy);
@@ -653,7 +693,7 @@ const Input=(function(){
       h+=`<div class="mut" style="font-size:11px;margin-top:2px">${esc(m.modality||"")}${m.created_at?(" · "+esc(m.created_at)):""}</div>`;
       if((m.tags||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:8px">tags (${m.n_tags})</div><div>${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`;
       if((m.entities||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${m.entities.map(t=>`<span class="tag" style="border-color:#4f8ef7">${esc(t)}</span>`).join("")}</div>`;
-      if(m.snippet) h+=`<div class="mut" style="margin-top:8px;font-size:12px;line-height:1.5">${esc(m.snippet)}</div>`;
+      if(m.snippet) h+=`<div class="mut" style="margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap">${esc(m.snippet)}</div>`;
     } else {
       h+=`<div class="kv" style="margin-top:8px"><span class="mut">used by</span><span>${m.df||0} document(s)</span>`;
       if(m.entity_type) h+=`<span class="mut">entity type</span><span>${esc(m.entity_type)}</span>`;
@@ -711,7 +751,7 @@ const Query=(function(){
         <div>
           <div class="card panel chartbox"><h2>recall@k by question kind</h2><div id="q-kinds"></div></div>
           <div class="card scroll" style="max-height:62vh">
-            <table><thead><tr><th>id</th><th>kind</th><th>rec</th><th>hit</th><th class="num">$</th></tr></thead>
+            <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th class="num">$</th></tr></thead>
             <tbody id="q-list"></tbody></table>
           </div>
         </div>
@@ -724,9 +764,19 @@ const Query=(function(){
     barChart(document.getElementById("q-kinds"), kinds, {fmt:pct});
     const tb=document.getElementById("q-list");
     qs.forEach((q,i)=>{ const tr=el("tr",{class:"qrow",id:"qr-"+i});
+      // "ok" dot = did the ANSWER pass. Prefer the LLM judge's correctness verdict (green
+      // correct / red incorrect); with no judge, fall back to a half-dot for a retrieval hit
+      // (gold found but answer unjudged) vs ○ for a miss — never green, since a retrieval hit
+      // alone doesn't mean the answer was right (the bug this fixes: a wrong answer over
+      // correctly-retrieved evidence was showing green).
+      const j=q.judge, okDot=(j&&!j.error)
+        ? (j.correct ? '<span style="color:var(--ok)" title="answer judged correct">●</span>'
+                     : '<span style="color:var(--bad)" title="answer judged incorrect">●</span>')
+        : (q.hit ? '<span style="color:var(--ok)" title="gold retrieved · answer unjudged">◑</span>'
+                 : '<span class="mut" title="gold missed">○</span>');
       tr.innerHTML=`<td>${esc(q.id||("q"+(i+1)))}</td><td class="mut">${esc(q.kind)}</td>
         <td class="num">${(q.recall_at_k*100).toFixed(0)}</td>
-        <td>${q.hit?'<span style="color:var(--ok)">●</span>':'<span class="mut">○</span>'}</td>
+        <td>${okDot}</td>
         <td class="num mut">${(q.cost_usd||0)?fmtUSD(q.cost_usd):"–"}</td>`;
       tr.onclick=()=>select(i); tb.appendChild(tr); });
     graph=makeGraph(document.getElementById("q-stage"), tip);

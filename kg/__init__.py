@@ -8,14 +8,16 @@ See docs/ARCHITECTURE.md for the design this implements. The public surface is s
     g.query("...")                        # 2-path retriever (§5)
     g.ask("...")                          # PPR-retrieve → context → one LLM answer (§5)
 
-Everything is pluggable: the LLM extractor (Haiku ⇄ offline heuristic) and the
-embedder (sentence-transformers ⇄ hashing) auto-select based on what's available,
-so the whole pipeline runs with or without an API key / model download.
+The pipeline is LIVE-ONLY: extraction uses Claude Haiku and embeddings use a local
+sentence-transformers model (BAAI/bge-small). The old offline heuristic/hashing
+backends were removed. Deterministic tests/demos stub the LLM with a ScriptedExtractor
+and inject a fake Anthropic client; the embedder runs the real (local, deterministic)
+model.
 
-On import we load a project-root ``.env`` (if present) so ``ANTHROPIC_API_KEY``
-and friends are available before the extractor auto-selects. Real environment
-variables always win — the file only fills in what isn't already set — and a
-missing python-dotenv is non-fatal (the pipeline just stays offline).
+On import we load a project-root ``.env`` (if present) so ``ANTHROPIC_API_KEY`` is
+available before the extractor/answerer construct. Real environment variables always
+win — the file only fills in what isn't already set — and a missing python-dotenv is
+non-fatal (then the key must come from the real environment).
 """
 from pathlib import Path
 

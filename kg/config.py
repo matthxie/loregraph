@@ -15,9 +15,10 @@ class Config:
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384  # bge-small / MiniLM both 384; hashing fallback matches
 
-    # ---- backend selection: "auto" | "haiku"/"heuristic" | "st"/"hashing" ----
-    extractor: str = "auto"
-    embedder: str = "auto"
+    # ---- backend selection (LIVE-ONLY; the offline heuristic/hashing backends were
+    #      removed). Kept as fields for back-compat: extractor→Haiku, embedder→bge. ----
+    extractor: str = "haiku"
+    embedder: str = "st"
 
     # ---- ingestion (§6) ------------------------------------------------------
     semaphore_limit: int = 5          # bounded LLM concurrency (graphiti SEMAPHORE_LIMIT)
@@ -55,10 +56,9 @@ class Config:
     # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----
     # The query path is retrieve-then-read: PPR (or as-of-T PPR) assembles a context blob
     # of the top episodes + the currently-valid facts among the touched entities, then a
-    # SINGLE LLM call answers over it with citations. No per-hop LLM walking. With no key
-    # (or backend="offline") a deterministic extractive answerer runs instead, so `kg ask`
-    # and every test run fully offline.
-    rag_backend: str = "auto"         # "auto" | "claude" | "offline"
+    # SINGLE LLM call answers over it with citations. No per-hop LLM walking. LIVE-ONLY:
+    # the offline answerer was removed, so `kg ask` requires a key (or an injected client).
+    rag_backend: str = "claude"       # "claude" | "auto" (both = live Claude)
     rag_model: str = "claude-haiku-4-5-20251001"
     rag_max_tokens: int = 1024        # answer output cap
     rag_context_episodes: int = 6     # episodes whose text enters the context blob

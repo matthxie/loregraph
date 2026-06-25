@@ -76,8 +76,8 @@ class KnowledgeGraph:
             as_of: str | None = None, model: str | None = None, client=None) -> RagAnswer:
         """Graph-RAG answer (docs/ARCHITECTURE.md §5): PPR retrieves a context blob (top
         episodes + currently-valid facts), then ONE LLM call answers over it with
-        citations. The LLM never traverses. Falls back to a deterministic offline
-        answerer with no API key. `client=` injects a (fake) Anthropic client for tests."""
+        citations. The LLM never traverses. Live-only: needs ANTHROPIC_API_KEY (the offline
+        answerer was removed). `client=` injects a (fake) Anthropic client for tests."""
         cfg = self.config
         overrides = {kk: vv for kk, vv in
                      (("rag_backend", backend), ("rag_model", model)) if vv}
@@ -100,8 +100,8 @@ class KnowledgeGraph:
     def stats(self) -> dict:
         import os
         s = self.store.stats()
-        ans = "claude" if (self.config.rag_backend in ("auto", "claude")
-                           and os.environ.get("ANTHROPIC_API_KEY")) else "offline"
+        ans = ("claude" if os.environ.get("ANTHROPIC_API_KEY")
+               else "unavailable (no ANTHROPIC_API_KEY)")
         s["backends"] = {"extractor": self.extractor.name, "embedder": self.embedder.name,
                          "answerer": ans}
         return s

@@ -1,19 +1,22 @@
 """Personal-web "self" anchor tests (optional first-person resolution).
 
-Fully offline/deterministic: a hashing embedder + scripted/heuristic extractor, no API
-key, no network. Verifies the feature's contract — first-person resolution ON, the
-byte-for-byte-unchanged OFF-path, offline fact formation on the self anchor, and a
-save/load round-trip that re-routes "me" after reopening. Run: python -m pytest -q
+Deterministic + free, no real API: the real local bge embedder (`st`) plus a
+`ScriptedExtractor` table for ingest, no key required and no network once the model is
+cached. Verifies the feature's contract — first-person resolution ON, the
+byte-for-byte-unchanged OFF-path, fact formation on the self anchor, and a save/load
+round-trip that re-routes "me" after reopening. Run: python -m pytest -q
 """
 from __future__ import annotations
 
 import os
 import tempfile
 
+import pytest
+
 from kg import Config, KnowledgeGraph
 from kg.canonicalize import Canonicalizer
-from kg.embedders import get_embedder
-from kg.extractors import ScriptedExtractor
+from kg.embedders import SentenceTransformerEmbedder, get_embedder
+from kg.extractors import ScriptedExtractor, get_extractor
 from kg.models import SELF_ENTITY_ID, EdgeType, EntityType, NodeType
 from kg.store import GraphStore
 from kg.synthetic import personal_stream
@@ -21,8 +24,8 @@ from kg.synthetic import personal_stream
 
 def _cfg(self_entity: bool = False, self_name: str = "self") -> Config:
     c = Config.default()
-    c.embedder = "hashing"
-    c.extractor = "heuristic"
+    # real local bge embedder: deterministic, free, no key, no network once cached
+    c.embedder = "st"
     c.self_entity = self_entity
     c.self_name = self_name
     return c
@@ -35,6 +38,32 @@ def _tmp() -> str:
 def _canon(config: Config) -> Canonicalizer:
     store = GraphStore.open(_tmp(), config)
     return Canonicalizer(store, get_embedder(config), config)
+
+
+def _open(monkeypatch, path: str, config: Config, table: dict | None = None) -> KnowledgeGraph:
+    """Open a graph WITHOUT a live extractor: extraction is live-only now and
+    KnowledgeGraph.__init__ builds one via kg.graph.get_extractor (which would need a
+    key / build a real client). Patch it to a deterministic ScriptedExtractor so the
+    graph constructs offline; callers that ingest pass the episode table."""
+    scripted = ScriptedExtractor(table or {})
+    monkeypatch.setattr("kg.graph.get_extractor", lambda cfg: scripted)
+    return KnowledgeGraph.open(path, config)
+
+
+# --------------------------------------------------------------------------- #
+# removed-backend replacements — the new live-only factory contract
+# --------------------------------------------------------------------------- #
+def test_get_embedder_is_sentence_transformer():
+    # the hashing embedder is gone; the factory always returns the bge embedder
+    emb = get_embedder(_cfg())
+    assert isinstance(emb, SentenceTransformerEmbedder)
+
+
+def test_get_extractor_requires_key(monkeypatch):
+    # the offline heuristic extractor is gone; without a key the factory RAISES
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        get_extractor(_cfg())
 
 
 # --------------------------------------------------------------------------- #
@@ -73,13 +102,13 @@ def test_self_name_does_not_capture_a_real_entity():
     assert canon.resolve_entity("Becky", P) != SELF_ENTITY_ID   # the real Becky stays herself
 
 
-def test_changed_self_name_refreshes_display_on_reopen():
+def test_changed_self_name_refreshes_display_on_reopen(monkeypatch):
     path = _tmp()
-    g = KnowledgeGraph.open(path, _cfg(self_entity=True, self_name="self"))
+    g = _open(monkeypatch, path, _cfg(self_entity=True, self_name="self"))
     g.canon.resolve_entity("me", EntityType.PERSON)
     g.save()
     # reopen with a different --self → _reindex/_ensure_self refreshes the persisted name
-    g2 = KnowledgeGraph.open(path, _cfg(self_entity=True, self_name="Jude"))
+    g2 = _open(monkeypatch, path, _cfg(self_entity=True, self_name="Jude"))
     assert g2.store.get_node(SELF_ENTITY_ID).name == "Jude"
     assert g2.canon.resolve_entity("me", EntityType.PERSON) == SELF_ENTITY_ID
 
@@ -106,16 +135,15 @@ def test_off_path_default_config_self_false():
 
 
 # --------------------------------------------------------------------------- #
-# offline ingest — the self anchor behaves like any other entity in the pipeline
+# ingest — the self anchor behaves like any other entity in the pipeline
 # --------------------------------------------------------------------------- #
 def _becky_id(g) -> str:
     return next(n.id for n in g.store.nodes_of_type(NodeType.ENTITY) if n.name == "Becky")
 
 
-def test_ingest_personal_stream_forms_self_facts():
-    g = KnowledgeGraph.open(_tmp(), _cfg(self_entity=True))
+def test_ingest_personal_stream_forms_self_facts(monkeypatch):
     items, table = personal_stream()
-    g.extractor = ScriptedExtractor(table)
+    g = _open(monkeypatch, _tmp(), _cfg(self_entity=True), table)
     g.ingest(items)
 
     assert g.store.has_node(SELF_ENTITY_ID)
@@ -148,16 +176,15 @@ def test_ingest_personal_stream_forms_self_facts():
 # --------------------------------------------------------------------------- #
 # save / load round-trip
 # --------------------------------------------------------------------------- #
-def test_save_load_roundtrip_routes_first_person():
+def test_save_load_roundtrip_routes_first_person(monkeypatch):
     path = _tmp()
-    g = KnowledgeGraph.open(path, _cfg(self_entity=True))
     items, table = personal_stream()
-    g.extractor = ScriptedExtractor(table)
+    g = _open(monkeypatch, path, _cfg(self_entity=True), table)
     g.ingest(items)
     g.save()
 
     # reopen the persisted store with the feature on — _reindex must re-route "me"
-    g2 = KnowledgeGraph.open(path, _cfg(self_entity=True))
+    g2 = _open(monkeypatch, path, _cfg(self_entity=True), table)
     assert g2.store.has_node(SELF_ENTITY_ID)
     assert g2.canon.resolve_entity("me", EntityType.PERSON) == SELF_ENTITY_ID
     assert g2.canon.resolve_entity("I", EntityType.PERSON) == SELF_ENTITY_ID

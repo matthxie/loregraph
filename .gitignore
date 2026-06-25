@@ -14,10 +14,11 @@ __pycache__/
 .cache/
 
 # LongMemEval (dataset/longmemeval/): episode bodies are heavy and regenerable, so only
-# the lean questions.jsonl + manifest.json are committed. The tiny `sample` tier DOES ship
-# its episodes (a committed offline fixture). Rebuild others: python scripts/build_longmemeval.py
+# the lean questions.jsonl + manifest.json are committed. The tiny `sample` + `micro` tiers
+# DO ship their episodes (committed fixtures). Rebuild others: python scripts/build_longmemeval.py
 dataset/longmemeval/*/episodes.jsonl
 !dataset/longmemeval/sample/episodes.jsonl
+!dataset/longmemeval/micro/episodes.jsonl
 
 # Generated graph store
 store/

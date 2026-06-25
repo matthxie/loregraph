@@ -9,10 +9,13 @@ from __future__ import annotations
 import os
 import tempfile
 
+import pytest
+
+import kg.graph as kg_graph
 from kg import Config, KnowledgeGraph
 from kg.canonicalize import Canonicalizer
 from kg.corpus import CorpusItem
-from kg.embedders import get_embedder
+from kg.embedders import SentenceTransformerEmbedder, get_embedder
 from kg.extractors import Extraction, ExtractedEntity, ScriptedExtractor
 from kg.models import EdgeType, EntityType, NodeType, entity_node
 from kg.store import GraphStore, fact_active
@@ -20,10 +23,26 @@ from kg.synthetic import becky_stream
 from kg.temporal import apply_fact
 
 
+@pytest.fixture(autouse=True)
+def _no_live_llm(monkeypatch):
+    """Keep the whole module deterministic + free + key-independent.
+
+    The library is LIVE-ONLY: ``kg`` auto-loads a project-root ``.env`` on import and
+    ``KnowledgeGraph.__init__`` eagerly builds a (live) HaikuExtractor via get_extractor,
+    which RAISES without ANTHROPIC_API_KEY. These temporal tests never touch the LLM — the
+    facts come from the synthetic stream's ScriptedExtractor and the assertions are about
+    the graph's bi-temporal evolution. So we (a) drop any key the .env may have injected and
+    (b) make the graph build a ScriptedExtractor instead of the live one. becky_graph() then
+    overrides g.extractor with the real Becky table anyway, so extraction stays deterministic
+    and no Anthropic call is ever made."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(kg_graph, "get_extractor",
+                        lambda config: ScriptedExtractor({}))
+
+
 def cfg() -> Config:
     c = Config.default()
-    c.embedder = "hashing"
-    c.extractor = "heuristic"
+    c.embedder = "st"   # real local bge — deterministic, free, no key, no network once cached
     return c
 
 
@@ -162,3 +181,27 @@ def test_symmetric_predicate_stored_once():
     rel_edges = [(u, v) for u, v, d in store.all_edges()
                  if d["etype"] == EdgeType.RELATED_TO.value]
     assert len(rel_edges) == 1
+
+
+# --------------------------------------------------------------------------- #
+# live-only backend contract (replaces the old offline-backend coverage that this
+# file used to lean on via cfg(); the temporal layer above runs over the real local
+# bge embedder, and the live extractor must refuse to construct without a key)
+# --------------------------------------------------------------------------- #
+def test_get_embedder_is_sentence_transformer():
+    """The selectable HashingEmbedder was removed: get_embedder ALWAYS returns the local
+    semantic embedder now, which is what these temporal tests' retrieval seeds run on."""
+    emb = get_embedder(cfg())
+    assert isinstance(emb, SentenceTransformerEmbedder)
+    assert emb.name.startswith("st:")
+
+
+def test_get_extractor_requires_key(monkeypatch):
+    """Extraction is live-only: with no ANTHROPIC_API_KEY, get_extractor RAISES rather than
+    falling back to the deleted offline heuristic. (The temporal suite sidesteps this by
+    constructing a ScriptedExtractor directly — see the _no_live_llm fixture.)"""
+    from kg.extractors import get_extractor
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        get_extractor(cfg())

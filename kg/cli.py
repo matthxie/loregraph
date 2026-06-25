@@ -195,7 +195,7 @@ def cmd_demo(args):
     print("\n" + json.dumps(g.stats()["facts"], indent=2))
 
     def ask(q, as_of=None):
-        ans = g.ask(q, backend="offline", as_of=as_of)
+        ans = g.ask(q, as_of=as_of)
         tag = f"  (as of {as_of})" if as_of else ""
         print(f"\nQ: {q}{tag}")
         for f in ans.facts:
@@ -320,15 +320,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     pi = sub.add_parser("ingest",
                         help="build/extend the graph from a LongMemEval tier (or --synthetic)")
-    pi.add_argument("--tier", choices=["sample", "small", "med", "large"], default="sample",
+    pi.add_argument("--tier", choices=["sample", "small", "med", "large", "micro"], default="sample",
                     help="LongMemEval tier to ingest (build via scripts/build_longmemeval.py)")
     pi.add_argument("--question-id", default=None,
                     help="ingest only this instance's haystack (per-instance protocol)")
     pi.add_argument("--synthetic", action="store_true",
                     help="ingest the synthetic evolving Becky/Alex stream (deterministic facts)")
     pi.add_argument("--limit", type=int, default=None, help="cap the number of session episodes")
-    pi.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
-    pi.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pi.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pi.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pi.add_argument("--model", default=None, help="override the LLM extractor model id")
     pi.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
     pi.add_argument("--self", default=None, metavar="NAME",
@@ -339,9 +339,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser("extract-dump",
                         help="dump per-item extractions for an extractor/model (no graph build)")
-    pd.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
+    pd.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
     pd.add_argument("--model", default=None, help="LLM model id to extract with")
-    pd.add_argument("--tier", choices=["sample", "small", "med", "large"], default="sample",
+    pd.add_argument("--tier", choices=["sample", "small", "med", "large", "micro"], default="sample",
                     help="LongMemEval tier whose session episodes to extract from")
     pd.add_argument("--limit", type=int, default=20, help="cap the number of session episodes")
     pd.add_argument("--label", default=None, help="name for this mode in the summary")
@@ -350,8 +350,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     pg = sub.add_parser("eval-canon",
                         help="canonicalization gate: synonyms merge, antonyms/inverses must NOT")
-    pg.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="heuristic")
-    pg.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pg.add_argument("--extractor", choices=["auto", "haiku"], default="haiku")
+    pg.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pg.add_argument("--model", default=None, help="L3 adjudicator model (with --l3)")
     pg.add_argument("--l3", action="store_true", help="exercise the L3 LLM tie-breaker")
     pg.set_defaults(func=cmd_eval_canon)
@@ -371,8 +371,8 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser("ask", help="answer a question: PPR retrieves a context, one LLM "
                                     "call answers (the LLM does not traverse)")
     pa.add_argument("text")
-    pa.add_argument("--backend", choices=["auto", "claude", "offline"], default="auto",
-                    help="auto = Claude if a key is present, else the offline answerer")
+    pa.add_argument("--backend", choices=["auto", "claude"], default="auto",
+                    help="answerer backend (live-only: Claude). Needs ANTHROPIC_API_KEY.")
     pa.add_argument("--model", default=None, help="override the answerer LLM model id")
     pa.add_argument("--k", type=int, default=8, help="episodes retrieved for the context")
     pa.add_argument("--as-of", default=None, dest="as_of",
@@ -383,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pde = sub.add_parser("demo", help="ingest the synthetic Becky/Alex stream and show "
                                       "temporal evolution (current view vs as-of)")
-    pde.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pde.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pde.add_argument("--personal", action="store_true",
                      help="use the first-person personal-web stream (self anchor) instead "
                           "of the Becky/Alex stream")
@@ -412,17 +412,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="per-instance = the dataset's native protocol, a fresh graph per "
                          "question (default); shared = pool the whole tier into one graph "
                          "(scale/structure smoke view, accuracy is confounded)")
-    pt.add_argument("--tier", choices=["sample", "small", "med", "large"], default="small",
-                    help="LongMemEval tier (default: small; `sample` is the tiny offline one)")
+    pt.add_argument("--tier", choices=["sample", "small", "med", "large", "micro"], default="micro",
+                    help="LongMemEval tier (default: micro — a tiny committed 3-instance LIVE "
+                         "smoke set; sample/small/med are larger)")
     pt.add_argument("--limit", type=int, default=None,
                     help="shared mode only: cap session episodes ingested (use --queries to "
                          "cap instances in per-instance mode)")
     pt.add_argument("--queries", type=int, default=None,
                     help="cap the number of eval questions (default: all)")
-    pt.add_argument("--backend", choices=["auto", "claude", "offline"], default=None,
+    pt.add_argument("--backend", choices=["auto", "claude"], default=None,
                     help="answerer backend for the query half (auto = live if a key is set)")
-    pt.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
-    pt.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
+    pt.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pt.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pt.add_argument("--model", default=None, help="override the LLM model id")
     pt.add_argument("--k", type=int, default=8, help="episodes per query / recall@k")
     pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")

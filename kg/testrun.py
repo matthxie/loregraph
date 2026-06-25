@@ -43,7 +43,7 @@ from .metering import UsageMeter, totals_of
 from .models import EdgeType, NodeType
 from .viz import rag_trace_payload
 
-DEFAULT_TIER = "sample"
+DEFAULT_TIER = "micro"   # tiny committed LIVE smoke set (3 instances); see scripts/build_micro.py
 DEFAULT_OUT = "runs"
 
 
@@ -207,7 +207,8 @@ def _full_graph(store) -> dict:
             return {"modality": n.modality.value if n.modality else "text",
                     "created_at": n.created_at, "source_ref": n.source_ref,
                     "n_tags": len(n.tags), "tags": list(n.tags)[:20], "entities": ents[:20],
-                    "snippet": (n.raw_text or n.description or "")[:500]}
+                    # full episode text (the click panel scrolls) — not truncated
+                    "snippet": (n.raw_text or n.description or "")}
         if n.ntype == NT.ENTITY:
             return {"entity_type": n.entity_type.value if n.entity_type else "other",
                     "df": n.doc_frequency}
@@ -349,19 +350,6 @@ def _build_judge_client(model: str):
         return None
 
 
-def _coerce_offline(cfg: Config) -> None:
-    """Make `--backend offline` mean a genuinely free run. The answerer backend alone
-    doesn't gate cost: with an API key loaded (kg auto-reads .env) an 'auto' extractor/
-    embedder would still call live models. So when the answerer is offline, pull any
-    still-'auto' extractor/embedder down to their offline stand-ins (explicit choices like
-    --extractor haiku are respected). The judge is gated separately in each runner."""
-    if cfg.rag_backend == "offline":
-        if cfg.extractor == "auto":
-            cfg.extractor = "heuristic"
-        if cfg.embedder == "auto":
-            cfg.embedder = "hashing"
-
-
 def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
                  judge_meter: UsageMeter) -> dict:
     """Score one answered question into a dashboard query-record. Shared by the shared-graph
@@ -428,7 +416,6 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     cfg = config or Config.default()
     if backend:
         cfg.rag_backend = backend
-    _coerce_offline(cfg)
     kk = k or cfg.top_k
 
     # fresh store every run so per-document deltas start from an empty graph
@@ -514,8 +501,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     log(f"running {len(questions)} queries through the PPR→RAG ask() ...")
     judge_meter = UsageMeter()
     jclient = judge_client
-    if (judge and jclient is None and agent_client is None
-            and cfg.rag_backend != "offline"):           # never spend on a judge offline
+    if judge and jclient is None and agent_client is None:
         jclient = _build_judge_client(cfg.l3_model)
     qrecords: list[dict] = []
     for q in questions:
@@ -598,7 +584,6 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     cfg = config or Config.default()
     if backend:
         cfg.rag_backend = backend
-    _coerce_offline(cfg)
     kk = k or cfg.top_k
 
     from .corpus import iter_lme_instances
@@ -608,8 +593,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
 
     judge_meter = UsageMeter()
     jclient = judge_client
-    if (judge and jclient is None and agent_client is None
-            and cfg.rag_backend != "offline"):           # never spend on a judge offline
+    if judge and jclient is None and agent_client is None:
         jclient = _build_judge_client(cfg.l3_model)
 
     qrecords: list[dict] = []

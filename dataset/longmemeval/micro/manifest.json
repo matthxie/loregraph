@@ -1,0 +1,19 @@
+{
+  "tier": "micro",
+  "n_instances": 3,
+  "n_episodes": 18,
+  "question_types": {
+    "temporal-reasoning": 1,
+    "multi-session": 1,
+    "knowledge-update": 1
+  },
+  "instance_ids": [
+    "08f4fc43",
+    "0100672e",
+    "01493427"
+  ],
+  "selection": "committed 3-instance LIVE smoke subset of `sample` (temporal / multi-session / knowledge-update)",
+  "ordering": "by instance, then chronological by created_at",
+  "source": "longmemeval sample tier",
+  "note": "committed (episode bodies included); default tier for `kg testrun` (live)."
+}

@@ -126,10 +126,10 @@ def evaluate(g: KnowledgeGraph, questions: list[Question],
         agg_r, agg_m = 0.0, 0.0
         per = {kind: {"n": 0, "r": 0.0, "m": 0.0} for kind in kinds}
         for q in questions:
-            # "rag" routes through the §5 graph-RAG answer flow (offline backend for a
-            # deterministic, key-free comparison); its .object_ids (the PPR ranking it read
-            # over) drops into the same recall@k/MRR math as a RetrievalResult.
-            res = (g.ask(q.query, backend="offline", k=k) if mode == "rag"
+            # "rag" routes through the §5 graph-RAG answer flow (live Claude answerer); its
+            # .object_ids (the PPR ranking it read over) drops into the same recall@k/MRR
+            # math as a RetrievalResult.
+            res = (g.ask(q.query, k=k) if mode == "rag"
                    else g.query(q.query, mode=mode, k=k))
             ranked = res.object_ids
             r = _recall_at_k(ranked, q.gold, k)

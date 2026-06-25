@@ -5,20 +5,23 @@ summary step) in one structured-output call, with an optional reflexion recall p
 Relations are directed and carry open-vocabulary `labels[]` (rev 3) that are
 consolidated into canonical relationship-tag nodes downstream.
 
-  * HaikuExtractor   — the real path: Claude Haiku 4.5 forced into a typed tool call,
-                       vision for images. Needs ANTHROPIC_API_KEY.
-  * HeuristicExtractor — offline deterministic fallback (proper-noun + keyword
-                       extraction; images use the COCO manifest label as the VLM
-                       stand-in). Lets the whole pipeline run with no API key.
+  * HaikuExtractor   — the real, live path: Claude Haiku 4.5 forced into a typed tool
+                       call, vision for images. Needs ANTHROPIC_API_KEY.
+  * ScriptedExtractor — a deterministic {text: Extraction} table used ONLY by the
+                       synthetic temporal demo + unit tests (it stubs the LLM so the
+                       graph's open/close/supersede logic runs on known facts). Not a
+                       general extractor — unknown text yields an empty Extraction.
 
 Both return the same `Extraction` object so the ingestion pipeline is backend-blind.
+The old offline HeuristicExtractor (proper-noun + keyword guessing) was removed: it
+produced low-quality entities/tags and a single `related_to` predicate, which is not
+representative of the live graph. Extraction is now live-only.
 """
 from __future__ import annotations
 
 import base64
 import os
 import re
-from collections import Counter
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -359,82 +362,6 @@ class HaikuExtractor:
 
 
 # --------------------------------------------------------------------------- #
-# Heuristic (offline)
-# --------------------------------------------------------------------------- #
-_STOP = set("""
-the a an and or but of to in on at by for with from into over under again further then once
-is are was were be been being have has had do does did doing this that these those it its as
-i you he she they we me him her them my your his their our who whom which what when where why
-how all any both each few more most other some such no nor not only own same so than too very
-can will just don should now also which their about after before during between through up down
-out off above below new one two first time year years used using use known including part many
-""".split())
-
-_PROPER = re.compile(r"\b([A-Z][a-zA-Z0-9'’.-]+(?:\s+[A-Z][a-zA-Z0-9'’.-]+){0,3})\b")
-_WORD = re.compile(r"[a-z][a-z0-9-]{2,}")
-_ORG_CUES = ("Inc", "Corp", "Ltd", "LLC", "Company", "Association", "University",
-             "Institute", "Committee", "Council", "Commission", "League", "Club",
-             "Department", "Society", "Foundation", "Group", "Party", "Bank")
-
-
-def _classify(name: str) -> EntityType:
-    if any(cue in name for cue in _ORG_CUES):
-        return EntityType.ORG
-    toks = name.split()
-    if len(toks) == 2 and all(t[0].isupper() for t in toks):
-        return EntityType.PERSON
-    return EntityType.OTHER
-
-
-class HeuristicExtractor:
-    name = "heuristic"
-
-    def __init__(self, config: Config):
-        self.config = config
-        self.meter = UsageMeter()   # always empty (no API calls) — keeps testrun uniform
-
-    def extract_text(self, text: str, title: str = "") -> Extraction:
-        body = f"{title}. {text}" if title else text
-        # entities: frequent proper-noun phrases
-        cand = Counter()
-        for m in _PROPER.finditer(body):
-            phrase = m.group(1).strip(" .")
-            head = phrase.split()[0]
-            if head.lower() in _STOP or len(phrase) < 3:
-                continue
-            cand[phrase] += 1
-        entities, seen = [], set()
-        for name, _ in cand.most_common(20):
-            low = name.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            entities.append(ExtractedEntity(name=name, type=_classify(name)))
-        # tags: frequent topical content words
-        words = Counter(w for w in _WORD.findall(body.lower()) if w not in _STOP)
-        tags = [w for w, _ in words.most_common(10)]
-        # relations: co-occurrence of the top entity with the rest (low-confidence).
-        # The offline heuristic can't name a real predicate, so it emits the generic
-        # "related_to" label — which still flows through relation consolidation.
-        rels = []
-        if len(entities) >= 2:
-            hub = entities[0].name
-            for e in entities[1:6]:
-                rels.append(ExtractedRelation(
-                    source=hub, target=e.name, labels=["related_to"],
-                    provenance=Provenance.INFERRED, confidence=0.4))
-        return Extraction(entities=entities, tags=tags, relations=rels)
-
-    def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
-        labels = [l.strip() for l in (label_hint or "").split(",") if l.strip()]
-        if not labels:
-            labels = ["photo"]
-        entities = [ExtractedEntity(name=l, type=EntityType.CONCEPT) for l in labels]
-        desc = f"A photo containing {', '.join(labels)}."
-        return Extraction(entities=entities, tags=labels, description=desc)
-
-
-# --------------------------------------------------------------------------- #
 # Shared text-extraction helper (sectioning for long docs, §9 risk 4)
 # --------------------------------------------------------------------------- #
 def extract_text_sectioned(extractor: Extractor, text: str, title: str = "",
@@ -485,15 +412,12 @@ class ScriptedExtractor:
 # Factory
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
-    choice = config.extractor
-    if choice == "haiku":
-        return HaikuExtractor(config)
-    if choice == "heuristic":
-        return HeuristicExtractor(config)
-    # auto
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        try:
-            return HaikuExtractor(config)
-        except Exception:
-            pass
-    return HeuristicExtractor(config)
+    """The live extractor (Claude Haiku). `extractor` is accepted as 'haiku'/'auto' for
+    back-compat — both return a HaikuExtractor, which needs ANTHROPIC_API_KEY. The
+    deterministic ScriptedExtractor is constructed directly (demo + tests), never here."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "No ANTHROPIC_API_KEY found. Extraction is live-only (the offline heuristic "
+            "extractor was removed). Set the key (kg auto-reads a project-root .env), or "
+            "construct a ScriptedExtractor directly for deterministic tests/demos.")
+    return HaikuExtractor(config)

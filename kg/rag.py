@@ -6,10 +6,11 @@ projection) does the multi-hop work and assembles a compact context — the top 
 text plus the currently-valid facts among the touched entities — and then a SINGLE LLM
 call answers over that context with citations. No per-hop tool loop, no LLM-in-the-walk.
 
-It mirrors the extractor's real⇄offline contract: a `ClaudeAnswerer` (one Anthropic call)
-that degrades to a deterministic `OfflineAnswerer` (extractive synthesis over the same
-context), so `kg ask` and every test run fully offline with no API key. `client=` injects a
-(possibly fake) Anthropic client for tests.
+Answering is live-only: a `ClaudeAnswerer` makes one Anthropic call and validates citations.
+`client=` injects a (possibly fake) Anthropic client for tests. The selectable offline
+answerer was removed; a deterministic extractive synthesis (`_extractive`) survives ONLY as
+an internal crash-guard if that single live call raises mid-run, so one transient API error
+never sinks a whole test run — it is not a user-facing backend.
 
 Point-in-time: pass `as_of=T` to answer "as of T" — retrieval keeps only facts whose valid
 window contained T, so "where did Becky live in 2022?" reads the world as it was then.
@@ -24,7 +25,7 @@ from dataclasses import dataclass, field
 from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
-from .metering import UsageMeter, empty_totals
+from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .retrieval import PPRRetriever, RetrievalResult
 from .store import GraphStore, fact_active
@@ -59,7 +60,7 @@ class RagAnswer:
     answer: str
     citations: list[str] = field(default_factory=list)        # episode ids used
     dropped_citations: list[str] = field(default_factory=list)
-    backend: str = "offline"
+    backend: str = "claude"
     mode: str = "rag"
     as_of: str | None = None
     context_episodes: list[str] = field(default_factory=list)  # episode ids in the context
@@ -268,25 +269,6 @@ class ClaudeAnswerer:
         return base
 
 
-class OfflineAnswerer:
-    name = "offline"
-
-    def __init__(self, store, config: Config, builder: ContextBuilder):
-        self.store = store
-        self.config = config
-        self.builder = builder
-
-    def answer(self, result: RetrievalResult) -> RagAnswer:
-        ep_ids, facts, _blob = self.builder.build(result)
-        return RagAnswer(
-            query=result.query, answer=_extractive(self.store, result.query, ep_ids, facts),
-            citations=ep_ids, backend=self.name, as_of=result.as_of,
-            context_episodes=ep_ids, facts=[f.render() for f in facts],
-            object_ids=result.object_ids, seeds=result.seeds,
-            touched=sorted(result.subgraph), usage=empty_totals(),
-            notes=["degraded to offline answerer"] if self.config.rag_backend == "auto" else [])
-
-
 # --------------------------------------------------------------------------- #
 # Orchestrator
 # --------------------------------------------------------------------------- #
@@ -302,18 +284,19 @@ class RagAnswerer:
         self._backend = self._pick_backend(client)
 
     def _pick_backend(self, client):
+        """Live-only: a ClaudeAnswerer over an injected client, else a real Anthropic client
+        from the env key. There is no offline backend — without a key (and no injected
+        client) we raise, rather than silently degrade to a fake answer."""
         if client is not None:
             return ClaudeAnswerer(self.store, self.config, self.builder, client=client)
-        if self.config.rag_backend == "offline":
-            return OfflineAnswerer(self.store, self.config, self.builder)
-        if self.config.rag_backend in ("auto", "claude") and os.environ.get("ANTHROPIC_API_KEY"):
-            try:
-                import anthropic
-                return ClaudeAnswerer(self.store, self.config, self.builder,
-                                      client=anthropic.Anthropic())
-            except Exception:  # noqa: BLE001 — missing dep / bad env → offline parity
-                pass
-        return OfflineAnswerer(self.store, self.config, self.builder)
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            import anthropic
+            return ClaudeAnswerer(self.store, self.config, self.builder,
+                                  client=anthropic.Anthropic())
+        raise RuntimeError(
+            "No ANTHROPIC_API_KEY found. The query/answer path is live-only (the offline "
+            "answerer was removed). Set the key (kg auto-reads a project-root .env), or "
+            "inject a client: get_answerer(..., client=fake).")
 
     def run(self, query: str, k: int | None = None, as_of: str | None = None) -> RagAnswer:
         if not query or not query.strip():
