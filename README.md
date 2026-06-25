@@ -1,47 +1,48 @@
 # you
 
-An **LLM-traversable knowledge graph** over multimodal content (text, links, photos, files).
+An **episodic, bi-temporal knowledge graph** over multimodal content (text, links, photos, files),
+in the HippoRAG / HippoRAG 2 / Graphiti lineage.
 
-Each ingested object becomes a node: an LLM extracts tags/entities/concepts and the
-**directed relationships** between entities, and links it into a **directed graph**.
-Both tags *and* relationship labels are open-vocabulary (LLM-generated) and **consolidated
-over time** into a canonical vocabulary. Retrieval is *graph-first* — an LLM (or a
-PageRank-style diffusion) traverses the graph rather than relying on chunk-embedding
-similarity alone. Embeddings exist mainly as an **entry-point index** to find seed nodes.
+Each ingested entry becomes an immutable **Episode**; an LLM extracts the entities it mentions and
+the **directed relationships** between them. Entity occurrences become immutable **Mentions** that
+point (in a *star*, not a clique) at a lean canonical **Entity** anchor — so identity is stable and
+embeddings live only on the immutable layer (episodes + mentions), never re-embedded on an update.
+Facts live on **edges with bi-temporal validity** (`valid_at` / `invalid_at` + belief): a state
+change *closes* the old fact's window and *opens* a new one ("Becky lives in Toronto" → "…Berlin" is
+an `invalid_at` plus a new edge, not an overwrite). Retrieval is *graph-first* — a non-LLM diffusion
+(Personalized PageRank over the temporally-filtered, symmetrized projection) does the multi-hop work;
+embeddings are an **entry-point index**, not the main path.
 
 ## Status
 
-**MVP built** — the `kg/` package implements the design end-to-end (ingestion → typed
-directed graph → 2-path retrieval → communities → eval). It runs fully offline by
-default (pluggable backends fall back when no API key / model is present) and upgrades to
-Claude Haiku 4.5 + `bge-small` embeddings when they are. See [docs/MVP.md](docs/MVP.md)
-for the feature→design map, run commands, and the thesis-validating eval results. The
-design is grounded in a literature review of 10 GraphRAG / graph-retrieval /
-taxonomy-induction sources — see the docs below.
+**Built** — the `kg/` package implements the design end-to-end (episodic ingestion → typed,
+bi-temporal directed graph → PPR/BFS/vector retrieval → communities → graph-RAG answers → eval). It
+runs fully offline by default (pluggable backends fall back when no API key / model is present) and
+upgrades to Claude Haiku 4.5 + `bge-small` embeddings when present.
 
 ```bash
 pip install -r requirements.txt
+python -m kg demo                       # ingest a synthetic evolving stream; show current vs as-of
 python -m kg ingest --reset && python -m kg communities
-python -m kg query "what are the main themes across the collection"   # algorithmic retrieval
-python -m kg ask   "how is Alan Turing connected to the Enigma machine?"  # LLM traverses via tools
-python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector (+ agent)
+python -m kg query "what are the main themes across the collection"      # algorithmic retrieval
+python -m kg ask   "where does Becky live and who does she work with?"   # PPR → context → 1 answer
+python -m kg ask   "where did Becky live?" --as-of 2022                  # point-in-time retrieval
+python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector (+ rag)
 python -m kg serve       # browser viewer: watch the graph build + trace queries
 python -m pytest -q
 ```
 
-Two query surfaces: **`query`** runs the *algorithmic* retrievers directly (PPR / BFS / vector /
-community) and returns ranked objects; **`ask`** is the *agentic* path — an LLM is handed
-read-only graph tools (`seed_and_spread`/PPR, `keyword_search`, `vector_search`, `neighbors`,
-`find_path`, `read_object`, `browse_themes`) and **traverses the graph itself** across tool-use
-turns, then answers with citations to the objects it read. Like the rest of the stack it runs
-offline: with no API key, a deterministic agent executes the same tools (`--backend offline`).
-See [docs/MVP.md](docs/MVP.md#agentic-retrieval-ask).
+Two query surfaces, and **for neither does the LLM traverse the graph**: **`query`** runs the
+algorithmic retrievers directly (PPR / BFS / vector / community) and returns ranked episodes;
+**`ask`** is *retrieve-then-read* — PPR assembles a context (the top episodes + the currently-valid,
+or as-of-T, facts among the touched entities) and a **single** LLM call answers over it with
+citations. With no API key a deterministic extractive answerer runs the same context (`--backend
+offline`). Pass `--as-of <date>` to either to read the world as it was at that time.
 
-A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the object
-graph, animates it **being built** in ingestion order, and **traces the path a query
-takes** through the graph (seeds → tag/entity hubs → ranked results, with BFS hops
-animated). `python -m kg serve` for live typed queries, or `python -m kg viz --query
-"…" --out kg_viz.html` for a self-contained file.
+A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the episode graph, animates it
+**being built** in ingestion order, and **traces the path a query takes** (seeds → tag hubs → ranked
+results, BFS hops animated). `python -m kg serve` for live typed queries, or `python -m kg viz
+--query "…" --out kg_viz.html` for a self-contained file.
 
 ## Decided stack
 
@@ -65,8 +66,16 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
 
 ## Core design bets (from the literature)
 
-1. **Traversal is the primary retrieval path; embeddings are a seed index.** Embed to *find*
-   entry nodes, then let graph structure (PageRank diffusion / BFS) do the work.
+0. **Episodic / semantic split + bi-temporal facts (HippoRAG / Graphiti).** Immutable
+   Episodes and Mentions (append-only, embedded once) feed lean canonical Entity anchors in a
+   *star* topology; facts are *time-bounded edges* that supersede rather than overwrite. This
+   designs the re-embedding problem out (cost is proportional to new data) and makes
+   "coworker → ex-coworker" / "Toronto → Berlin" resolve correctly regardless of document order.
+   See [docs/TEMPORAL.md](docs/TEMPORAL.md).
+1. **Diffusion is the primary retrieval path; embeddings are a seed index; the LLM does not
+   traverse.** Embed to *find* entry nodes, then let graph structure (Personalized PageRank over the
+   temporally-filtered projection) do the multi-hop work in one step — no per-hop LLM call. `ask`
+   feeds that retrieved context to a single answering LLM call (retrieve-then-read).
 2. **Tags *and* relationships are first-class, open-vocabulary, and consolidated.** Topical
    tags are first-class nodes; relationship labels (`is_friend_of`, `works_with`, …) are
    LLM-generated per connection as **parallel directed edges — one per relation** (the
@@ -84,10 +93,10 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
    antonyms.
 4. **Embed summaries (primary) + tag/entity strings (for synonymy linking)** — bare-tag
    embeddings alone are too lossy as the main retrieval vector.
-5. **Edges carry provenance + confidence** (`EXTRACTED` / `INFERRED` / `SIMILAR`) so the LLM can
-   down-weight or drop low-confidence relationships.
-6. A per-node **`seen` flag with bulk-clear** is the visited-set primitive for BFS / debug
-   traversal.
+5. **Edges carry provenance + confidence** (`EXTRACTED` / `INFERRED` / `SIMILAR` / `DERIVED`) so
+   retrieval can down-weight or drop low-confidence relationships, and **fact edges carry a
+   bi-temporal window + belief state** so closed/superseded/retracted facts drop out of the
+   current-view (or as-of-T) traversal automatically.
 
 ## Test corpus
 

@@ -1,13 +1,18 @@
 # Temporal, Evolving Nodes & Relationships — Design Plan
 
-> **Status: PLANNING (not built).** The current corpus is a *static* Wikipedia snapshot
-> that doesn't exercise any of this. Build it when you move to evolving data (agent
-> memory, a live feed about real people/entities). This doc is the blueprint for when
-> that happens. No code here — design + phasing only.
+> **Status: IMPLEMENTED (phases 1–6).** The episodic/semantic split and the bi-temporal fact
+> model below are built. Fact edges carry `valid_at` / `invalid_at` + `belief`
+> ([`models.py`](../kg/models.py)); the open / confirm / close / supersede / backfill decision
+> logic lives in [`kg/temporal.py`](../kg/temporal.py); per-predicate functional/symmetric
+> cardinality is stamped at canonicalization time ([`canonicalize.py`](../kg/canonicalize.py),
+> `predicate_cardinality`); retrieval filters to a current or as-of-T view
+> ([`retrieval.py`](../kg/retrieval.py), `store.fact_active`); and a synthetic evolving stream
+> ([`kg/synthetic.py`](../kg/synthetic.py)) + `python -m kg demo` exercise the whole thing offline.
+> Phase 7 (transaction-time belief revision + compaction) is partially present (the `belief` field
+> + `retracted` filtering) but not yet driven by an ingest path. Tests: `tests/test_temporal.py`.
 >
-> Companion to [ARCHITECTURE.md](ARCHITECTURE.md) (§2 graph model, §6 ingestion). References
-> live code by name: `Edge`, `RelationTagNode`, `supersede_node`, `resolve_relation`,
-> `canonicalize.py`, `ingest.py`, the rev-4 parallel-edge model.
+> Companion to [ARCHITECTURE.md](ARCHITECTURE.md) (§2 graph model, §6 ingestion). References live
+> code by name: `Edge`, `relation_tag_node`, `apply_fact`, `close_facts`, `resolve_relation`.
 
 ---
 

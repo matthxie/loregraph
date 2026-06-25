@@ -55,9 +55,9 @@ def make_handler(g: KnowledgeGraph):
 
 def serve(store_path: str, port: int = 8000, config=None) -> None:
     g = KnowledgeGraph.open(store_path, config)
-    n = g.stats()["by_node_type"].get("object", 0)
+    n = g.stats()["by_node_type"].get("episode", 0)
     if n == 0:
-        print(f"warning: store {store_path!r} has no objects — run `python -m kg ingest` first")
+        print(f"warning: store {store_path!r} has no episodes — run `python -m kg ingest` first")
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(g))
     print(f"kg viewer on  http://127.0.0.1:{port}   (Ctrl-C to stop)")
     try:

@@ -38,12 +38,20 @@ class ExtractedEntity:
 class ExtractedRelation:
     """A directed connection source→target carrying open-vocabulary relationship
     labels (e.g. ["is_friend_of", "works_with"]). The labels are consolidated into
-    canonical relationship-tag nodes downstream (Canonicalizer.resolve_relation)."""
+    canonical relationship-tag nodes downstream (Canonicalizer.resolve_relation).
+
+    Temporal fields (docs/TEMPORAL.md §6): `status` is the polarity — "asserted" (the
+    relationship holds) or "ended" (it terminated / no longer holds, from cues like
+    "former", "ex-", "no longer"). `valid_from` / `valid_to` are OPTIONAL stated bounds
+    (ISO strings); empty means "unknown / as of this episode"."""
     source: str
     target: str
     labels: list[str] = field(default_factory=list)
     provenance: Provenance = Provenance.EXTRACTED
     confidence: float = 0.8
+    status: str = "asserted"          # "asserted" | "ended"
+    valid_from: str = ""
+    valid_to: str = ""
 
 
 @dataclass
@@ -123,9 +131,21 @@ GRAPH_TOOL = {
                             "items": {"type": "string"},
                             "description": "1-3 short lowercase relationship labels "
                             "read SOURCE→TARGET, e.g. 'founded', 'works_with', "
-                            "'member_of', 'located_in', 'parent_of'. Use natural "
-                            "predicate names; they are consolidated automatically.",
+                            "'member_of', 'located_in', 'parent_of'. Use the BASE "
+                            "predicate even for past relationships (use 'works_with' + "
+                            "status 'ended', NOT 'former_colleague'). Consolidated "
+                            "automatically.",
                         },
+                        "status": {
+                            "type": "string", "enum": ["asserted", "ended"],
+                            "description": "'asserted' if the relationship holds; 'ended' "
+                            "if the text says it terminated (former, ex-, no longer, left, "
+                            "until X). Default 'asserted'.",
+                        },
+                        "valid_from": {"type": "string",
+                                       "description": "optional ISO date/year the fact began, if stated"},
+                        "valid_to": {"type": "string",
+                                     "description": "optional ISO date/year the fact ended, if stated"},
                         "confidence": {"type": "number"},
                     },
                     "required": ["source", "target", "labels"],
@@ -139,6 +159,10 @@ GRAPH_TOOL = {
 }
 
 
+_TERM_PREFIX = re.compile(r"^(former|formerly|ex|past|no[\s_-]?longer|used[\s_-]?to|once)[\s_-]+",
+                          re.I)
+
+
 def _coerce_labels(r: dict) -> list[str]:
     """Open-vocab labels[], with back-compat for an old single `relation` string."""
     labels = [str(x).strip() for x in (r.get("labels") or []) if str(x).strip()]
@@ -146,6 +170,21 @@ def _coerce_labels(r: dict) -> list[str]:
         labels = [str(r["relation"]).strip()]
     # de-dupe preserving order
     return list(dict.fromkeys(labels))
+
+
+def _normalize_termination(labels: list[str]) -> tuple[list[str], bool]:
+    """Fold tense/aspect wrappers onto the base predicate + a termination flag
+    (docs/TEMPORAL.md §7): former_colleague / ex-coworker / no_longer_works_with →
+    base predicate + ended=True, so the temporal layer CLOSES the base fact rather than
+    minting an `ex_*` predicate that would sprawl the vocabulary."""
+    ended = False
+    out = []
+    for lab in labels:
+        base = _TERM_PREFIX.sub("", lab.strip())
+        if base != lab.strip():
+            ended = True
+        out.append(base or lab.strip())
+    return list(dict.fromkeys(l for l in out if l)), ended
 
 
 def _parse_tool_payload(payload: dict) -> Extraction:
@@ -163,13 +202,16 @@ def _parse_tool_payload(payload: dict) -> Extraction:
     rels = []
     for r in payload.get("relations", []) or []:
         s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
-        labels = _coerce_labels(r)
+        labels, ended = _normalize_termination(_coerce_labels(r))
         if not s or not t or not labels:
             continue
+        status = "ended" if (ended or str(r.get("status", "")).lower() == "ended") else "asserted"
         rels.append(ExtractedRelation(
             source=s, target=t, labels=labels,
             provenance=Provenance.EXTRACTED,
             confidence=float(r.get("confidence", 0.8)),
+            status=status, valid_from=str(r.get("valid_from", "") or ""),
+            valid_to=str(r.get("valid_to", "") or ""),
         ))
     return Extraction(entities=ents, tags=tags, relations=rels,
                       description=(payload.get("description") or None))
@@ -219,14 +261,37 @@ class HaikuExtractor:
         "parent_of, child_of, created, created_by, discovered, employed_by, succeeded_by, "
         "influenced_by. Similar labels are consolidated automatically downstream, so do not "
         "try to match any canonical form yourself.\n"
+        "   - TIME. If the text says a relationship ENDED (former, ex-, no longer, left, "
+        "until X), emit the BASE predicate with status 'ended' — never coin 'former_*' or "
+        "'ex_*'. Set valid_from/valid_to ONLY when the text states a date; otherwise leave "
+        "them empty (it defaults to 'as of this content'). Do not guess dates.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "Call emit_graph exactly once."
+    )
+
+    # Appended to _SYS ONLY when config.self_entity is on (personal-web mode). The
+    # narrator is named exactly 'me' so it canonicalizes onto the single self anchor.
+    _FIRST_PERSON_CLAUSE = (
+        "\n\nFIRST PERSON: if the content is narrated in the first person (I/me/my), "
+        "include the narrator as an entity named exactly 'me' (type person), and use 'me' "
+        "as the source or target of any relationship the narrator participates in (e.g. "
+        "source 'me', target 'Becky', label 'had_coffee_with'). Do not invent a name for "
+        "the narrator."
     )
 
     def __init__(self, config: Config):
         import anthropic
         self.config = config
         self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+
+    @property
+    def _system(self) -> str:
+        """Effective system prompt. OFF-path returns _SYS BYTE-FOR-BYTE; personal-web mode
+        appends the first-person clause so the base prompt never drifts when the feature
+        is off."""
+        if self.config.self_entity:
+            return self._SYS + self._FIRST_PERSON_CLAUSE
+        return self._SYS
 
     def _call(self, content_blocks: list) -> Extraction:
         msg = self.client.messages.create(
@@ -236,7 +301,7 @@ class HaikuExtractor:
                              # valid param on Haiku 4.5 / Sonnet 4.6 (only removed on
                              # Opus 4.7+/Fable 5). The canonicalized topology is what's
                              # reproducible; the raw LLM output is still not bit-exact.
-            system=self._SYS,
+            system=self._system,
             tools=[GRAPH_TOOL],
             tool_choice={"type": "tool", "name": "emit_graph"},
             messages=[{"role": "user", "content": content_blocks}],
@@ -380,6 +445,35 @@ def extract_text_sectioned(extractor: Extractor, text: str, title: str = "",
         part = extractor.extract_text(text[i:i + long_doc_chars], title if i == 0 else "")
         merged.merge(part)
     return merged
+
+
+# --------------------------------------------------------------------------- #
+# Scripted (deterministic, for the synthetic temporal demo)
+# --------------------------------------------------------------------------- #
+class ScriptedExtractor:
+    """Deterministic extractor backed by a {episode_text: Extraction} table.
+
+    Used by the synthetic evolving-stream demo (kg/synthetic.py) so the temporal ingest
+    logic (open / close / supersede) runs end-to-end OFFLINE on clean, known facts — the
+    LLM's job (turning prose into typed facts) is the part we stub, leaving the actual
+    thing under test (the graph's evolution) running for real. Unknown text → empty."""
+    name = "scripted"
+
+    def __init__(self, table: dict[str, Extraction]):
+        self._table = {self._norm(k): v for k, v in table.items()}
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return " ".join((text or "").split()).strip().lower()
+
+    def _lookup(self, text: str) -> Extraction:
+        return self._table.get(self._norm(text), Extraction())
+
+    def extract_text(self, text: str, title: str = "") -> Extraction:
+        return self._lookup(text)
+
+    def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
+        return self._lookup(label_hint or image_path or "")
 
 
 # --------------------------------------------------------------------------- #

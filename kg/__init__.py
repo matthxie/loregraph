@@ -1,11 +1,12 @@
-"""kg — an LLM-traversable, directed knowledge graph over multimodal content.
+"""kg — an episodic, bi-temporal knowledge graph over multimodal content.
 
 See docs/ARCHITECTURE.md for the design this implements. The public surface is small:
 
     from kg import KnowledgeGraph
     g = KnowledgeGraph.open("store/")     # load or create a persisted graph
-    g.ingest_object(...)                  # run the §6 ingestion pipeline on one object
+    g.ingest_object(...)                  # run the §6 ingestion pipeline on one entry
     g.query("...")                        # 2-path retriever (§5)
+    g.ask("...")                          # PPR-retrieve → context → one LLM answer (§5)
 
 Everything is pluggable: the LLM extractor (Haiku ⇄ offline heuristic) and the
 embedder (sentence-transformers ⇄ hashing) auto-select based on what's available,
@@ -32,9 +33,9 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-from .agent import AgentAnswer
 from .config import Config
 from .graph import KnowledgeGraph
+from .rag import RagAnswer
 
-__all__ = ["AgentAnswer", "Config", "KnowledgeGraph"]
-__version__ = "0.1.0"
+__all__ = ["Config", "KnowledgeGraph", "RagAnswer"]
+__version__ = "0.2.0"

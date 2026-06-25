@@ -1,18 +1,20 @@
 """GraphStore — NetworkX (topology) + a node dict + a NumPy vector index, all
 persisted to a single SQLite file (docs/ARCHITECTURE.md §7).
 
-NetworkX is a `MultiDiGraph` (directed, §2 rev 3): edges store their real
-direction (src→dst) so relationship semantics survive ("manages", "founded",
-"located_in"), and multiple typed edges (e.g. SHARED_TAG *and* SIMILAR_TO) can
-coexist between the same pair. `neighbors()` still walks BOTH directions by
-default, so traversal stays bidirectional where that matters. PPR/BFS run over a
-weighted *undirected* simple-graph projection built on demand by the retriever
-(store-directed, symmetrize-for-diffusion — keeps HippoRAG-style PPR recall while
-the stored graph remains directional).
+NetworkX is a `MultiDiGraph` (directed): structural edges (MENTIONED_IN, RESOLVES_TO,
+TAGGED_AS) and FACT edges (RELATED_TO) keep their real direction, and multiple typed /
+time-bounded edges can coexist between the same pair. `neighbors()` walks BOTH
+directions by default, so traversal stays bidirectional where that matters. PPR/BFS run
+over a weighted *undirected* projection built on demand by the retriever
+(store-directed, symmetrize-for-diffusion — HippoRAG's PPR runs undirected).
+
+Fact edges are **bi-temporal**: each carries `valid_at` / `invalid_at` (valid-time) and a
+`belief` state (transaction-time). Evolution closes a window and opens a new edge rather
+than overwriting — `close_facts` / `find_facts` are the helpers the temporal ingest logic
+(kg/temporal.py) uses. See docs/TEMPORAL.md.
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -21,7 +23,7 @@ import networkx as nx
 import numpy as np
 
 from .config import Config
-from .models import Edge, EdgeType, Node, NodeType
+from .models import Belief, Edge, EdgeType, Node, NodeType
 from .vectors import VectorIndex
 
 
@@ -30,11 +32,30 @@ def now_iso() -> str:
 
 
 # Symmetric edge types have no real direction (embedding cosine / shared-attribute
-# overlap). On the directed store they're pinned to a canonical (min,max) orientation
-# so a pair yields exactly ONE row — otherwise the kNN pass would add both a→b and
-# b→a and the undirected traversal projection would double-count their weight.
+# overlap). They are pinned to a canonical (min,max) orientation so a pair yields exactly
+# ONE row and the undirected projection can't double-count their weight. Symmetric *facts*
+# (works_with) are pinned upstream in kg/temporal.py before they reach add_edge.
 _SYMMETRIC_ETYPES = {EdgeType.SIMILAR_TO.value, EdgeType.SHARED_TAG.value,
                      EdgeType.SHARED_ENTITY.value}
+
+
+def fact_active(data: dict, as_of: str | None) -> bool:
+    """Is a RELATED_TO fact edge active for the requested view?
+
+    `as_of=None` → the CURRENT view: believed and still open (`invalid_at == ""` = ∞).
+    `as_of=T`    → the AS-OF-T view: believed and T inside the valid window. Timestamps
+    are ISO strings, so lexical comparison is chronological (a bare year like "2022" also
+    compares correctly against full ISO stamps)."""
+    if data.get("belief", Belief.ASSERTED.value) != Belief.ASSERTED.value:
+        return False
+    val, inv = data.get("valid_at", ""), data.get("invalid_at", "")
+    if as_of is None:
+        return inv == ""
+    if val and val > as_of:
+        return False
+    if inv and inv <= as_of:
+        return False
+    return True
 
 
 class GraphStore:
@@ -44,22 +65,22 @@ class GraphStore:
         self.g = nx.MultiDiGraph()
         self.nodes: dict[str, Node] = {}
         self.vectors = VectorIndex(self.config.embed_dim)
-        self.hash_cache: dict[str, str] = {}  # content_hash -> object node id
-        self._obj_count: int | None = None    # cached len(OBJECT nodes), see object_count()
+        self.hash_cache: dict[str, str] = {}  # content_hash -> episode node id
+        self._ep_count: int | None = None     # cached len(EPISODE nodes), see episode_count()
 
     # ------------------------------------------------------------------ nodes
     def add_node(self, node: Node) -> None:
         self.nodes[node.id] = node
         self.g.add_node(node.id, ntype=node.ntype.value)
-        if node.ntype == NodeType.OBJECT:
-            self._obj_count = None  # invalidate cache
+        if node.ntype == NodeType.EPISODE:
+            self._ep_count = None  # invalidate cache
 
-    def object_count(self) -> int:
-        """Cached count of *valid* OBJECT nodes (the IDF denominator); lazy."""
-        if self._obj_count is None:
-            self._obj_count = sum(1 for n in self.nodes.values()
-                                  if n.ntype == NodeType.OBJECT and n.valid)
-        return self._obj_count
+    def episode_count(self) -> int:
+        """Cached count of valid EPISODE nodes (the IDF denominator); lazy."""
+        if self._ep_count is None:
+            self._ep_count = sum(1 for n in self.nodes.values()
+                                 if n.ntype == NodeType.EPISODE and n.valid)
+        return self._ep_count
 
     def get_node(self, node_id: str) -> Node | None:
         return self.nodes.get(node_id)
@@ -77,51 +98,69 @@ class GraphStore:
             return
         if not edge.created_at:
             edge.created_at = now_iso()
-        etype, rel = edge.key()
+        etype, rel, disc = edge.key()
         if etype in _SYMMETRIC_ETYPES and edge.src > edge.dst:  # pin canonical orientation
             edge.src, edge.dst = edge.dst, edge.src
-        # collapse a duplicate of the SAME parallel edge (src→dst, etype, relation/rel_tag):
-        # keep the stronger one. Different rel_tags between the same pair are DISTINCT
-        # parallel edges (rev 4) — restating "is_friend_of" doesn't touch "works_with".
+        gkey = f"{etype}:{rel}:{disc}"
+        # collapse a duplicate of the SAME edge identity, keeping the stronger one.
         existing = self.g.get_edge_data(edge.src, edge.dst)
-        if existing:
-            for k, data in list(existing.items()):
-                if data.get("etype") == etype and data.get("relation", "") == rel:
-                    if edge.confidence * edge.weight >= data["confidence"] * data["weight"]:
-                        self.g.remove_edge(edge.src, edge.dst, key=k)
-                        break
-                    else:
-                        return   # an equal-or-stronger edge already exists
+        if existing and gkey in existing:
+            data = existing[gkey]
+            if edge.confidence * edge.weight < data["confidence"] * data["weight"]:
+                return  # an equal-or-stronger edge already exists
+            self.g.remove_edge(edge.src, edge.dst, key=gkey)
         self.g.add_edge(
-            edge.src, edge.dst, key=f"{etype}:{rel}",
-            etype=etype, relation=rel, provenance=edge.provenance.value,
-            confidence=edge.confidence, weight=edge.weight,
-            valid=edge.valid, created_at=edge.created_at, rel_tag=edge.rel_tag,
+            edge.src, edge.dst, key=gkey, etype=etype, rel_tag=edge.rel_tag,
+            provenance=edge.provenance.value, confidence=edge.confidence,
+            weight=edge.weight, valid_at=edge.valid_at, invalid_at=edge.invalid_at,
+            belief=edge.belief.value if isinstance(edge.belief, Belief) else edge.belief,
+            episode_id=edge.episode_id, valid=edge.valid, created_at=edge.created_at,
         )
+
+    # ----------------------------------------------------- fact-edge helpers
+    def find_facts(self, src: str, dst: str | None = None, rel_tag: str | None = None,
+                   open_only: bool = False):
+        """Yield (dst, gkey, data) for RELATED_TO fact edges out of `src`, optionally
+        filtered by target / predicate / still-open (`invalid_at == ""`)."""
+        if src not in self.g:
+            return
+        for v, edges in self.g.succ[src].items():
+            if dst is not None and v != dst:
+                continue
+            for gkey, data in edges.items():
+                if data.get("etype") != EdgeType.RELATED_TO.value:
+                    continue
+                if rel_tag is not None and data.get("rel_tag") != rel_tag:
+                    continue
+                if open_only and data.get("invalid_at", ""):
+                    continue
+                yield v, gkey, data
+
+    def close_facts(self, src: str, dst: str, rel_tag: str, at: str) -> int:
+        """Close every still-open (src→dst, rel_tag) fact at time `at` (set invalid_at).
+        Returns the number closed. The edge stays in the graph — just no longer current."""
+        closed = 0
+        for _v, _k, data in self.find_facts(src, dst, rel_tag, open_only=True):
+            data["invalid_at"] = at
+            closed += 1
+        return closed
 
     def edge_rel_tags(self, src: str, dst: str,
                       etype: EdgeType = EdgeType.RELATED_TO) -> list[str]:
-        """Relationship-tag ids on the directed src→dst connection — collected across
-        the PARALLEL edges of `etype` (one per relation, rev 4)."""
+        """Relationship-tag ids on the directed src→dst connection (across parallel edges)."""
         data = self.g.get_edge_data(src, dst)
         if not data:
             return []
-        out = []
-        for _k, d in data.items():
-            if d.get("etype") == etype.value and d.get("rel_tag"):
-                out.append(d["rel_tag"])
-        return out
+        return [d["rel_tag"] for d in data.values()
+                if d.get("etype") == etype.value and d.get("rel_tag")]
 
     def neighbors(self, node_id: str, etypes: set[EdgeType] | None = None,
                   valid_only: bool = True, direction: str = "both"):
         """Yield (neighbor_id, edge_data) over the directed graph.
 
-        `direction`: "both" (default — successors *and* predecessors, so traversal
-        is bidirectional regardless of stored edge direction), "out" (successors
-        only), or "in" (predecessors only). The default preserves the pre-rev-3
-        bidirectional contract every retriever/derivation relies on; "out"/"in" let
-        callers (viz, inspect) honour the real direction of relationship edges.
-        """
+        `direction`: "both" (default — successors *and* predecessors, so traversal is
+        bidirectional regardless of stored edge direction), "out" (successors only), or
+        "in" (predecessors only)."""
         if node_id not in self.g:
             return
         want = {e.value for e in etypes} if etypes else None
@@ -143,25 +182,21 @@ class GraphStore:
         for u, v, data in self.g.edges(data=True):
             yield u, v, data
 
-    # ----------------------------------------------------- soft-invalidation
-    def supersede_node(self, old_id: str, new_id: str) -> None:
-        """Mark a node and its incident edges superseded by `new_id` (§2 rev 2)."""
-        old = self.nodes.get(old_id)
-        if not old:
-            return
-        old.valid = False
-        old.superseded_by = new_id
-        old.last_modified = now_iso()
-        self._obj_count = None  # a valid object just became invalid
-        # directed graph: walk in- AND out-edges so neither direction is missed
-        for _u, _v, data in (list(self.g.in_edges(old_id, data=True))
-                             + list(self.g.out_edges(old_id, data=True))):
-            data["valid"] = False
+    # --------------------------------------------------------------- helpers
+    def episode_of(self, mention_id: str) -> str | None:
+        n = self.nodes.get(mention_id)
+        return n.episode_id if n and n.ntype == NodeType.MENTION else None
 
-    # --------------------------------------------------------------- seen flag
-    def clear_seen(self) -> None:
-        for n in self.nodes.values():
-            n.seen = False
+    def entity_episodes(self, entity_id: str) -> set[str]:
+        """Episodes that reference an entity, via its mention star
+        (entity ← RESOLVES_TO ← mention → MENTIONED_IN → episode)."""
+        out: set[str] = set()
+        for nbr, data in self.neighbors(entity_id, etypes={EdgeType.RESOLVES_TO},
+                                        direction="in"):
+            ep = self.episode_of(nbr)
+            if ep:
+                out.add(ep)
+        return out
 
     # ------------------------------------------------------------ persistence
     @classmethod
@@ -184,10 +219,10 @@ class GraphStore:
             CREATE TABLE IF NOT EXISTS nodes(
                 id TEXT PRIMARY KEY, ntype TEXT, payload TEXT);
             CREATE TABLE IF NOT EXISTS edges(
-                src TEXT, dst TEXT, etype TEXT, relation TEXT, provenance TEXT,
-                confidence REAL, weight REAL, valid INTEGER, created_at TEXT,
-                rel_tags TEXT,
-                PRIMARY KEY (src, dst, etype, relation));
+                src TEXT, dst TEXT, etype TEXT, rel_tag TEXT, provenance TEXT,
+                confidence REAL, weight REAL, valid_at TEXT, invalid_at TEXT,
+                belief TEXT, episode_id TEXT, valid INTEGER, created_at TEXT,
+                PRIMARY KEY (src, dst, etype, rel_tag, valid_at));
             CREATE TABLE IF NOT EXISTS vectors(
                 node_id TEXT, kind TEXT, vec BLOB, PRIMARY KEY (node_id, kind));
             CREATE TABLE IF NOT EXISTS cache(
@@ -214,15 +249,13 @@ class GraphStore:
         )
         edge_rows = []
         for u, v, d in self.g.edges(data=True):
-            # rev 4: the `relation` column is the per-edge discriminator and already
-            # holds the rel_tag id for RELATED_TO edges (key() folds it in), so a
-            # parallel edge per relation gets a distinct primary key. The legacy
-            # rel_tags column is left empty — non-empty only in pre-rev-4 stores.
-            edge_rows.append((u, v, d["etype"], d.get("relation", ""), d["provenance"],
-                              d["confidence"], d["weight"], int(d.get("valid", True)),
-                              d.get("created_at", ""), ""))
+            edge_rows.append((u, v, d["etype"], d.get("rel_tag") or "", d["provenance"],
+                              d["confidence"], d["weight"], d.get("valid_at", ""),
+                              d.get("invalid_at", ""), d.get("belief", "asserted"),
+                              d.get("episode_id", ""), int(d.get("valid", True)),
+                              d.get("created_at", "")))
         cur.executemany(
-            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?)", edge_rows)
+            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", edge_rows)
         vec_rows = [(nid, kind, np.asarray(vec, dtype=np.float32).tobytes())
                     for kind, nid, vec in self.vectors.iter_vectors()]
         cur.executemany("INSERT OR REPLACE INTO vectors VALUES (?,?,?)", vec_rows)
@@ -240,36 +273,20 @@ class GraphStore:
             node = Node.from_payload(payload)
             self.nodes[node.id] = node
             self.g.add_node(node.id, ntype=node.ntype.value)
-        related = EdgeType.RELATED_TO.value
         for row in cur.execute("SELECT * FROM edges"):
-            # tolerant of pre-rev-3 stores that have no `rel_tags` column
-            src, dst, etype, relation, prov, conf, weight, valid, created = row[:9]
-            legacy = None
-            if len(row) > 9 and row[9]:
-                try:
-                    legacy = json.loads(row[9])
-                except (ValueError, TypeError):
-                    legacy = None
-            # rev-3 → rev-4 migration: a RELATED_TO row whose old rel_tags column held a
-            # SET of ids becomes one parallel edge per id.
-            if etype == related and isinstance(legacy, list) and legacy:
-                for rid in dict.fromkeys(legacy):
-                    self.g.add_edge(src, dst, key=f"{etype}:{rid}", etype=etype,
-                                    relation=rid, provenance=prov, confidence=conf,
-                                    weight=weight, valid=bool(valid),
-                                    created_at=created, rel_tag=rid)
-                continue
-            # rev-4 (and rev-2 legacy): the `relation` column is the discriminator;
-            # for RELATED_TO it IS the rel_tag id.
-            rel_tag = relation if (etype == related and relation) else None
+            (src, dst, etype, rel_tag, prov, conf, weight, valid_at, invalid_at,
+             belief, episode_id, valid, created) = row
+            rel_tag = rel_tag or None
+            disc = valid_at if etype == EdgeType.RELATED_TO.value else ""
             self.g.add_edge(
-                src, dst, key=f"{etype}:{relation}", etype=etype, relation=relation,
-                provenance=prov, confidence=conf, weight=weight,
-                valid=bool(valid), created_at=created, rel_tag=rel_tag)
+                src, dst, key=f"{etype}:{rel_tag or ''}:{disc}", etype=etype,
+                rel_tag=rel_tag, provenance=prov, confidence=conf, weight=weight,
+                valid_at=valid_at, invalid_at=invalid_at, belief=belief,
+                episode_id=episode_id, valid=bool(valid), created_at=created)
         for node_id, kind, blob in cur.execute("SELECT node_id, kind, vec FROM vectors"):
             vec = np.frombuffer(blob, dtype=np.float32)
             if vec.size:
-                self.vectors.dim = vec.size  # adopt the stored embedding dim
+                self.vectors.dim = vec.size
                 self.vectors.add(kind, node_id, vec)
         for content_hash, node_id, _ in cur.execute("SELECT * FROM cache"):
             self.hash_cache[content_hash] = node_id
@@ -281,11 +298,18 @@ class GraphStore:
         for n in self.nodes.values():
             by_type[n.ntype.value] = by_type.get(n.ntype.value, 0) + 1
         by_edge: dict[str, int] = {}
+        open_facts = closed_facts = 0
         for _u, _v, d in self.g.edges(data=True):
             by_edge[d["etype"]] = by_edge.get(d["etype"], 0) + 1
+            if d["etype"] == EdgeType.RELATED_TO.value:
+                if d.get("invalid_at", ""):
+                    closed_facts += 1
+                else:
+                    open_facts += 1
         return {
             "nodes": len(self.nodes),
             "edges": self.g.number_of_edges(),
             "by_node_type": by_type,
             "by_edge_type": by_edge,
+            "facts": {"open": open_facts, "closed": closed_facts},
         }

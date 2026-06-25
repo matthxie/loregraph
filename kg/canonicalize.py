@@ -25,13 +25,21 @@ import numpy as np
 
 from .config import Config
 from .embedders import Embedder
-from .models import (Edge, EdgeType, EntityType, NodeType, Provenance,
-                     entity_node, relation_tag_node, tag_node)
+from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
+                     Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
 
 _PUNCT = re.compile(r"[^\w\s]")
 _WS = re.compile(r"\s+")
 _REL_SEP = re.compile(r"[\s\-]+")
+
+# First-person pronoun forms (personal-web mode, optional). These are already the
+# OUTPUTS of normalize_key() on {"I","me","my","mine","myself"} — normalize_key is
+# idempotent on them (lowercases, strips punctuation, leaves these short tokens alone),
+# so the resolve_entity() guard matches by normalize_key(name) ∈ _FIRST_PERSON. "we"/"us"
+# are deliberately excluded; "I" colliding with a Roman-numeral entity is an accepted
+# limitation of personal-web mode (best on natural, non-numeral corpora).
+_FIRST_PERSON = frozenset({"i", "me", "my", "mine", "myself"})
 
 # Relational function words stripped when computing a relation's *match key*, so
 # "is_friend_of" and "is_friends_with" reduce to the same content word ("friend").
@@ -54,6 +62,19 @@ _ANTONYM_LEMMAS = (
     frozenset({"employer", "employee"}), frozenset({"leader", "follower"}),
     frozenset({"owner", "owned"}), frozenset({"love", "hate"}),
 )
+
+
+# Per-predicate cardinality (docs/TEMPORAL.md §5), defined over READABLE predicate
+# surfaces and reduced to content keys at import so they match whatever
+# relation_content_key() produces (which mangles inflections deterministically).
+# Functional = single-valued: a new value supersedes the old (you can't live in two
+# cities). Symmetric = orientation-free: A↔B is one fact (works_with, married_to).
+_FUNCTIONAL_SURFACES = ("lives_in", "located_in", "employed_by", "born_in",
+                        "died_in", "based_in", "headquartered_in", "capital_of", "ceo_of",
+                        "president_of", "spouse_of", "married_to", "moved_to")
+_SYMMETRIC_SURFACES = ("works_with", "collaborates_with", "married_to", "spouse_of",
+                       "sibling_of", "friend_of", "is_friend_of", "colleague_of",
+                       "partnered_with", "co_founder_of")
 
 
 def relation_merge_vetoed(a: str, b: str) -> bool:
@@ -150,24 +171,48 @@ def normalize_relation(s: str) -> str:
     return re.sub(r"_+", "_", s).strip("_")
 
 
+def _verb_stem(w: str) -> str:
+    """Collapse common verb inflections so TENSE variants of one predicate share a key
+    (docs/TEMPORAL.md §7 — fold tense onto the base predicate): lives/lived/living → liv,
+    moves/moved → mov, works/worked → work. Deterministic and conservative; the "_by"
+    passive marker and distinct content words are untouched, so inverses/antonyms stay
+    distinct. Falls back to noun-singularization for non-verb tokens."""
+    if len(w) > 5 and w.endswith("ing"):
+        w = w[:-3]
+    elif len(w) > 4 and w.endswith("ed"):
+        w = w[:-2]
+    return _singularize(w)
+
+
 def relation_content_key(s: str) -> str:
-    """Match key for relation consolidation — drop relational function words and
-    singularize the remaining content tokens, so surface / inflectional variants of
-    the same predicate collapse while genuinely different predicates don't:
+    """Match key for relation consolidation — drop relational function words and stem the
+    remaining content tokens (tense + number), so surface / inflectional / tense variants
+    of the same predicate collapse while genuinely different predicates don't:
 
         is_friend_of / is_friends_with / friends-with → "friend"   (merge)
-        works_with   / work with                      → "work"     (merge)
+        lives_in / lived_in / living_in               → "liv"      (merge — tense folded)
         is_friend_of vs is_enemy_of                   → friend / enemy   (distinct: content word)
-        manages      vs managed_by                    → manag / managed_by (distinct: "by" kept)
+        manages      vs managed_by                    → manag / manag_by (distinct: "by" kept)
 
-    If a label is *only* function words ("is_a"), fall back to the full form so it
-    still resolves to a stable key.
+    If a label is *only* function words ("is_a"), fall back to the full form so it still
+    resolves to a stable key.
     """
     norm = normalize_relation(s)
     if not norm:
         return ""
-    content = [_singularize(t) for t in norm.split("_") if t not in _REL_FUNCTION_WORDS]
+    content = [_verb_stem(t) for t in norm.split("_") if t not in _REL_FUNCTION_WORDS]
     return "_".join(content) if content else norm
+
+
+# Cardinality lexicons reduced to content keys (see _FUNCTIONAL_SURFACES above).
+FUNCTIONAL_KEYS = frozenset(relation_content_key(s) for s in _FUNCTIONAL_SURFACES)
+SYMMETRIC_KEYS = frozenset(relation_content_key(s) for s in _SYMMETRIC_SURFACES)
+
+
+def predicate_cardinality(surface: str) -> tuple[bool, bool]:
+    """(functional, symmetric) for a relation surface, by content key."""
+    ck = relation_content_key(surface)
+    return ck in FUNCTIONAL_KEYS, ck in SYMMETRIC_KEYS
 
 
 def normalize_key(s: str) -> str:
@@ -239,6 +284,10 @@ class Canonicalizer:
                                    if n.ntype == NodeType.ENTITY)
         self._next["rel"] = sum(1 for n in self.store.nodes.values()
                                 if n.ntype == NodeType.RELATION)
+        # personal-web: a reloaded store still routes first-person forms to the persisted
+        # self anchor (OFF-path never touches this — the existing offline path is unchanged).
+        if self.config.self_entity and self.store.has_node(SELF_ENTITY_ID):
+            self._ensure_self()
 
     def _new_id(self, prefix: str) -> str:
         nid = f"{prefix}_{self._next[prefix]:04d}"
@@ -374,8 +423,40 @@ class Canonicalizer:
             node.aliases.append(surface.lower())
             self._tag_keys.setdefault(normalize_key(surface), tag_id)
 
+    # -------------------------------------------------------------- self anchor
+    def _ensure_self(self) -> str:
+        """Idempotently create/return the canonical first-person "self" anchor
+        (personal-web mode). Mints a lean PERSON entity at SELF_ENTITY_ID on first call,
+        embeds its NAME once (mirroring resolve_entity), and (re)registers every
+        first-person form + the display name's key so "i"/"me"/"my"/… all route here —
+        including after a reload. Safe to call repeatedly. Only ever reached behind the
+        config.self_entity guard, so the OFF-path is untouched."""
+        node = self.store.get_node(SELF_ENTITY_ID)
+        if node is None:
+            node = entity_node(SELF_ENTITY_ID, name=self.config.self_name,
+                               etype=EntityType.PERSON, ts=now_iso())
+            self.store.add_node(node)
+        elif node.name != self.config.self_name:   # honour a changed --self across sessions
+            node.name = self.config.self_name
+            node.last_modified = now_iso()
+        # The self anchor carries NO entity embedding ON PURPOSE: it is resolved only by the
+        # first-person pronoun guard + the lexical routes below, never by embedding
+        # similarity. Keeping it out of the "entity" vector index is what makes a --self
+        # that happens to share a real entity's NAME (another "Jude") unable to L2-merge that
+        # entity into self — neither the name key nor a name embedding routes here, only the
+        # pronouns. The forms persist as aliases so a reload reconstructs the routes (_reindex).
+        node.aliases = sorted(set(node.aliases) | set(_FIRST_PERSON))
+        for key in _FIRST_PERSON:
+            self._entity_keys[key] = SELF_ENTITY_ID
+        return SELF_ENTITY_ID
+
     # ---------------------------------------------------------------- entities
     def resolve_entity(self, name: str, etype: EntityType) -> str | None:
+        # personal-web: first-person references collapse onto ONE stable self anchor,
+        # BEFORE the normal L1 lookup. OFF by default → this never fires and resolution
+        # is byte-for-byte the existing path.
+        if self.config.self_entity and normalize_key(name) in _FIRST_PERSON:
+            return self._ensure_self()
         name = (name or "").strip()
         if not name:
             return None
@@ -455,7 +536,9 @@ class Canonicalizer:
                 self._relation_keys[key] = rid
                 return rid
         rid = self._new_id("rel")
-        node = relation_tag_node(rid, canonical=display, ts=now_iso())
+        functional, symmetric = predicate_cardinality(surface)
+        node = relation_tag_node(rid, canonical=display, ts=now_iso(),
+                                 functional=functional, symmetric=symmetric)
         self.store.add_node(node)
         self.store.vectors.add("relation", rid, vec)
         self._relation_keys[key] = rid
@@ -476,7 +559,7 @@ class Canonicalizer:
     def idf_weight(self, node_id: str) -> float:
         """1 / (1 + df) style specificity — generic tags downranked (HippoRAG/TaxoGen)."""
         n = self.store.get_node(node_id)
-        n_objs = max(1, self.store.object_count())
+        n_eps = max(1, self.store.episode_count())
         if n is None or n.doc_frequency <= 0:
             return 1.0
-        return math.log(1 + n_objs / n.doc_frequency)
+        return math.log(1 + n_eps / n.doc_frequency)

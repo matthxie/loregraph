@@ -49,8 +49,8 @@ def build_communities(store: GraphStore, embedder: Embedder, config: Config) -> 
     count = 0
     for i, members in enumerate(parts):
         objs = [m for m in members
-                if store.get_node(m) and store.get_node(m).ntype == NodeType.OBJECT]
-        if len(objs) < 2:                      # skip singletons / non-object clusters
+                if store.get_node(m) and store.get_node(m).ntype == NodeType.EPISODE]
+        if len(objs) < 2:                      # skip singletons / non-episode clusters
             continue
         cid = f"comm_{i:03d}"
         summary = _summarize_community(store, members, objs)
