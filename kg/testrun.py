@@ -3,15 +3,16 @@
 One invocation = one *test run*, split into the two halves the dashboard toggles
 between:
 
-  INPUT  — ingest the temporal `dataset/mixed/` stream **one document at a time**
-           (`KnowledgeGraph.ingest_object`), snapshotting after each: node/edge
+  INPUT  — ingest a LongMemEval tier's chat sessions (`dataset/longmemeval/<tier>/`,
+           default `sample`) **one episode at a time** (`KnowledgeGraph.ingest_object`),
+           snapshotting after each: node/edge
            counts by type, tokens + USD cost (drained from the extractor meter),
            avg tags-per-object, vocabulary growth, and per-document tag
            `doc_frequency` — the "temporal tag change" signal. The final object
            graph (with a layout + build order) is captured so the dashboard can
            animate the structure forming.
 
-  QUERY  — run every `dataset/retrieval/questions.jsonl` question through
+  QUERY  — run every `dataset/longmemeval/<tier>/questions.jsonl` question through
            `KnowledgeGraph.ask` (PPR retrieves a context, ONE LLM call answers — the
            LLM does not traverse), capturing the retrieval subgraph
            (`viz.rag_trace_payload`), the nodes PPR touched, tokens + cost, retrieval
@@ -35,15 +36,22 @@ import time
 from datetime import datetime, timezone
 
 from .config import Config
-from .corpus import load_mixed
+from .corpus import load_longmemeval
 from .evaluate import _mrr, _recall_at_k
 from .graph import KnowledgeGraph
 from .metering import UsageMeter, totals_of
 from .models import EdgeType, NodeType
 from .viz import rag_trace_payload
 
-QUESTIONS_PATH = os.path.join("dataset", "retrieval", "questions.jsonl")
+DEFAULT_TIER = "sample"
 DEFAULT_OUT = "runs"
+
+
+def _tier_questions_path(tier: str) -> str:
+    return os.path.join("dataset", "longmemeval", tier, "questions.jsonl")
+
+
+QUESTIONS_PATH = _tier_questions_path(DEFAULT_TIER)
 
 
 def _now() -> str:
@@ -250,9 +258,11 @@ def _norm(s: str) -> str:
     return " ".join(_WORD.findall((s or "").lower()))
 
 
-def _response_proxy(answer: str, expected: str) -> dict:
+def _response_proxy(answer: str, expected) -> dict:
     """Key-free signals: does the short reference answer appear in the response, and
     what fraction of the reference's content tokens does the response contain."""
+    expected = "" if expected is None else str(expected)   # some gold answers are ints
+    answer = "" if answer is None else str(answer)
     if not expected:
         return {"contains": None, "token_recall": None}
     a_norm = _norm(answer)
@@ -339,12 +349,72 @@ def _build_judge_client(model: str):
         return None
 
 
+def _coerce_offline(cfg: Config) -> None:
+    """Make `--backend offline` mean a genuinely free run. The answerer backend alone
+    doesn't gate cost: with an API key loaded (kg auto-reads .env) an 'auto' extractor/
+    embedder would still call live models. So when the answerer is offline, pull any
+    still-'auto' extractor/embedder down to their offline stand-ins (explicit choices like
+    --extractor haiku are respected). The judge is gated separately in each runner."""
+    if cfg.rag_backend == "offline":
+        if cfg.extractor == "auto":
+            cfg.extractor = "heuristic"
+        if cfg.embedder == "auto":
+            cfg.embedder = "hashing"
+
+
+def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
+                 judge_meter: UsageMeter) -> dict:
+    """Score one answered question into a dashboard query-record. Shared by the shared-graph
+    `run_testrun` and the per-instance `run_per_instance`: `store` is whichever graph the
+    answer was produced over (the one shared graph, or this instance's own graph), so the
+    captured `subgraph` is always the graph the query actually ran against."""
+    ranked = ans.object_ids
+    gold = set(q.get("gold", []))
+    # _article collapses obj_<id> (gold) and ep_<id> (ingested) to the same key
+    gold_art = {_article(x) for x in gold}
+    ranked_art = _dedup(_article(o) for o in ranked)
+    topk_art = set(ranked_art[:kk])
+    recall = _recall_at_k(ranked_art, gold_art, kk)
+    mrr = _mrr(ranked_art, gold_art)
+    rank = next((idx + 1 for idx, a in enumerate(ranked_art) if a in gold_art), None)
+    cited_art = {_article(c) for c in ans.citations}
+    grounding = (round(len(cited_art & gold_art) / len(gold_art), 3) if gold_art else 0.0)
+    hit = bool(topk_art & gold_art)
+    gold_marks = [{"id": x, "hit": _article(x) in topk_art} for x in sorted(gold)]
+    proxy = _response_proxy(ans.answer, q.get("answer", ""))
+    jres = _judge(jclient, cfg.l3_model, q, ans.answer, judge_meter) if jclient else None
+    return {
+        "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
+        "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
+        "gold_marks": gold_marks,
+        "answer_expected": q.get("answer", ""), "rationale": q.get("rationale", ""),
+        "abstention": q.get("abstention", False),
+        "answer": ans.answer, "citations": ans.citations,
+        "dropped_citations": ans.dropped_citations, "object_ids": ranked,
+        "recall_at_k": round(recall, 3), "mrr": round(mrr, 3),
+        "hit": hit, "rank": rank,
+        "citation_grounding": grounding,
+        "response_contains": proxy["contains"], "response_token_recall": proxy["token_recall"],
+        "judge": jres,
+        "steps": ans.steps, "stopped": ans.stopped, "backend": ans.backend,
+        "trace": ans.trace, "seeds": ans.seeds, "touched": ans.touched,
+        "n_touched": len(ans.touched),
+        "subgraph": rag_trace_payload(ans, store),
+        "llm_calls": ans.usage.get("llm_calls", 0),
+        "input_tokens": ans.usage.get("input_tokens", 0),
+        "output_tokens": ans.usage.get("output_tokens", 0),
+        "tokens": ans.usage.get("tokens", 0),
+        "cost_usd": ans.usage.get("cost_usd", 0.0),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Driver
 # --------------------------------------------------------------------------- #
 def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
+                tier: str = DEFAULT_TIER,
                 limit: int | None = None, n_queries: int | None = None,
-                questions_path: str = QUESTIONS_PATH,
+                questions_path: str | None = None,
                 backend: str | None = None, k: int | None = None,
                 max_steps: int | None = None, judge: bool = True,
                 label: str | None = None, out_dir: str = DEFAULT_OUT,
@@ -358,6 +428,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     cfg = config or Config.default()
     if backend:
         cfg.rag_backend = backend
+    _coerce_offline(cfg)
     kk = k or cfg.top_k
 
     # fresh store every run so per-document deltas start from an empty graph
@@ -366,8 +437,11 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     g = KnowledgeGraph.open(store_path, cfg)
 
     # ---------------------------------------------------------------- INPUT half
-    items = load_mixed(limit=limit)
-    log(f"ingesting {len(items)} temporal documents one at a time ...")
+    # NB: this ingests ALL of the tier's sessions into ONE shared graph (a scale/structure
+    # view of the dashboard). For correct LongMemEval accuracy use the per-instance protocol
+    # (kg.corpus.iter_lme_instances) — see dataset/longmemeval/README.md §Consumption.
+    items = load_longmemeval(tier, limit=limit)
+    log(f"ingesting {len(items)} chat-session episodes one at a time ...")
     steps: list[dict] = []
     all_records = []
     prev_ids: set[str] = set(g.store.nodes.keys())
@@ -435,56 +509,21 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     }
 
     # ---------------------------------------------------------------- QUERY half
+    questions_path = questions_path or _tier_questions_path(tier)
     questions = load_questions(questions_path, limit=n_queries)
     log(f"running {len(questions)} queries through the PPR→RAG ask() ...")
     judge_meter = UsageMeter()
     jclient = judge_client
-    if judge and jclient is None and (agent_client is None):
+    if (judge and jclient is None and agent_client is None
+            and cfg.rag_backend != "offline"):           # never spend on a judge offline
         jclient = _build_judge_client(cfg.l3_model)
     qrecords: list[dict] = []
     for q in questions:
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
-        ranked = ans.object_ids
-        gold = set(q.get("gold", []))
-        # article-collapsed matching (mixed-chunk graph vs article-level gold)
-        gold_art = {_article(x) for x in gold}
-        ranked_art = _dedup(_article(o) for o in ranked)
-        topk_art = set(ranked_art[:kk])
-        recall = _recall_at_k(ranked_art, gold_art, kk)
-        mrr = _mrr(ranked_art, gold_art)
-        rank = next((idx + 1 for idx, a in enumerate(ranked_art) if a in gold_art), None)
-        cited_art = {_article(c) for c in ans.citations}
-        grounding = (round(len(cited_art & gold_art) / len(gold_art), 3)
-                     if gold_art else 0.0)
-        hit = bool(topk_art & gold_art)
-        gold_marks = [{"id": x, "hit": _article(x) in topk_art} for x in sorted(gold)]
-        proxy = _response_proxy(ans.answer, q.get("answer", ""))
-        jres = _judge(jclient, cfg.l3_model, q, ans.answer, judge_meter) if jclient else None
-        rec = {
-            "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
-            "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
-            "gold_marks": gold_marks,
-            "answer_expected": q.get("answer", ""), "rationale": q.get("rationale", ""),
-            "answer": ans.answer, "citations": ans.citations,
-            "dropped_citations": ans.dropped_citations, "object_ids": ranked,
-            "recall_at_k": round(recall, 3), "mrr": round(mrr, 3),
-            "hit": hit, "rank": rank,
-            "citation_grounding": grounding,
-            "response_contains": proxy["contains"], "response_token_recall": proxy["token_recall"],
-            "judge": jres,
-            "steps": ans.steps, "stopped": ans.stopped, "backend": ans.backend,
-            "trace": ans.trace, "seeds": ans.seeds, "touched": ans.touched,
-            "n_touched": len(ans.touched),
-            "subgraph": rag_trace_payload(ans, g.store),
-            "llm_calls": ans.usage.get("llm_calls", 0),
-            "input_tokens": ans.usage.get("input_tokens", 0),
-            "output_tokens": ans.usage.get("output_tokens", 0),
-            "tokens": ans.usage.get("tokens", 0),
-            "cost_usd": ans.usage.get("cost_usd", 0.0),
-        }
+        rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         qrecords.append(rec)
-        log(f"  {rec['id'] or rec['query'][:30]:32s} recall@k={recall:.2f} "
-            f"hit={'Y' if rec['hit'] else '.'} steps={ans.steps}")
+        log(f"  {rec['id'] or rec['query'][:30]:32s} recall@k={rec['recall_at_k']:.2f} "
+            f"hit={'Y' if rec['hit'] else '.'} steps={rec['steps']}")
 
     query_totals = _query_totals(qrecords, judge_meter, kk)
 
@@ -497,12 +536,12 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         "backends": backends,
         "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
                    "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
-        "dataset": {"input": "mixed", "n_input": len(items),
+        "dataset": {"input": f"longmemeval:{tier}", "n_input": len(items),
                     "queries": os.path.basename(questions_path), "n_queries": len(questions)},
-        "config": {"k": kk, "agent_backend": cfg.rag_backend,
+        "config": {"k": kk, "agent_backend": cfg.rag_backend, "mode": "shared",
                    "answerer": "ppr-rag", "reflexion": cfg.reflexion,
                    "l3_enabled": cfg.l3_enabled, "communities": communities,
-                   "match": "article-collapsed (chunk->orig_id vs article-level gold)"},
+                   "match": "session-level (gold evidence sessions vs ingested episodes)"},
         "cost_usd": round(ingest_totals["cost_usd"] + query_totals["cost_usd"], 6),
         "tokens": ingest_totals["tokens"] + query_totals["tokens"],
         "ingest": {"totals": ingest_totals, "steps": steps, "graph": graph},
@@ -519,6 +558,179 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     _update_index(out_dir, run)
     log(f"wrote {run_dir}/run.json + dashboard.html")
     return run
+
+
+def _write_run(run: dict, out_dir: str, log) -> dict:
+    """Serialize a run dict + its static dashboard, and register it in the index."""
+    run_dir = os.path.join(out_dir, run["run_id"])
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "run.json"), "w", encoding="utf-8") as f:
+        json.dump(run, f, ensure_ascii=False)
+    from .dashboard import render_run_html
+    with open(os.path.join(run_dir, "dashboard.html"), "w", encoding="utf-8") as f:
+        f.write(render_run_html(run, server=False))
+    _update_index(out_dir, run)
+    log(f"wrote {run_dir}/run.json + dashboard.html")
+    return run
+
+
+def run_per_instance(*, tier: str = DEFAULT_TIER,
+                     store_path: str = os.path.join("store", "lme_instance.db"),
+                     n_queries: int | None = None,
+                     backend: str | None = None, k: int | None = None,
+                     judge: bool = True, label: str | None = None,
+                     out_dir: str = DEFAULT_OUT, config: Config | None = None,
+                     agent_client=None, judge_client=None,
+                     communities: bool = False, progress=None) -> dict:
+    """Per-instance LongMemEval eval — the dataset's NATIVE protocol: each question is
+    answered against a FRESH graph built from ONLY its own haystack, so the 500 first-person
+    personas never share one memory (no cross-user entity collisions). Each instance *is* the
+    "one big personal graph" prod scenario at one-user scale.
+
+    Emits the same run.json the dashboard consumes:
+      - QUERY view (unchanged): one record per question, each carrying ITS OWN instance graph
+        as the retrieval subgraph — so every query is shown against the graph it ran on.
+      - INPUT view: per-instance ingest steps with cumulative cost/tokens/graph-size across
+        the run, a REPRESENTATIVE instance's graph for the structure visual, and aggregate
+        totals. (There is no single unified graph — that's the whole point of per-instance.)
+    """
+    log = progress or (lambda *_: None)
+    cfg = config or Config.default()
+    if backend:
+        cfg.rag_backend = backend
+    _coerce_offline(cfg)
+    kk = k or cfg.top_k
+
+    from .corpus import iter_lme_instances
+    instances = list(iter_lme_instances(tier, limit=n_queries))
+    log(f"per-instance eval: {len(instances)} instances from longmemeval:{tier} "
+        f"(a fresh graph each) ...")
+
+    judge_meter = UsageMeter()
+    jclient = judge_client
+    if (judge and jclient is None and agent_client is None
+            and cfg.rag_backend != "offline"):           # never spend on a judge offline
+        jclient = _build_judge_client(cfg.l3_model)
+
+    qrecords: list[dict] = []
+    steps: list[dict] = []
+    agg_nodes = agg_edges = 0
+    agg_tagged = agg_episodes = 0                          # pooled tags-per-object (not mean-of-means)
+    cum_vocab = {"objects": 0, "tags": 0, "entities": 0, "relations": 0, "communities": 0}
+    ingest_cost = 0.0
+    ingest_tokens = ingest_llm = ingest_in = ingest_out = 0
+    total_sessions = 0
+    rep_graph: dict | None = None
+    rep_nodes = -1
+    backends_seen: dict | None = None
+    t0 = time.time()
+
+    for i, (q, sessions) in enumerate(instances):
+        total_sessions += len(sessions)
+        if os.path.exists(store_path):
+            os.remove(store_path)
+        g = KnowledgeGraph.open(store_path, cfg)         # fresh memory per instance
+        g.extractor.meter.drain()
+        g.canon.meter.drain()
+        rep = g.ingest(sessions)                         # only THIS instance's haystack
+        recs = g.extractor.meter.drain() + g.canon.meter.drain()
+        tok = totals_of(recs)
+        if communities:
+            g.build_communities()
+        stats = g.store.stats()
+        agg_nodes += stats["nodes"]
+        agg_edges += stats["edges"]
+        agg_tagged += stats["by_edge_type"].get("TAGGED_AS", 0)
+        agg_episodes += stats["by_node_type"].get("episode", 0)
+        v = _vocab(stats)
+        for key in cum_vocab:
+            cum_vocab[key] += v.get(key, 0)
+        ingest_cost += tok["cost_usd"]
+        ingest_tokens += tok["tokens"]
+        ingest_llm += tok["llm_calls"]
+        ingest_in += tok["input_tokens"]
+        ingest_out += tok["output_tokens"]
+        atpo = _avg_tags_per_object(stats)
+
+        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
+        rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
+        rec["n_sessions"] = len(sessions)
+        qrecords.append(rec)
+
+        steps.append({
+            "i": i, "doc_id": q["id"], "title": q["query"][:80], "modality": "text",
+            "created_at": q.get("question_date"), "status": "ingested",
+            "seconds": round(rep.seconds, 3),
+            "nodes": agg_nodes, "edges": agg_edges,            # cumulative across the run
+            "by_node_type": stats["by_node_type"], "by_edge_type": stats["by_edge_type"],
+            "vocab": dict(cum_vocab), "node_delta": {},
+            "avg_tags_per_object": atpo, "added_nodes": stats["nodes"],
+            "llm_calls": tok["llm_calls"], "input_tokens": tok["input_tokens"],
+            "output_tokens": tok["output_tokens"], "tokens": tok["tokens"],
+            "cost_usd": tok["cost_usd"],                       # per-instance (JS accumulates)
+            "object_id": q["id"],
+            "footprint": {"kind": q.get("kind", ""), "n_sessions": len(sessions),
+                          "question": q["query"], "answer": q.get("answer", ""),
+                          "tags": [], "entities": [], "rel_tags": []},
+            "tag_df": [],
+        })
+        if stats["nodes"] > rep_nodes:                         # richest graph = the visual
+            rep_nodes = stats["nodes"]
+            rep_graph = _full_graph(g.store)
+            rep_graph["representative_of"] = q["id"]
+        if backends_seen is None:
+            backends_seen = g.stats()["backends"]
+
+        if i % 10 == 0 or i == len(instances) - 1:
+            log(f"  {i + 1}/{len(instances)}  {rec['id'] or '':>16}  "
+                f"recall@k={rec['recall_at_k']:.2f} hit={'Y' if rec['hit'] else '.'}  "
+                f"${ingest_cost:.4f}")
+
+    ingest_seconds = round(time.time() - t0, 1)
+    if os.path.exists(store_path):
+        os.remove(store_path)
+
+    n = max(1, len(instances))
+    ingest_totals = {
+        "docs": len(instances), "items": total_sessions,
+        "nodes": agg_nodes, "edges": agg_edges,
+        "by_node_type": {}, "by_edge_type": {},
+        "vocab": dict(cum_vocab),
+        # pooled across the whole run (total TAGGED_AS / total episodes), not a mean-of-means
+        "avg_tags_per_object": round(agg_tagged / agg_episodes, 3) if agg_episodes else 0.0,
+        "avg_rel_tags_per_pair": 0.0, "pairs": 0, "rel_edges": 0,
+        "seconds": ingest_seconds,
+        "llm_calls": ingest_llm, "input_tokens": ingest_in, "output_tokens": ingest_out,
+        "tokens": ingest_tokens, "cost_usd": round(ingest_cost, 6),
+    }
+    query_totals = _query_totals(qrecords, judge_meter, kk)
+
+    run_id = label or datetime.now().strftime("lme_%Y%m%d_%H%M%S")
+    backends = backends_seen or {"extractor": cfg.extractor, "embedder": cfg.embedder,
+                                 "answerer": cfg.rag_backend}
+    backends.setdefault("agent", backends.get("answerer", "offline"))
+    run = {
+        "run_id": run_id, "label": label or run_id, "created_at": _now(),
+        "backends": backends,
+        "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
+                   "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
+        "dataset": {"input": f"longmemeval:{tier} (per-instance)", "n_input": total_sessions,
+                    "queries": os.path.basename(_tier_questions_path(tier)),
+                    "n_queries": len(instances)},
+        "config": {"k": kk, "agent_backend": cfg.rag_backend, "answerer": "ppr-rag",
+                   "mode": "per-instance", "reflexion": cfg.reflexion,
+                   "l3_enabled": cfg.l3_enabled, "communities": communities,
+                   "match": "session-level (gold evidence sessions vs ingested episodes)",
+                   "note": "fresh graph per question (no cross-instance pooling); the Input "
+                           "graph is a representative single instance"},
+        "cost_usd": round(ingest_totals["cost_usd"] + query_totals["cost_usd"], 6),
+        "tokens": ingest_totals["tokens"] + query_totals["tokens"],
+        "ingest": {"totals": ingest_totals, "steps": steps,
+                   "graph": rep_graph or {"nodes": [], "edges": [], "build_order": [],
+                                          "stats": {}, "kind": "full"}},
+        "query": {"totals": query_totals, "queries": qrecords},
+    }
+    return _write_run(run, out_dir, log)
 
 
 def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict:
@@ -572,6 +784,7 @@ def _update_index(out_dir: str, run: dict) -> None:
     idx_path = os.path.join(out_dir, "index.json")
     summary = {
         "run_id": run["run_id"], "label": run["label"], "created_at": run["created_at"],
+        "mode": run.get("config", {}).get("mode", "shared"),
         "backends": run["backends"], "models": run["models"],
         "n_input": run["dataset"]["n_input"], "n_queries": run["dataset"]["n_queries"],
         "nodes": run["ingest"]["totals"]["nodes"], "edges": run["ingest"]["totals"]["edges"],

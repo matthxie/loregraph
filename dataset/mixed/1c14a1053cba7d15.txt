@@ -1,2 +1,0 @@
-History
-OPUS, originally an acronym for the Online Publikationsverbund der Universität Stuttgart, was developed with the support of the Deutsches Forschungsnetz (DFN) in 1997 and 1998 at the University of Stuttgart Library. OPUS is used at many universities and library networks. The  (BSZ) took over development from University of Stuttgart Library, however, since December 2010, the  (KOBV) has taken over the development and management of the project at the Zuse Institute Berlin (ZIB).

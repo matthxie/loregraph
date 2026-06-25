@@ -1,6 +1,0 @@
-Conjuncts with ঝ
-Bengali ঝ exhibits conjunct ligatures, as is common in Indic scripts, but has significantly fewer conjunct ligatures than most other Bengali letters.
- জ্ (j) + ঝ (jʰa) gives the ligature jjʰa:
-ঞ্ (ñ) + ঝ (jʰa) gives the ligature ñjʰa:
-র্ (r) + ঝ (jʰa) gives the ligature rjʰa, with the repha prefix:
-Gujarati Jha

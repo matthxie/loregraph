@@ -1,7 +1,7 @@
 """KnowledgeGraph — the public facade that wires the pieces together.
 
     g = KnowledgeGraph.open("store/kg.db")
-    g.ingest(load_corpus())
+    g.ingest(load_longmemeval("small"))
     g.build_communities()
     g.query("how are X and Y connected?")           # local → PPR seed-and-spread
     g.query("what are the main themes?")             # global → community map-reduce

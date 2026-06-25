@@ -1,0 +1,33 @@
+{
+  "tier": "sample",
+  "source_variant": "longmemeval_s_cleaned.json",
+  "hf_repo": "xiaowu0162/longmemeval-cleaned",
+  "license": "MIT",
+  "paper": "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory (Wu et al., ICLR 2025; arXiv:2410.10813)",
+  "n_instances": 8,
+  "n_episodes": 48,
+  "question_types": {
+    "knowledge-update": 1,
+    "multi-session": 2,
+    "single-session-assistant": 1,
+    "single-session-preference": 1,
+    "single-session-user": 1,
+    "temporal-reasoning": 2
+  },
+  "abstention": 0,
+  "session_cap": 6,
+  "selection": "deterministic stratified round-robin over question_type (RNG-free); tiers nest as prefixes of one global order",
+  "ordering": "sessions emitted chronologically (sorted by timestamp); haystacks capped to 6 sessions (evidence kept)",
+  "built_at": "2026-06-25T02:44:25+00:00",
+  "question_ids": [
+    "00ca467f",
+    "08f4fc43",
+    "01493427",
+    "001be529",
+    "0e5e2d1a",
+    "0100672e",
+    "0bb5a684",
+    "06878be2"
+  ],
+  "note": "episodes.jsonl is gitignored — regenerate via `python scripts/build_longmemeval.py --tier sample`"
+}

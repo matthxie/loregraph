@@ -1,2 +1,0 @@
-Development
-The current version, OPUS 4, is being developed by the Cooperative Library Network Berlin-Brandenburg (KOBV) at the Zuse Institute Berlin (ZIB). The earlier development was coordinated by the Library Service Centre for Baden-Württemberg (BSZ) and the Stuttgart University Library.

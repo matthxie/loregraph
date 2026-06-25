@@ -10,11 +10,14 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
-# HF / model caches
+# HF / model caches + the transient LongMemEval download (scripts/build_longmemeval.py)
 .cache/
 
-# Test corpus is committed (frozen copy) — regenerable via scripts/build_dataset.py.
-# Note: CC BY-SA content (Wikipedia text + COCO images); keep attribution.
+# LongMemEval (dataset/longmemeval/): episode bodies are heavy and regenerable, so only
+# the lean questions.jsonl + manifest.json are committed. The tiny `sample` tier DOES ship
+# its episodes (a committed offline fixture). Rebuild others: python scripts/build_longmemeval.py
+dataset/longmemeval/*/episodes.jsonl
+!dataset/longmemeval/sample/episodes.jsonl
 
 # Generated graph store
 store/

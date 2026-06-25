@@ -518,7 +518,7 @@ const RUN=DATA.run, ING=RUN.ingest, QRY=RUN.query, tip=document.getElementById("
     <h1>${esc(RUN.label||RUN.run_id)}</h1>
     <span class="pill">extractor: ${esc(b.extractor||"?")}</span>
     <span class="pill">agent: ${esc(b.agent||"?")}</span>
-    <span class="pill">${esc(RUN.dataset.input)} · ${RUN.dataset.n_input} docs</span>
+    <span class="pill">${esc(RUN.dataset.input)} · ${RUN.dataset.n_input} episodes</span>
     <span class="pill">${RUN.dataset.n_queries} queries</span>
     <span class="pill num">${fmtUSD(RUN.cost_usd)} · ${fmtN(RUN.tokens)} tok</span>
     <span style="flex:1"></span>
@@ -559,7 +559,7 @@ const Input=(function(){
     nodePts.push(s.nodes); edgePts.push(s.edges); tagsPerObj.push(s.avg_tags_per_object||0);
     vTags.push(s.vocab.tags); vEnt.push(s.vocab.entities); vRel.push(s.vocab.relations); });
   let force=null, idx=steps.length-1, timer=null, charts={};
-  const TIP={ documents:"Documents ingested from the temporal stream, one at a time (each is a paragraph-chunk or an image).",
+  const TIP={ documents:"Ingested one at a time. Per-instance mode: each is one LongMemEval instance (its own fresh graph; the structure graph shows a representative one). Shared mode: each is one chat session.",
     nodes:"Total graph nodes: raw entries (green) plus the entities and tags the extractor created (blue).",
     edges:"Total edges: directed TAGGED_AS / MENTIONS / RELATED_TO, plus derived shared-tag / shared-entity / embedding-kNN links.",
     avgtags:"Average canonical tags attached per document — an extraction-density signal.",
@@ -699,10 +699,10 @@ const Query=(function(){
     host.innerHTML=`
       <div class="statbar">
         ${statEl("queries",T.n,"","Eval questions run through the agentic ask() traversal.")}
-        ${statEl("recall@k",pct(T.recall_at_k),"","Mean recall@k — fraction of each question's gold articles whose chunks appear in the agent's top-k objects (article-collapsed).")}
-        ${statEl("MRR",(T.mrr||0).toFixed(3),"","Mean reciprocal rank of the first gold hit across questions.")}
-        ${statEl("hit rate",pct(T.hit_rate),"","Fraction of questions where at least one gold article was retrieved in the top-k.")}
-        ${statEl("cite grounding",pct(T.citation_grounding),"","Mean fraction of gold articles the agent actually cited (citations ∩ gold).")}
+        ${statEl("recall@k",pct(T.recall_at_k),"","Mean recall@k — fraction of each question's gold evidence sessions retrieved in the top-k episodes.")}
+        ${statEl("MRR",(T.mrr||0).toFixed(3),"","Mean reciprocal rank of the first gold evidence session across questions.")}
+        ${statEl("hit rate",pct(T.hit_rate),"","Fraction of questions where at least one gold evidence session was retrieved in the top-k.")}
+        ${statEl("cite grounding",pct(T.citation_grounding),"","Mean fraction of gold evidence sessions the agent actually cited (citations ∩ gold).")}
         ${statEl("resp acc",T.response_accuracy!=null?pct(T.response_accuracy):"–","judge","Mean LLM-judge score of the answer text vs the reference answer (live runs only; – when offline).")}
         ${statEl("avg steps",T.avg_steps,"","Average number of tool-call rounds the agent took per question.")}
         ${statEl("query cost",fmtUSD(T.cost_usd),"","Total USD on the agent (plus judge) LLM calls across all queries.")}

@@ -1,2 +1,0 @@
-On November 22, 2016, NASA reported finding a large amount of underground ice in the Utopia Planitia region of Mars. The volume of water detected has been estimated to be equivalent to the volume of water in Lake Superior.
-The volume of water ice in the region were based on measurements from the ground-penetrating radar instrument on Mars Reconnaissance Orbiter, called SHARAD.  From the data obtained from SHARAD, "dielectric permittivity", or the dielectric constant was determined. The dielectric constant value was consistent with a large concentration of water ice.

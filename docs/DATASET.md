@@ -1,3 +1,8 @@
+> ⚠️ **Superseded (2026-06-24).** This documents the *original* frozen Wikipedia/COCO
+> corpus, which has been **removed** and replaced by **LongMemEval** — see
+> [`../dataset/longmemeval/README.md`](../dataset/longmemeval/README.md). Kept for the
+> record of why the multimodal-Wikipedia pick was made.
+
 # Test Corpus Dataset
 
 **Decision (2026-06-21):** use a ready-made multimodal Wikipedia dataset instead of live scraping.

@@ -15,7 +15,7 @@ from kg import Config, KnowledgeGraph
 from kg.corpus import CorpusItem
 from kg.evaluate import _mrr, _recall_at_k
 from kg.metering import UsageMeter, empty_totals, price, totals_of
-from kg.testrun import _article, _dedup, run_testrun
+from kg.testrun import _article, _dedup, run_per_instance, run_testrun
 from kg import dashboard, testrun
 
 
@@ -173,3 +173,39 @@ def test_summarize_runs():
                       label="s", out_dir=os.path.join(tmp, "runs"), config=_cfg())
     s = testrun.summarize(run)
     assert "INPUT" in s and "QUERY" in s and "TOTAL" in s
+
+
+# --------------------------------------------------------------------------- #
+# per-instance LongMemEval protocol (fresh graph per question, no cross-user pooling)
+# --------------------------------------------------------------------------- #
+def test_run_per_instance_offline_isolated_and_reconciled():
+    import re
+    tmp = tempfile.mkdtemp()
+    run = run_per_instance(tier="sample", store_path=os.path.join(tmp, "t.db"),
+                           n_queries=4, backend="offline", judge=False, communities=False,
+                           label="pi", out_dir=os.path.join(tmp, "runs"), config=_cfg())
+    assert run["config"]["mode"] == "per-instance"
+    q = run["query"]["queries"]
+    assert len(q) == 4
+    # cost reconciles: top-level == ingest + query (offline → all zero, but the identity holds)
+    it, qt = run["ingest"]["totals"], run["query"]["totals"]
+    assert run["cost_usd"] == round(it["cost_usd"] + qt["cost_usd"], 6)
+    # cumulative graph size == sum of per-instance contributions
+    assert it["nodes"] == sum(s["added_nodes"] for s in run["ingest"]["steps"])
+    # ISOLATION: every retrieved/seed/cited episode id namespaces to its OWN question_id
+    for r in q:
+        for oid in r["object_ids"] + r.get("seeds", []) + r.get("citations", []):
+            if oid.startswith("ep_"):
+                m = re.match(r"ep_(.+?)__", oid)
+                assert m and m.group(1) == r["id"], f"cross-instance leak: {oid} in {r['id']}"
+    # the Input view's representative graph is a real (labeled) single instance
+    g = run["ingest"]["graph"]
+    assert g.get("representative_of") and g["nodes"]
+    # the static dashboard renders for a per-instance run
+    html = dashboard.render_run_html(run)
+    assert len(html) > 5000 and "per-instance" in html
+
+
+def test_per_instance_queries_zero_means_none():
+    from kg.corpus import iter_lme_instances
+    assert list(iter_lme_instances("sample", limit=0)) == []

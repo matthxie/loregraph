@@ -1,9 +1,0 @@
-Gujarati-using Languages
-The Gujarati script is used to write the Gujarati and Kutchi languages. In both languages, ઝ is pronounced as  or  when appropriate. Like all Indic scripts, Gujarati uses vowel marks attached to the base consonant to override the inherent /ə/ vowel:
-Conjuncts with ઝ
-Gujarati ઝ exhibits conjunct ligatures, much like its parent Devanagari Script. While most Gujarati conjuncts can only be formed by reducing the letter shape to create a "half form" that fits tightly to following letter, Jha does not have a half form. A few conjunct clusters can be represented by a true ligature, instead of a shape that can be broken into constituent independent letters, and vertically stacked conjuncts can also be found in Gujarati, although much less commonly than in Devanagari. Lacking a half form, Jha will normally use an explicit virama when forming conjuncts without a true ligature.
-True ligatures are quite rare in Indic scripts. The most common ligated conjuncts in Gujarati are in the form of a slight mutation to fit in context or as a consistent variant form appended to the adjacent characters. Those variants include Na and the Repha and Rakar forms of Ra.
- ર્ (r) + ઝ (jʰa) gives the ligature RJha:
-ઝ્ (jʰa) + ર (r) gives the ligature JhRa:
-Gurmukhi script 
-Chajaa  (ਝ) is the fourteenth letter of the Gurmukhi alphabet. Its name is [t͡ʃə̀d͡ʒːɑ] and pronounced as /t͡ʃə̀/. To differentiate between consonants, the Punjabi tonal consonant t͡ʃə̀ is often transliterated in the way of the Hindi voiced aspirate consonants jha although Punjabi does not have this sound. It is derived from the Laṇḍā letter jha, and ultimately from the Brahmi jha. Gurmukhi chajaa does not have a special pairin or addha (reduced) form for making conjuncts, and in modern Punjabi texts do not take a half form or halant to indicate the bare consonant /t͡ʃ/, although Gurmukhi Sanskrit texts may use an explicit halant.

@@ -16,7 +16,7 @@ import pytest
 from kg import Config, KnowledgeGraph
 from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
                              normalize_relation, predicate_cardinality, relation_merge_vetoed)
-from kg.corpus import CorpusItem, load_articles, load_images
+from kg.corpus import CorpusItem, load_longmemeval, load_longmemeval_questions
 from kg.embedders import HashingEmbedder, get_embedder
 from kg.extractors import HeuristicExtractor, get_extractor
 from kg.models import (Belief, Edge, EdgeType, Modality, Node, NodeType, Provenance,
@@ -536,7 +536,11 @@ def test_viz_payloads_and_html():
 
 
 def test_corpus_loads_from_disk():
-    arts = load_articles(limit=5)
-    imgs = load_images(limit=5)
-    assert len(arts) == 5 and all(a.modality == "text" and a.text for a in arts)
-    assert len(imgs) == 5 and all(i.modality == "image" for i in imgs)
+    # the committed `sample` LongMemEval tier (small, capped — ships its episode bodies)
+    eps = load_longmemeval("sample", limit=5)
+    assert len(eps) == 5
+    assert all(e.modality == "text" and e.text and e.created_at for e in eps)
+    qs = load_longmemeval_questions("sample")
+    assert qs and all(q.get("gold") and "answer" in q and "kind" in q for q in qs)
+    # gold ids namespace each evidence session by question_id (collide-safe)
+    assert all(g.startswith("obj_") for q in qs for g in q["gold"])

@@ -1,6 +1,6 @@
 """Command-line interface:  python -m kg <command> [options]
 
-    ingest         build the graph from dataset/ (or --synthetic for the Becky stream)
+    ingest         build the graph from a LongMemEval tier (or --synthetic for Becky)
     extract-dump   dump per-item extractions for one extractor/model (no graph build)
     eval-canon     canonicalization gate (synonyms merge; antonyms/inverses must not)
     communities    detect communities + summaries (Path B / breadth queries)
@@ -18,7 +18,7 @@ import json
 import os
 
 from .config import Config
-from .corpus import load_articles, load_images, load_mixed
+from .corpus import load_longmemeval
 from .graph import KnowledgeGraph
 from .models import EdgeType
 
@@ -60,14 +60,10 @@ def cmd_ingest(args):
         from .synthetic import becky_stream
         items, table = becky_stream()
         g.extractor = ScriptedExtractor(table)   # deterministic prose→facts for the demo
-    elif args.mixed:
-        items = load_mixed(limit=args.limit)
     else:
-        items = []
-        if not args.no_text:
-            items += load_articles(limit=args.n_text)
-        if not args.no_images:
-            items += load_images(limit=args.n_image)
+        # a LongMemEval tier; --question-id ingests just one instance's haystack (the
+        # per-instance protocol — see dataset/longmemeval/README.md)
+        items = load_longmemeval(args.tier, question_id=args.question_id, limit=args.limit)
     print(f"ingesting {len(items)} items into {args.store} ...")
     report = g.ingest(items)
     print(report)
@@ -82,11 +78,7 @@ def cmd_extract_dump(args):
     from .extractors import get_extractor
     cfg = _config(args)
     ext = get_extractor(cfg)
-    items = []
-    if not args.no_text and args.n_text != 0:
-        items += load_articles(limit=args.n_text)
-    if not args.no_images and args.n_image != 0:
-        items += load_images(limit=args.n_image)
+    items = load_longmemeval(args.tier, limit=args.limit)
     label = args.label or (cfg.llm_model if ext.name == "haiku" else ext.name)
     print(f"extracting {len(items)} items  (extractor={ext.name}, model={cfg.llm_model}, "
           f"label={label!r}) ...")
@@ -269,16 +261,27 @@ def cmd_serve(args):
 
 
 def cmd_testrun(args):
-    from .testrun import run_testrun, summarize
+    from .testrun import run_per_instance, run_testrun, summarize
     cfg = _config(args)
-    # keep the test-run's chunked corpus out of the main graph store unless overridden
+    # keep the test-run's graph out of the main store unless overridden
     store_path = (args.store if args.store != DEFAULT_STORE
                   else os.path.join("store", "testrun.db"))
-    run = run_testrun(
-        store_path=store_path, limit=args.limit, n_queries=args.queries,
-        backend=args.backend, k=args.k, judge=not args.no_judge,
-        communities=not args.no_communities, label=args.label, out_dir=args.out,
-        config=cfg, progress=print)
+    if args.mode == "per-instance":
+        # the dataset's native protocol: a fresh graph per question (no cross-user pooling).
+        # Community detection is skipped — it adds per-graph cost for no dashboard value on
+        # tiny single-user graphs (the visual is one representative instance).
+        run = run_per_instance(
+            tier=args.tier, store_path=store_path, n_queries=args.queries,
+            backend=args.backend, k=args.k, judge=not args.no_judge,
+            communities=False, label=args.label, out_dir=args.out,
+            config=cfg, progress=print)
+    else:
+        # shared graph: pools the whole tier into one memory (scale/structure smoke view)
+        run = run_testrun(
+            store_path=store_path, tier=args.tier, limit=args.limit, n_queries=args.queries,
+            backend=args.backend, k=args.k, judge=not args.no_judge,
+            communities=not args.no_communities, label=args.label, out_dir=args.out,
+            config=cfg, progress=print)
     print("\n" + summarize(run))
     print(f"\nview it:  python -m kg dashboard --out {args.out}"
           f"   (or open {args.out}/{run['run_id']}/dashboard.html)")
@@ -315,16 +318,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--store", default=DEFAULT_STORE, help="path to the SQLite graph store")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pi = sub.add_parser("ingest", help="build/extend the graph from dataset/ (or --synthetic)")
-    pi.add_argument("--n-text", type=int, default=None)
-    pi.add_argument("--n-image", type=int, default=None)
-    pi.add_argument("--no-text", action="store_true")
-    pi.add_argument("--no-images", action="store_true")
-    pi.add_argument("--mixed", action="store_true",
-                    help="ingest the per-paragraph temporal stream from dataset/mixed/")
+    pi = sub.add_parser("ingest",
+                        help="build/extend the graph from a LongMemEval tier (or --synthetic)")
+    pi.add_argument("--tier", choices=["sample", "small", "med", "large"], default="sample",
+                    help="LongMemEval tier to ingest (build via scripts/build_longmemeval.py)")
+    pi.add_argument("--question-id", default=None,
+                    help="ingest only this instance's haystack (per-instance protocol)")
     pi.add_argument("--synthetic", action="store_true",
                     help="ingest the synthetic evolving Becky/Alex stream (deterministic facts)")
-    pi.add_argument("--limit", type=int, default=None, help="cap items when using --mixed")
+    pi.add_argument("--limit", type=int, default=None, help="cap the number of session episodes")
     pi.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
     pi.add_argument("--embedder", choices=["auto", "st", "hashing"], default="auto")
     pi.add_argument("--model", default=None, help="override the LLM extractor model id")
@@ -339,10 +341,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="dump per-item extractions for an extractor/model (no graph build)")
     pd.add_argument("--extractor", choices=["auto", "haiku", "heuristic"], default="auto")
     pd.add_argument("--model", default=None, help="LLM model id to extract with")
-    pd.add_argument("--n-text", type=int, default=20)
-    pd.add_argument("--n-image", type=int, default=0)
-    pd.add_argument("--no-text", action="store_true")
-    pd.add_argument("--no-images", action="store_true")
+    pd.add_argument("--tier", choices=["sample", "small", "med", "large"], default="sample",
+                    help="LongMemEval tier whose session episodes to extract from")
+    pd.add_argument("--limit", type=int, default=20, help="cap the number of session episodes")
     pd.add_argument("--label", default=None, help="name for this mode in the summary")
     pd.add_argument("--out", default=os.path.join("store", "extract_dump.jsonl"))
     pd.set_defaults(func=cmd_extract_dump)
@@ -405,10 +406,17 @@ def build_parser() -> argparse.ArgumentParser:
     pse.add_argument("--port", type=int, default=8000)
     pse.set_defaults(func=cmd_serve)
 
-    pt = sub.add_parser("testrun", help="run the input+query test on the temporal dataset "
+    pt = sub.add_parser("testrun", help="run the input+query test on a LongMemEval tier "
                                         "and write a dashboard run (cost/tokens/accuracy)")
+    pt.add_argument("--mode", choices=["per-instance", "shared"], default="per-instance",
+                    help="per-instance = the dataset's native protocol, a fresh graph per "
+                         "question (default); shared = pool the whole tier into one graph "
+                         "(scale/structure smoke view, accuracy is confounded)")
+    pt.add_argument("--tier", choices=["sample", "small", "med", "large"], default="small",
+                    help="LongMemEval tier (default: small; `sample` is the tiny offline one)")
     pt.add_argument("--limit", type=int, default=None,
-                    help="cap the number of mixed/temporal documents (default: all)")
+                    help="shared mode only: cap session episodes ingested (use --queries to "
+                         "cap instances in per-instance mode)")
     pt.add_argument("--queries", type=int, default=None,
                     help="cap the number of eval questions (default: all)")
     pt.add_argument("--backend", choices=["auto", "claude", "offline"], default=None,

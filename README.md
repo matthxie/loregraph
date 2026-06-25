@@ -100,8 +100,10 @@ See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table
 
 ## Test corpus
 
-~100 page nodes streamed from the **`wikimedia/wit_base`** Hugging Face dataset — each with text
-(page summary + section context) and an **embedded image**, CC BY-SA 4.0. Frozen, reproducible,
-bytes-in-hand (no scraping). Because the dataset has no wikilinks/categories, ObjectNode↔ObjectNode
-edges are *derived* from shared tags/entities + embedding similarity (with optional offline
-Wikipedia-API enrichment for ground-truth edges). See [docs/DATASET.md](docs/DATASET.md).
+**LongMemEval** (Wu et al., ICLR'25; Hugging Face `xiaowu0162/longmemeval-cleaned`, MIT) — a
+long-term-memory benchmark of dated, multi-session chat histories. Each instance is one user's
+haystack of timestamped sessions + a question + answer + the evidence sessions; every session
+becomes a dated episode, so it directly exercises the temporal / knowledge-update machinery.
+Built into tiers (`sample`/`small`/`med`/`large`) by `scripts/build_longmemeval.py`. See
+[dataset/longmemeval/README.md](dataset/longmemeval/README.md). *(Replaced the earlier frozen
+Wikipedia+COCO corpus — [docs/DATASET.md](docs/DATASET.md).)*

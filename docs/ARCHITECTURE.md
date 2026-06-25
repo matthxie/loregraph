@@ -39,7 +39,7 @@ These choices override the option menus in §4 and §7 below.
 | **Metadata/cache** | **SQLite** (stdlib) | SHA256 content-hash cache + node metadata. |
 | **Python** | **3.14 (system, native)** | Verified: `torch` 2.12.1 ships a macOS arm64 `cp314` wheel and `sentence-transformers` 5.6 supports ≥3.10 — no 3.12 venv required. Still use a project venv for isolation. |
 | **Drift control scope (MVP)** | L1 hash + L2 embedding synonymy **link** (not merge); L3 batch reconciliation deferred | Per §3; bias toward linking near-duplicates over hard-merging. |
-| **Test corpus** | **Decoupled (rev): 100 full Wikipedia articles** (`wikimedia/wikipedia`, text) **+ 100 random COCO photos** (`detection-datasets/coco`, images) — text and images are *not* paired | Built & on disk via `scripts/build_dataset.py` → `dataset/`. Consequence: **no free hyperlink/category edges** — edges are *derived* from shared tags/entities + embedding kNN (optional offline API enrichment). See [DATASET.md](DATASET.md). |
+| **Test corpus** | **LongMemEval** (Wu et al., ICLR'25) — dated, multi-session chat histories; tiers `sample`/`small`/`med`/`large`. *(Superseded the earlier Wikipedia+COCO corpus.)* | Built via `scripts/build_longmemeval.py` → `dataset/longmemeval/`. Exercises temporal reasoning / knowledge-updates over an evolving memory. See [dataset/longmemeval/README.md](../dataset/longmemeval/README.md). |
 
 ---
 
@@ -267,7 +267,7 @@ Run ingestion under a **bounded-concurrency semaphore** (graphiti's `SEMAPHORE_L
 
 ### Test corpus & harness
 
-- **Corpus (decoupled, rev):** **100 full Wikipedia articles** (`wikimedia/wikipedia` `20231101.en`, streamed, seed 42) **+ 100 random COCO photos** (`detection-datasets/coco`), text and images **not paired**. Already built on disk in `dataset/` via `scripts/build_dataset.py` (reproducible). **No free hyperlink/category edges** — edges are derived (shared tags/entities + embedding kNN), with optional offline Wikipedia-API enrichment for ground-truth edges. Full rationale, loader, caveats in [DATASET.md](DATASET.md).
+- **Corpus — LongMemEval** (Wu et al., ICLR'25; HF `xiaowu0162/longmemeval-cleaned`, MIT): dated, multi-session chat histories, one user per instance. Built into tiers `sample`/`small`/`med`/`large` via `scripts/build_longmemeval.py` (reproducible). Each session → a dated episode; the question's evidence sessions are the recall@k gold. *(Replaced the earlier Wikipedia+COCO snapshot, which couldn't exercise evolving memory.)* Full rationale, schema, ordering, and consumption model in [dataset/longmemeval/README.md](../dataset/longmemeval/README.md).
 - **Eval, two tiers:**
   1. **Retrieval correctness (objective):** author ~30-50 questions — a mix of single-article, multi-hop cross-article, and 2-3 global/theme questions. For multi-hop, you know the ground-truth article set, so measure **recall@k of the retrieved subgraph**. Reuse GraphRAG's **Claimify claim-extraction + clustering** for comprehensiveness/diversity if you want rigor.
   2. **Answer quality (subjective):** **LLM-as-judge head-to-head** on comprehensiveness/diversity/empowerment with a **directness control** to catch verbosity bias (GraphRAG's exact protocol — directly reusable).
@@ -300,7 +300,7 @@ Justification for a solo prototype at ~100 nodes (low thousands of nodes/edges):
 Each milestone is independently shippable and demoable.
 
 **Phase 0 — Skeleton + ingestion (MVP-of-MVP).**
-- Load corpus from `dataset/` (100 article texts + 100 images, decoupled — see [DATASET.md](DATASET.md)). *(Done: `scripts/build_dataset.py`.)*
+- Load corpus from `dataset/longmemeval/` (chat-session episodes — see [dataset/longmemeval/README.md](../dataset/longmemeval/README.md)). *(Built by `scripts/build_longmemeval.py`.)*
 - SHA256 cache. NetworkX graph + SQLite (metadata) + NumPy cosine (vectors).
 - Claude Haiku 4.5 **structured-output extraction directly from raw content** (no summary; rev 2): typed `{entities[], tags[], relations∈enum[]}` in one call (+ vision call for images → tags + description). Provenance back-pointers.
 - L1 hash normalization only. Write ObjectNodes (with `created_at`/`last_modified`/`valid`) + TagNodes + `TAGGED_AS` + derived `SHARED_TAG` edges. Bounded-concurrency semaphore.
