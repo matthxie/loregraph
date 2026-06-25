@@ -21,4 +21,4 @@ The earlier corpus — 100 full Wikipedia articles + 100 COCO photos, plus the
 per-paragraph temporal `mixed/` stream — lived in `dataset/{wikipedia,images,mixed}/`
 (built by the now-removed `scripts/build_dataset.py` + `build_mixed.py`). It was a frozen
 *snapshot* and couldn't exercise evolving, multi-session memory, so it was replaced by
-LongMemEval. `docs/DATASET.md` documents that earlier pick for the record.
+LongMemEval.

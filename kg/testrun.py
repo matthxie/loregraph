@@ -603,6 +603,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     cum_vocab = {"objects": 0, "tags": 0, "entities": 0, "relations": 0, "communities": 0}
     ingest_cost = 0.0
     ingest_tokens = ingest_llm = ingest_in = ingest_out = 0
+    ingest_cr = ingest_cw = 0          # prompt-cache read/write rollup (caching signal)
     total_sessions = 0
     rep_graph: dict | None = None
     rep_nodes = -1
@@ -634,6 +635,8 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         ingest_llm += tok["llm_calls"]
         ingest_in += tok["input_tokens"]
         ingest_out += tok["output_tokens"]
+        ingest_cr += tok["cache_read"]
+        ingest_cw += tok["cache_write"]
         atpo = _avg_tags_per_object(stats)
 
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
@@ -685,6 +688,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "avg_rel_tags_per_pair": 0.0, "pairs": 0, "rel_edges": 0,
         "seconds": ingest_seconds,
         "llm_calls": ingest_llm, "input_tokens": ingest_in, "output_tokens": ingest_out,
+        "cache_read": ingest_cr, "cache_write": ingest_cw,
         "tokens": ingest_tokens, "cost_usd": round(ingest_cost, 6),
     }
     query_totals = _query_totals(qrecords, judge_meter, kk)
