@@ -13,7 +13,7 @@
   (`judge_cost_usd`); stale "agentic ask() traversal" wording fixed.
 - ✅ **Lever 2 — ingest output cap — TESTED + PARTLY SHIPPED.** Window-widening **refuted** by
   two A/Bs; the one real win — **`extract_max_tokens` 1500→4000** — is **shipped**. See below.
-- ⏸ **Levers 3–4 — UNTESTED, deferred.** Harness is built; live test runs are paused (on
+- ⏸ **Lever 3 — UNTESTED, deferred.** Harness is built; live test runs are paused (on
   personal funds until the business account is live — see *Next steps*).
 
 ## Where the money goes (baseline)
@@ -77,10 +77,10 @@ quarter-to-half of the graph disappears. If those entities are redundant, wideni
 
 ---
 
-## Levers 3 & 4 — output side  `[UNTESTED · harness ready · deferred]`
+## Lever 3 — output side  `[UNTESTED · harness ready · deferred]`
 
-Both target the expensive 5× output side. The config-driven A/B harness + `truncated` metric from
-lever 2 now exist, so these are a flag-flip away from being measured — but they are **deferred**
+Targets the expensive 5× output side. The config-driven A/B harness + `truncated` metric from
+lever 2 now exist, so this is a flag-flip away from being measured — but it is **deferred**
 until the larger run (testing is paused, see *Next steps*).
 
 ### 3. Stop re-listing known entities across chunks (output dedup)
@@ -89,14 +89,6 @@ For chunks after the first, thread the running entity/tag names into the prompt 
 in `extract_text_sectioned` (`kg/extractors.py:367`). Suppresses re-*listing* entities, never the
 facts connecting them. **Saves ~$0.12/100 standalone — erodes now that widening is dead** (chunks
 stay at 6000, so cross-chunk overlap is modest). Bank the *measured* number. Risk: low. **Gate: A/B.**
-
-### 4. Trim dead fields from the relation schema  `[contingent]`
-Drop `confidence` from `GRAPH_TOOL`'s relation schema (`kg/extractors.py:153`; parser already
-defaults it at `:216`) and tighten date descriptions to "omit unless an explicit date is stated."
-Keep `source/target/labels/status` + real dates. **Saves ~$0.03/100 — contingent**: these fields
-are not `required`, so the model may already omit them at temp 0 (then ≈ $0). Risk: very low.
-**Gate:** diff the bi-temporal fact edges on the temporal instance (`08f4fc43`) — `valid_at`/
-`invalid_at`/`status` byte-identical to baseline.
 
 > **Removed — Lever 5 (judge sampling).** The judge is eval-only, never touches production cost, and
 > certifies answer correctness on **every** test round. Full `--judge` stays on always.
@@ -147,7 +139,7 @@ sample's 48), so a *full* per-instance pass is ~$100+/variant. Cheaper read: `--
    The n=8 "don't widen" verdict is provisional pending this.
 2. **Confirm the shipped free win on accuracy.** Verify `extract_max_tokens=4000` ≥ baseline accuracy
    (today it's justified on "stop discarding truncated output" + richness, not on answers).
-3. **Levers 3 & 4** (output dedup, schema trim) — A/B on the bigger tier; measure realized savings.
+3. **Lever 3** (output dedup) — A/B on the bigger tier; measure realized savings.
 4. **Reflexion ablation (gated).** The recall pass is ~$1/100 — the biggest single ingest line. Test
    conditional/off against accuracy; quality-unsafe to decide at n=8, decidable at n=100.
 
