@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .config import Config
+from .metering import UsageMeter
 from .models import EntityType, Provenance
 
 # --------------------------------------------------------------------------- #
@@ -283,6 +284,7 @@ class HaikuExtractor:
         import anthropic
         self.config = config
         self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+        self.meter = UsageMeter()             # per-call token/cost accounting (testrun)
 
     @property
     def _system(self) -> str:
@@ -306,6 +308,7 @@ class HaikuExtractor:
             tool_choice={"type": "tool", "name": "emit_graph"},
             messages=[{"role": "user", "content": content_blocks}],
         )
+        self.meter.record("extract", self.config.llm_model, msg)
         for block in msg.content:
             if getattr(block, "type", None) == "tool_use" and block.name == "emit_graph":
                 return _parse_tool_payload(block.input)
@@ -388,6 +391,7 @@ class HeuristicExtractor:
 
     def __init__(self, config: Config):
         self.config = config
+        self.meter = UsageMeter()   # always empty (no API calls) — keeps testrun uniform
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         body = f"{title}. {text}" if title else text
@@ -461,6 +465,7 @@ class ScriptedExtractor:
 
     def __init__(self, table: dict[str, Extraction]):
         self._table = {self._norm(k): v for k, v in table.items()}
+        self.meter = UsageMeter()   # always empty — keeps testrun's drain() uniform
 
     @staticmethod
     def _norm(text: str) -> str:

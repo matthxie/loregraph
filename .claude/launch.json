@@ -6,6 +6,12 @@
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["-m", "kg", "serve", "--port", "8731"],
       "port": 8731
+    },
+    {
+      "name": "kg-dashboard",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "kg", "dashboard", "--out", "runs", "--port", "8050"],
+      "port": 8050
     }
   ]
 }

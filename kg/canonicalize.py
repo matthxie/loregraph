@@ -25,6 +25,7 @@ import numpy as np
 
 from .config import Config
 from .embedders import Embedder
+from .metering import UsageMeter
 from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
                      Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
@@ -246,6 +247,7 @@ class Canonicalizer:
         self._next = Counter()
         self._l3_client = _L3_UNSET                   # lazy anthropic client (L3 tie-breaker)
         self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
+        self.meter = UsageMeter()                     # L3 token/cost accounting (testrun)
         self._reindex()
 
     def prime_embeddings(self, surfaces: list[str]) -> None:
@@ -360,6 +362,7 @@ class Canonicalizer:
             msg = client.messages.create(
                 model=self.config.l3_model, max_tokens=300, temperature=0,
                 system=_L3_SYS, messages=[{"role": "user", "content": prompt}])
+            self.meter.record("l3", self.config.l3_model, msg, label=surface)
             text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
             data = _extract_json(text) or {}
             verdict = str(data.get("verdict", "NEW")).strip()

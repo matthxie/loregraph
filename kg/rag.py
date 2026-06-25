@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
+from .metering import UsageMeter, empty_totals
 from .models import EdgeType, NodeType
 from .retrieval import PPRRetriever, RetrievalResult
 from .store import GraphStore, fact_active
@@ -65,6 +66,11 @@ class RagAnswer:
     facts: list[str] = field(default_factory=list)             # rendered fact lines
     object_ids: list[str] = field(default_factory=list)        # PPR ranking (eval seam)
     seeds: list[str] = field(default_factory=list)
+    touched: list[str] = field(default_factory=list)           # every node in the PPR subgraph
+    usage: dict = field(default_factory=dict)                  # token/cost (empty offline)
+    steps: int = 1            # retrieve-then-read = ONE answer call (no per-hop loop)
+    stopped: str = "answered"
+    trace: list = field(default_factory=list)                  # no tool trace (RAG, not agentic)
     notes: list[str] = field(default_factory=list)
 
 
@@ -223,24 +229,28 @@ class ClaudeAnswerer:
         self.config = config
         self.builder = builder
         self.client = client
+        self.meter = UsageMeter()
 
     def answer(self, result: RetrievalResult) -> RagAnswer:
         ep_ids, facts, blob = self.builder.build(result)
         base = RagAnswer(query=result.query, answer="", backend=self.name,
                          as_of=result.as_of, context_episodes=ep_ids,
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
-                         seeds=result.seeds)
+                         seeds=result.seeds, touched=sorted(result.subgraph))
         try:
             msg = self.client.messages.create(
                 model=self.config.rag_model, max_tokens=self.config.rag_max_tokens,
                 temperature=0, system=_RAG_SYS, tools=[_ANSWER_TOOL],
                 tool_choice={"type": "tool", "name": "submit_answer"},
                 messages=[{"role": "user", "content": blob}])
+            self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
             base.citations = ep_ids
+            base.usage = self.meter.totals()
             base.notes.append(f"api error, used extractive fallback: {e!r}")
             return base
+        base.usage = self.meter.totals()
         ans, raw = "", []
         for b in msg.content:
             if getattr(b, "type", None) == "tool_use" and b.name == "submit_answer":
@@ -273,6 +283,7 @@ class OfflineAnswerer:
             citations=ep_ids, backend=self.name, as_of=result.as_of,
             context_episodes=ep_ids, facts=[f.render() for f in facts],
             object_ids=result.object_ids, seeds=result.seeds,
+            touched=sorted(result.subgraph), usage=empty_totals(),
             notes=["degraded to offline answerer"] if self.config.rag_backend == "auto" else [])
 
 

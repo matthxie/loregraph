@@ -198,6 +198,43 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
             "ranked": ranked_list, "seeds": list(seeds), "hops": hops}
 
 
+# Node types the dashboard's force graph actually draws (episodes + the two anchor kinds).
+_DRAWN = {NodeType.EPISODE, NodeType.ENTITY, NodeType.TAG}
+
+
+def rag_trace_payload(ans, store: GraphStore) -> dict:
+    """Map a RagAnswer (kg/rag.py) onto the dashboard's per-query subgraph schema
+    {query, mode, ranked, seeds, hops}. There is no per-hop LLM walk to replay, so the
+    'hops' are the retrieve-then-read layers PPR produced — seeds → the entity/tag anchors
+    it touched → the episodes it surfaced — revealed in order over the ingest graph. Ids
+    are filtered to the node types the graph draws so the animation never references a node
+    that isn't on screen (e.g. mention seeds)."""
+    def is_t(nid, *types) -> bool:
+        n = store.get_node(nid)
+        return n is not None and n.ntype in types
+
+    seeds = [s for s in ans.seeds if is_t(s, *_DRAWN)]
+    episodes = [o for o in ans.object_ids if is_t(o, NodeType.EPISODE)]
+    anchors = [t for t in ans.touched if is_t(t, NodeType.ENTITY, NodeType.TAG)]
+    seen = set(seeds)
+    hops = [list(dict.fromkeys(seeds))]
+    layer2 = [a for a in anchors if a not in seen]
+    if layer2:
+        hops.append(layer2)
+        seen |= set(layer2)
+    layer3 = [e for e in episodes if e not in seen]
+    if layer3:
+        hops.append(layer3)
+    ranked = []
+    for i, oid in enumerate(episodes):
+        n = store.get_node(oid)
+        ranked.append({"id": oid, "rank": i + 1, "score": "",
+                       "label": (n.name or oid) if n else oid,
+                       "modality": (n.modality.value if n and n.modality else "text")})
+    return {"query": ans.query, "mode": "rag", "nodes": [], "edges": [],
+            "ranked": ranked, "seeds": seeds, "hops": [h for h in hops if h]}
+
+
 def _bfs_hops(graph: nx.Graph, sources: list[str], max_hops: int = 4) -> list[list[str]]:
     if not sources:
         return []
