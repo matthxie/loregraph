@@ -24,6 +24,17 @@ class Config:
     semaphore_limit: int = 5          # bounded LLM concurrency (graphiti SEMAPHORE_LIMIT)
     reflexion: bool = True            # one extra recall pass after extraction
     long_doc_chars: int = 6000        # above this, extract section-by-section
+    # Per-call input cap inside Extractor.extract_text. MUST be >= long_doc_chars so a
+    # window-sized section is never silently truncated (a section is exactly long_doc_chars
+    # wide). Swept together with long_doc_chars in the lever-2 window A/B (optimization.md).
+    extract_max_chars: int = 12000
+    # Output ceiling (max_tokens) on the emit_graph tool call. The model emits the WHOLE
+    # entity/tag/relation payload under this cap; a section whose graph exceeds it is silently
+    # truncated mid-JSON (tail dropped — content already generated and paid for). Raised
+    # 1500→4000 after the max_tokens A/B (2026-06-25, optimization.md lever 2): the old 1500
+    # truncated ~8/246 calls on the shipped 6000 window; 4000 clears all truncation and is the
+    # knee (richness plateaus — mt8000 adds nothing). Billed only on emitted tokens, so ~+0.2%.
+    extract_max_tokens: int = 4000
     lead_chars: int = 2000            # embed the lead section for very long docs
 
     # ---- tag drift control (§3) ---------------------------------------------

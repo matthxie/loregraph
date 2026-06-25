@@ -301,7 +301,7 @@ class HaikuExtractor:
     def _call(self, content_blocks: list) -> Extraction:
         msg = self.client.messages.create(
             model=self.config.llm_model,
-            max_tokens=1500,
+            max_tokens=self.config.extract_max_tokens,
             temperature=0,   # reproducibility: the API default is 1.0. temperature is a
                              # valid param on Haiku 4.5 / Sonnet 4.6 (only removed on
                              # Opus 4.7+/Fable 5). The canonicalized topology is what's
@@ -342,7 +342,10 @@ class HaikuExtractor:
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         header = f"Title: {title}\n\n" if title else ""
-        first = self._call([{"type": "text", "text": header + text[:12000]}])
+        # Per-call input cap (config-driven). Sectioning keeps each slice <= long_doc_chars,
+        # and extract_max_chars >= long_doc_chars, so this never truncates a section. It only
+        # bites a single un-sectioned call whose text exceeds the cap.
+        first = self._call([{"type": "text", "text": header + text[:self.config.extract_max_chars]}])
         return self._reflexion(text, first)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
