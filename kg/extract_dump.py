@@ -8,7 +8,7 @@ compared side by side.
     python -m kg extract-dump --extractor heuristic                              --out store/dump_heuristic.jsonl
 
 Each line of the .jsonl is one item's raw Extraction; a companion <out>.summary.json
-holds aggregate vocabulary stats (tag/entity/relation-label histograms). See docs/MVP.md.
+holds aggregate vocabulary stats (tag/entity/relation-label histograms).
 """
 from __future__ import annotations
 

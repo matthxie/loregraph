@@ -606,6 +606,7 @@ const Input=(function(){
     relpair:"Average distinct relationship predicates between a connected entity pair (each RELATED_TO edge carries one).",
     icost:"Total USD spent on extraction LLM calls during ingestion ($0 when offline).",
     itok:"Total input+output tokens spent extracting the graph during ingestion.",
+    cache:"Prompt-cache tokens during ingestion, read / write. cache read > 0 means prompt caching is active (the static prefix is reused at ~0.1× input price); both 0 means no caching is in effect.",
     time:"Wall-clock seconds to ingest every document one at a time (includes the per-step re-derive pass)." };
   function build(){
     const host=document.getElementById("input-view");
@@ -618,6 +619,7 @@ const Input=(function(){
         ${statEl("rel-tags/pair",T.avg_rel_tags_per_pair,"",TIP.relpair)}
         ${statEl("ingest cost",fmtUSD(T.cost_usd),"",TIP.icost)}
         ${statEl("tokens",fmtN(T.tokens),"",TIP.itok)}
+        ${statEl("cache rd/wr",fmtN(T.cache_read||0)+" / "+fmtN(T.cache_write||0),"",TIP.cache)}
         ${statEl("time",T.seconds+"s","",TIP.time)}
       </div>
       <div class="split">

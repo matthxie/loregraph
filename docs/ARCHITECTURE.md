@@ -19,7 +19,7 @@ A concrete design for an episodic, bi-temporal knowledge graph over multimodal c
 > gone (episodes are append-only; evolution lives on the fact edges). Sections below are otherwise
 > current; where they say "object" read "episode".
 
-> **Revision 2 (2026-06-21):** (a) **No summary step** — extract tags/entities *directly* from raw content; the object's raw text (not a generated summary) is the primary embedding/retrieval surface. Images are the exception (no text → the vision model still emits tags + a one-line description as its only searchable text). (b) **Per-node timestamps** `created_at` / `last_modified`, plus a `valid` / `superseded_by` soft-invalidation flag. (c) Refinements adopted from production frameworks (cognee, mem0, graphiti) — see new **§10** and [FRAMEWORKS.md](FRAMEWORKS.md). Sections below are updated in place; older summary-first prose is superseded by §10 and this banner.
+> **Revision 2 (2026-06-21):** (a) **No summary step** — extract tags/entities *directly* from raw content; the object's raw text (not a generated summary) is the primary embedding/retrieval surface. Images are the exception (no text → the vision model still emits tags + a one-line description as its only searchable text). (b) **Per-node timestamps** `created_at` / `last_modified`, plus a `valid` / `superseded_by` soft-invalidation flag. (c) Refinements adopted from production frameworks (cognee, mem0, graphiti) — see new **§10**. Sections below are updated in place; older summary-first prose is superseded by §10 and this banner.
 
 ---
 
@@ -79,7 +79,7 @@ A fourth, weaker consensus the literature offered — **summarize-first** (TnT-L
 - `SIMILAR_TO` (any ↔ any) — embedding cosine above threshold, the synonymy edge
 - `SHARED_TAG` / `SHARED_ENTITY` (ObjectNode ↔ ObjectNode) — **derived, overlap-weighted**; the primary ObjectNode↔ObjectNode edge now that the corpus has no wikilinks
 - `IN_COMMUNITY` (node → CommunityNode)
-- `HYPERLINKS_TO` (ObjectNode → ObjectNode) — *optional enrichment*: deterministic Wikipedia links/categories fetched offline per `page_url` (the `wit_base` corpus does not include them; see [DATASET.md](DATASET.md))
+- `HYPERLINKS_TO` (ObjectNode → ObjectNode) — *optional enrichment*: deterministic Wikipedia links/categories fetched offline per `page_url` (the `wit_base` corpus does not include them)
 
 **Tag the edges, not just nodes.** Per **Graphify** and **Chain-of-Layer**, every extracted edge stores `provenance ∈ {EXTRACTED, INFERRED, SIMILAR}` and a `confidence ∈ [0,1]`. This lets the LLM weight or discard low-confidence relationships during traversal and is your single best hallucination-control lever. Validate each edge before commit (Chain-of-Layer's per-layer filter; A-MEM's LLM link gate).
 
@@ -239,8 +239,8 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
                  emits tags/entities + one description line in the same shot.
                  Then ONE reflexion pass ("did you miss any concept?") to lift
                  recall (graphiti) — cheaper than a separate summarize call.
-5. DERIVED EDGES Corpus = wit_base (no free wikilinks/categories — see
-                 DATASET.md). Derive edges: shared tags/entities
+5. DERIVED EDGES Corpus = wit_base (no free wikilinks/categories).
+                 Derive edges: shared tags/entities
                  (overlap-weighted) + embedding-kNN SIMILAR_TO. OPTIONAL:
                  one-time offline Wikipedia API call per page_url for
                  real categories/links as ground-truth deterministic edges.
@@ -355,7 +355,7 @@ Each milestone is independently shippable and demoable.
 
 ## 10. Refinements from production frameworks (cognee · mem0 · graphiti)
 
-Three production memory frameworks were reviewed *after* the original paper-based design — full analysis in [FRAMEWORKS.md](FRAMEWORKS.md). They **confirmed the foundation** (local NetworkX+SQLite+local-embeddings stack, summarize-or-text-first→tags, layered cheap-first dedup, append+batch-reconcile over per-write mutation, no-LLM-at-query-time retrieval). They did **not** change the architecture — they refined three stages. **Build-vs-borrow verdict: keep building on NetworkX, borrow patterns, vendor none** — NetworkX uniquely gives free PPR (none of the three implement it), every borrowed idea is a ~10–50 line pattern not a subsystem, and mem0 v3 itself *removed* its graph as questionable ROI.
+Three production memory frameworks (cognee, mem0, graphiti) were reviewed *after* the original paper-based design. They **confirmed the foundation** (local NetworkX+SQLite+local-embeddings stack, summarize-or-text-first→tags, layered cheap-first dedup, append+batch-reconcile over per-write mutation, no-LLM-at-query-time retrieval). They did **not** change the architecture — they refined three stages. **Build-vs-borrow verdict: keep building on NetworkX, borrow patterns, vendor none** — NetworkX uniquely gives free PPR (none of the three implement it), every borrowed idea is a ~10–50 line pattern not a subsystem, and mem0 v3 itself *removed* its graph as questionable ROI.
 
 **Adopted (folded into §2/§4/§5/§6/§8 above):**
 
