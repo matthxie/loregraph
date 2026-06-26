@@ -34,6 +34,13 @@ _WS = re.compile(r"\s+")
 _EP_ID = re.compile(r"\bep_[A-Za-z0-9_#]+\b")
 
 
+def _supports_temperature(model: str) -> bool:
+    """Opus 4.7+ and Fable 5 dropped the `temperature` param (the API rejects it). Haiku 4.5 /
+    Sonnet 4.6 still accept it. Used so the answerer can run on Opus for testing."""
+    m = (model or "").lower()
+    return not (("opus-4-7" in m) or ("opus-4-8" in m) or ("opus-4-9" in m) or ("fable" in m))
+
+
 @dataclass
 class FactLine:
     src: str
@@ -239,11 +246,14 @@ class ClaudeAnswerer:
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph))
         try:
-            msg = self.client.messages.create(
+            kw = dict(
                 model=self.config.rag_model, max_tokens=self.config.rag_max_tokens,
-                temperature=0, system=_RAG_SYS, tools=[_ANSWER_TOOL],
+                system=_RAG_SYS, tools=[_ANSWER_TOOL],
                 tool_choice={"type": "tool", "name": "submit_answer"},
                 messages=[{"role": "user", "content": blob}])
+            if _supports_temperature(self.config.rag_model):
+                kw["temperature"] = 0
+            msg = self.client.messages.create(**kw)
             self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)

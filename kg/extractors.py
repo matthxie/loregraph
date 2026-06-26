@@ -415,9 +415,16 @@ class ScriptedExtractor:
 # Factory
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
-    """The live extractor (Claude Haiku). `extractor` is accepted as 'haiku'/'auto' for
-    back-compat — both return a HaikuExtractor, which needs ANTHROPIC_API_KEY. The
+    """The live extractor (Claude Haiku) by default. `extractor` is accepted as 'haiku'/'auto'
+    for back-compat — both return a HaikuExtractor, which needs ANTHROPIC_API_KEY. A
+    `config.extractor_backend` other than 'haiku'/'auto' selects an LLM-free / hybrid NLP
+    extractor (kg/nlp_extractors.py): pure-NLP backends need NO key for extraction; the
+    `hybrid_llm_rel` backend still calls Claude for relations and needs the key. The
     deterministic ScriptedExtractor is constructed directly (demo + tests), never here."""
+    backend = getattr(config, "extractor_backend", "haiku")
+    if backend not in ("haiku", "auto"):
+        from .nlp_extractors import build_nlp_extractor
+        return build_nlp_extractor(backend, config)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError(
             "No ANTHROPIC_API_KEY found. Extraction is live-only (the offline heuristic "
