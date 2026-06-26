@@ -25,9 +25,11 @@ from dataclasses import dataclass, field
 from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
+from .facts import FactIndex, FactLine
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
-from .retrieval import PPRRetriever, RetrievalResult
+from .retrieval import HybridRetriever, RetrievalResult
+from .route import STATE
 from .store import GraphStore, fact_active
 
 _WS = re.compile(r"\s+")
@@ -39,26 +41,6 @@ def _supports_temperature(model: str) -> bool:
     Sonnet 4.6 still accept it. Used so the answerer can run on Opus for testing."""
     m = (model or "").lower()
     return not (("opus-4-7" in m) or ("opus-4-8" in m) or ("opus-4-9" in m) or ("fable" in m))
-
-
-@dataclass
-class FactLine:
-    src: str
-    rel: str
-    dst: str
-    valid_at: str = ""
-    invalid_at: str = ""
-    episode_id: str = ""
-
-    def render(self) -> str:
-        win = []
-        if self.valid_at:
-            win.append(f"since {self.valid_at[:10]}")
-        if self.invalid_at:
-            win.append(f"until {self.invalid_at[:10]}")
-        w = f" ({'; '.join(win)})" if win else ""
-        prov = f" [{self.episode_id}]" if self.episode_id else ""
-        return f"{self.src} --{self.rel}--> {self.dst}{w}{prov}"
 
 
 @dataclass
@@ -192,6 +174,17 @@ class ContextBuilder:
         lines.append("")
         lines.append("FACTS currently valid among the relevant entities:")
         lines += [f"- {f.render()}" for f in facts] or ["(none)"]
+
+        # STATE/evolution lane: append the FULL closed+open fact history so "how has X
+        # changed" can read the trajectory (the currently-valid FACTS above show only the
+        # open state). Only fires when the router tagged this a STATE question AND there is
+        # ended history — so plain `query`-mode results (no lane) are unaffected.
+        if getattr(result, "lane", "single") == STATE:
+            ent_ids = getattr(result, "entity_ids", []) or ents
+            hist = FactIndex(self.store).history(ent_ids)
+            if any(h.invalid_at for h in hist):
+                lines += ["", "HISTORY (includes ENDED facts; read the trajectory in time order):"]
+                lines += [f"- {h.render()}" for h in hist]
         return ep_ids, facts, "\n".join(lines)
 
 
@@ -283,13 +276,15 @@ class ClaudeAnswerer:
 # Orchestrator
 # --------------------------------------------------------------------------- #
 class RagAnswerer:
-    """PPR-retrieve → build context → single answer call. The public `ask` entry point."""
+    """Hybrid-retrieve → build context → single answer call. The public `ask` entry point.
+    The retriever routes the question, augments state/evolution lanes with fact-bearing
+    episodes, and reranks the hard lanes with a cross-encoder; the LLM never traverses."""
 
     def __init__(self, store: GraphStore, embedder: Embedder, canon: Canonicalizer,
                  config: Config, *, client=None):
         self.store = store
         self.config = config
-        self.retriever = PPRRetriever(store, embedder, canon, config)
+        self.retriever = HybridRetriever(store, embedder, canon, config)
         self.builder = ContextBuilder(store, config)
         self._backend = self._pick_backend(client)
 
@@ -308,12 +303,17 @@ class RagAnswerer:
             "answerer was removed). Set the key (kg auto-reads a project-root .env), or "
             "inject a client: get_answerer(..., client=fake).")
 
-    def run(self, query: str, k: int | None = None, as_of: str | None = None) -> RagAnswer:
+    def run(self, query: str, k: int | None = None, as_of: str | None = None,
+            kind: str | None = None) -> RagAnswer:
         if not query or not query.strip():
             return RagAnswer(query=query, answer="(empty query)",
                              backend=self._backend.name, as_of=as_of)
-        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
-        return self._backend.answer(result)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
+                                         kind=kind)
+        ans = self._backend.answer(result)
+        ans.lane = getattr(result, "lane", "")            # surface the routed lane
+        ans.rerank_active = self.retriever.rerank_active
+        return ans
 
 
 def get_answerer(store, embedder, canon, config, *, client=None) -> RagAnswerer:

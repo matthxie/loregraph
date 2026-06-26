@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .config import Config
+from .cues import cue_kinds, has_cue
 from .metering import UsageMeter
 from .models import EntityType, Provenance
 
@@ -412,22 +413,80 @@ class ScriptedExtractor:
 
 
 # --------------------------------------------------------------------------- #
+# Cue-gated hybrid extractor (the default production strategy)
+# --------------------------------------------------------------------------- #
+class CueGatedExtractor:
+    """A free local NLP floor on every entry, plus ONE Haiku call ONLY on entries carrying a
+    termination / relative-date / identity cue (kg/cues.py). Haiku is the merge BASE so its
+    temporal relation fields (status=ended, valid_from/to) survive; the local entities/tags
+    union in for recall. The exposed `meter` is Haiku's, so the testrun's per-document cost
+    drain captures exactly the escalation spend (the local floor is free). With no
+    ANTHROPIC_API_KEY, escalation is disabled and extraction runs local-only."""
+    name = "cue_gated"
+
+    def __init__(self, config: Config):
+        from .nlp_extractors import build_nlp_extractor   # lazy: it imports THIS module
+        self.config = config
+        self.local = build_nlp_extractor(
+            getattr(config, "local_backend", "gliner_yake_cooccur"), config)
+        self.escalate = (bool(getattr(config, "cue_escalate", True))
+                         and bool(os.environ.get("ANTHROPIC_API_KEY")))
+        self._haiku: HaikuExtractor | None = None
+        self._fallback_meter = UsageMeter()
+        self.n_seen = 0
+        self.n_escalated = 0
+        self.cue_counts: dict[str, int] = {}
+
+    def _haiku_ext(self) -> HaikuExtractor:
+        if self._haiku is None:
+            self._haiku = HaikuExtractor(self.config)
+        return self._haiku
+
+    @property
+    def meter(self) -> UsageMeter:
+        return self._haiku.meter if self._haiku is not None else self._fallback_meter
+
+    def extract_text(self, text: str, title: str = "") -> Extraction:
+        self.n_seen += 1
+        local = self.local.extract_text(text, title)
+        if self.escalate and has_cue(text):
+            self.n_escalated += 1
+            for kind in cue_kinds(text):
+                self.cue_counts[kind] = self.cue_counts.get(kind, 0) + 1
+            try:
+                haiku = self._haiku_ext().extract_text(text, title)
+            except Exception:  # noqa: BLE001 — never sink ingest on one API error; keep the floor
+                return local
+            return haiku.merge(local)            # Haiku base → its temporal fields win
+        return local
+
+    def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
+        return self.local.extract_image(image_path, label_hint)
+
+    def escalation_summary(self) -> dict:
+        rate = (self.n_escalated / self.n_seen) if self.n_seen else 0.0
+        return {"seen": self.n_seen, "escalated": self.n_escalated,
+                "escalation_rate": round(rate, 3), "cue_counts": dict(self.cue_counts)}
+
+
+# --------------------------------------------------------------------------- #
 # Factory
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
-    """The live extractor (Claude Haiku) by default. `extractor` is accepted as 'haiku'/'auto'
-    for back-compat — both return a HaikuExtractor, which needs ANTHROPIC_API_KEY. A
-    `config.extractor_backend` other than 'haiku'/'auto' selects an LLM-free / hybrid NLP
-    extractor (kg/nlp_extractors.py): pure-NLP backends need NO key for extraction; the
-    `hybrid_llm_rel` backend still calls Claude for relations and needs the key. The
-    deterministic ScriptedExtractor is constructed directly (demo + tests), never here."""
-    backend = getattr(config, "extractor_backend", "haiku")
+    """Default 'cue_gated' = a local NLP floor + a Haiku call only on cue-bearing entries
+    (escalation needs ANTHROPIC_API_KEY; without it, extraction runs local-only). 'haiku'/
+    'auto' = full Claude Haiku on every entry (needs the key). Any other value selects a
+    pure LLM-free / hybrid NLP backend (kg/nlp_extractors.py). The deterministic
+    ScriptedExtractor is constructed directly (demo + tests), never here."""
+    backend = getattr(config, "extractor_backend", "cue_gated")
+    if backend == "cue_gated":
+        return CueGatedExtractor(config)
     if backend not in ("haiku", "auto"):
         from .nlp_extractors import build_nlp_extractor
         return build_nlp_extractor(backend, config)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError(
-            "No ANTHROPIC_API_KEY found. Extraction is live-only (the offline heuristic "
-            "extractor was removed). Set the key (kg auto-reads a project-root .env), or "
-            "construct a ScriptedExtractor directly for deterministic tests/demos.")
+            "No ANTHROPIC_API_KEY found. The 'haiku' extractor is live-only. Use the default "
+            "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
+            "ScriptedExtractor directly for deterministic tests/demos.")
     return HaikuExtractor(config)

@@ -16,9 +16,12 @@ embeddings are an **entry-point index**, not the main path.
 ## Status
 
 **Built** — the `kg/` package implements the design end-to-end (episodic ingestion → typed,
-bi-temporal directed graph → PPR/BFS/vector retrieval → communities → graph-RAG answers → eval). It
-runs fully offline by default (pluggable backends fall back when no API key / model is present) and
-upgrades to Claude Haiku 4.5 + `bge-small` embeddings when present.
+bi-temporal directed graph → routed hybrid retrieval → cross-encoder rerank → graph-RAG answers →
+eval). The default **production pipeline**: cue-gated extraction (a free local `gliner_yake_cooccur`
+NLP floor on every entry + a Claude Haiku call only on entries carrying a termination/date/identity
+cue), a 4-lane query router, a fact-bearing-episode augment on state/evolution questions, and a
+cross-encoder reranker on the hard lanes. Embeddings use local `bge-small`. Extraction runs keyless
+on the local floor; the Haiku escalation and the single answer call need `ANTHROPIC_API_KEY`.
 
 ```bash
 pip install -r requirements.txt
@@ -34,10 +37,13 @@ python -m pytest -q
 
 Two query surfaces, and **for neither does the LLM traverse the graph**: **`query`** runs the
 algorithmic retrievers directly (PPR / BFS / vector / community) and returns ranked episodes;
-**`ask`** is *retrieve-then-read* — PPR assembles a context (the top episodes + the currently-valid,
-or as-of-T, facts among the touched entities) and a **single** LLM call answers over it with
-citations. With no API key a deterministic extractive answerer runs the same context (`--backend
-offline`). Pass `--as-of <date>` to either to read the world as it was at that time.
+**`ask`** is *retrieve-then-read* — the hybrid retriever routes the question, augments
+state/evolution lanes with fact-bearing episodes, reranks the hard lanes with a cross-encoder, and
+a **single** LLM call answers over the assembled context (top episodes + currently-valid, or as-of-T,
+facts; plus the full closed+open history on evolution questions) with citations. The answer path is
+live-only (needs `ANTHROPIC_API_KEY`); a deterministic extractive synthesis survives only as an
+internal crash-guard. Pass `--as-of <date>` to either surface to read the world as it was then.
+To A/B the full pipeline vs the raw PPR-RAG engine: `python -m kg.ablate --tier sample --k 3 --ctx 3`.
 
 A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the episode graph, animates it
 **being built** in ingestion order, and **traces the path a query takes** (seeds → tag hubs → ranked

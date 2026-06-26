@@ -147,10 +147,12 @@ def test_get_embedder_is_sentence_transformer():
     assert emb.name.startswith("st:")
 
 
-def test_get_extractor_requires_key(monkeypatch):
+def test_haiku_backend_requires_key(monkeypatch):
+    # default 'cue_gated' is keyless; the live 'haiku' backend still RAISES without a key
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    c = _cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError):
-        get_extractor(_cfg())
+        get_extractor(c)
 
 
 def test_answerer_requires_client_or_key(monkeypatch):

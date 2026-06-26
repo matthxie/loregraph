@@ -196,12 +196,13 @@ def test_get_embedder_is_sentence_transformer():
     assert emb.name.startswith("st:")
 
 
-def test_get_extractor_requires_key(monkeypatch):
-    """Extraction is live-only: with no ANTHROPIC_API_KEY, get_extractor RAISES rather than
-    falling back to the deleted offline heuristic. (The temporal suite sidesteps this by
-    constructing a ScriptedExtractor directly — see the _no_live_llm fixture.)"""
+def test_haiku_backend_requires_key(monkeypatch):
+    """The 'haiku' backend is live-only: with no ANTHROPIC_API_KEY it RAISES. (The default
+    'cue_gated' backend runs a keyless local floor; the temporal suite sidesteps extraction
+    entirely with a ScriptedExtractor — see the _no_live_llm fixture.)"""
     from kg.extractors import get_extractor
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    c = cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError):
-        get_extractor(cfg())
+        get_extractor(c)
