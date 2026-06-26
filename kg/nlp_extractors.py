@@ -483,27 +483,24 @@ GLINER2_REL_SCHEMA = {
     "manages": "person manages an organization or team", "part_of": "an entity is part of a larger entity",
     "diagnosed_with": "person was diagnosed with a medical condition", "celebrated": "person celebrated an event or occasion",
 }
-# first-person relation endpoints → the single 'me' narrator node (GLiNER2 emits 'I'/'my' as a
-# head when the user states a fact about themselves; we keep those, normalized to 'me').
-_FIRST_PERSON_TOK = {"i", "me", "my", "we", "our", "us", "myself", "mine", "i'm", "i've", "i'd", "i'll"}
-# other pronoun/role noise to drop as relation endpoints (never normalized to me)
-_REL_DROP = {"user", "assistant", "human", "ai", "you", "it", "they", "he", "she", "one"}
-# first-person cue → inject a 'me' narrator entity so the USER's own facts become edges
-_FIRST_PERSON = re.compile(r"\b(i|we|my|me|our|mine|myself|i'm|i've|i'd|i'll)\b", re.I)
-# map the sentence verb to a typed predicate for 'me' relations (fallback: the verb lemma)
-_ME_PRED = {
-    "spend": "spent_on", "pay": "spent_on", "buy": "bought", "purchase": "bought",
-    "visit": "visited", "go": "visited", "travel": "traveled_to", "attend": "attended",
-    "join": "member_of", "volunteer": "volunteered_at", "donate": "donated_to",
-    "study": "studied", "work": "works_at", "live": "lives_in", "move": "moved_to",
-    "adopt": "has_pet", "meet": "knows", "play": "plays", "collect": "owns", "own": "owns",
-}
+# Pronoun / chat-role / first-person endpoints to DROP entirely as relation endpoints.
+# We deliberately do NOT fold first-person (I/me/my/we) into a single 'me' narrator node:
+# every LongMemEval session is already narrated from the user's own perspective, so a 'me'
+# node carries no new information yet hurts retrieval — every one of the user's facts collapses
+# onto one over-connected super-hub, and Personalized-PageRank then walks *through* it, washing
+# out the specific entities a query actually seeds on. So an I/me/my/we edge is dropped, not
+# re-rooted; its concrete object (e.g. "coffee mugs") still survives as its own entity node.
+_REL_DROP = {"user", "assistant", "human", "ai", "you", "it", "they", "he", "she", "one",
+             "i", "me", "my", "mine", "myself", "we", "us", "our", "ours", "ourselves",
+             "ourself", "i'm", "i've", "i'd", "i'll"}
 
 
 def _word_chunks(text: str, n: int = 110):
     """GLiNER2's DeBERTa encoder has a ~512-token window; feed ~110-word windows so a long section
     never gets truncated to its head. Smaller windows also keep relation RECALL up (GLiNER2 only
-    relates entity pairs co-located in the same chunk) — speed is not a concern here."""
+    relates entity pairs co-located in the same chunk). The chunks of one section are now fed to
+    GLiNER2 in a single *batched* forward pass (see Gliner2Extractor._gliner2), so the small
+    window no longer costs serial latency."""
     w = text.split()
     for i in range(0, len(w), n):
         yield " ".join(w[i:i + n])
@@ -517,13 +514,13 @@ def _safe_etype(val: str) -> EntityType:
 
 
 class Gliner2Extractor:
-    """One GLiNER2 forward pass per chunk yields TYPED entities and TYPED relations (no LLM,
-    CPU-first, $0). Post-filters: drop self-loops, drop chat-role pronouns, keep only relations
-    whose endpoints are real entities (adding any missing endpoint as an OTHER entity so the
-    edge survives). A deterministic first-person pass injects a `me` narrator entity and links
-    it to the entities in I/we/my sentences (typed by the sentence verb) so the user's OWN facts
-    — the ones LongMemEval asks about — become edges. Tags come from the chosen keyword tagger
-    (GLiNER2 doesn't emit topical tags)."""
+    """TYPED entities + TYPED relations from local GLiNER2 (no LLM, CPU/MPS-first, $0). For each
+    section the word-chunks are run through GLiNER2 in TWO BATCHED forward passes — one over all
+    chunks for entities, then ONE over only the chunks with >=2 distinct entities for relations.
+    Post-filters: drop self-loops, drop chat-role/first-person pronouns, keep only relations whose
+    endpoints are real entities (adding any missing endpoint as an OTHER entity so the edge
+    survives). First-person endpoints are dropped, NOT folded into a 'me' node (see _REL_DROP).
+    Tags come from the chosen keyword tagger (GLiNER2 doesn't emit topical tags)."""
 
     def __init__(self, config: Config, name: str = "gliner2", tag_fn=yake_tags):
         self.config = config
@@ -532,7 +529,7 @@ class Gliner2Extractor:
         self._tag_fn = tag_fn
         self.model_id = getattr(config, "gliner2_model", "fastino/gliner2-large-v1")
         self.ent_thr = getattr(config, "gliner2_entity_threshold", 0.5)
-        self.rel_thr = getattr(config, "gliner2_relation_threshold", 0.4)
+        self.rel_thr = getattr(config, "gliner2_relation_threshold", 0.5)
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         body = f"{title}. {text}" if title else text
@@ -541,105 +538,87 @@ class Gliner2Extractor:
             return Extraction()
         with _LOCK:
             model = _gliner2(self.model_id)
-            doc = _spacy()(clean)                  # tags (noun-chunk) + me-injection sentences
             ents, rels = self._gliner2(clean, model)
-            ents, me_rels = self._inject_me(doc, ents, rels)
-            tags = self._tag_fn(clean, doc)
-        return Extraction(entities=ents, tags=tags, relations=rels + me_rels)
+            tags = self._tag_fn(clean)             # yake ignores doc; nounchunk self-parses
+        return Extraction(entities=ents, tags=tags, relations=rels)
 
     def _gliner2(self, text: str, model):
+        """Two batched GLiNER2 passes per section (was: 2 serial calls per chunk).
+
+        Speed wins (optimization.md Lever 7):
+          1. BATCHING — feed every word-chunk to GLiNER2 in one `batch_extract_*` call instead
+             of looping chunk-by-chunk, so the encoder runs them as a single GPU batch.
+          2. COMBINED PASS — entities and relations are each one consolidated batched call for
+             the whole section, replacing the old per-chunk extract_entities+extract_relations.
+          3. SKIP <2-ENTITY CHUNKS — a chunk with fewer than two distinct (post-filter) entities
+             cannot host a relation between two distinct entities (it only ever yielded dropped
+             self-loops), so it is excluded from the relation pass entirely. When no chunk
+             qualifies, the whole relation forward pass is skipped.
+             Tradeoff: the relation head can occasionally surface an endpoint the entity head
+             missed, so gating on the entity count can drop a rare edge whose two endpoints both
+             came from the relation pass. This is the accepted speed/recall tradeoff of the gate
+             (validated on the sample tier); raise/lower the >=2 threshold to trade speed for recall.
+        """
+        chunks = list(_word_chunks(text))
+        if not chunks:
+            return [], []
         names: dict[str, tuple[str, str]] = {}     # name.lower() -> (surface, etype value)
-        rels: list[ExtractedRelation] = []
-        seen: set[tuple] = set()
-        for ch in _word_chunks(text):
-            er = model.extract_entities(ch, GLINER2_ENT_LABELS, threshold=self.ent_thr)
+        per_chunk_ents: list[int] = []             # distinct-entity count per chunk (skip gate)
+        # (1)+(2) one batched entity pass over all chunks
+        for er in model.batch_extract_entities(chunks, GLINER2_ENT_LABELS, threshold=self.ent_thr):
+            local: set[str] = set()
             for lbl, nms in (er.get("entities") or {}).items():
                 et = _GLINER2_MAP.get(lbl.lower(), "other")
                 for nm in (nms or []):
                     nm = (nm if isinstance(nm, str) else nm.get("text", "")).strip()
                     if nm and nm.lower() not in _DROP_ENT and len(nm) >= 2:
                         names.setdefault(nm.lower(), (nm, et))
-            rr = model.extract_relations(ch, GLINER2_REL_SCHEMA, threshold=self.rel_thr)
-            for rtype, pairs in (rr.get("relation_extraction") or {}).items():
-                for p in (pairs or []):
-                    if not (isinstance(p, (list, tuple)) and len(p) >= 2):
-                        continue
-                    # normalize first-person endpoints to the 'me' narrator (keep them, don't drop)
-                    h = "me" if str(p[0]).strip().lower() in _FIRST_PERSON_TOK else str(p[0]).strip()
-                    t = "me" if str(p[1]).strip().lower() in _FIRST_PERSON_TOK else str(p[1]).strip()
-                    if not h or not t or h.lower() == t.lower():            # self-loop filter
-                        continue
-                    if h.lower() in _REL_DROP or t.lower() in _REL_DROP:    # pronoun/role noise
-                        continue
-                    key = (h.lower(), rtype, t.lower())
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    names.setdefault(h.lower(), (h, "person" if h.lower() == "me" else "other"))
-                    names.setdefault(t.lower(), (t, "person" if t.lower() == "me" else "other"))
-                    rels.append(ExtractedRelation(
-                        source=names[h.lower()][0], target=names[t.lower()][0],
-                        labels=[rtype], provenance=Provenance.EXTRACTED, confidence=0.7))
+                        local.add(nm.lower())
+            per_chunk_ents.append(len(local))
+        # (3) only chunks with >=2 distinct entities can host a relation
+        rel_chunks = [chunks[i] for i, c in enumerate(per_chunk_ents) if c >= 2]
+        rels: list[ExtractedRelation] = []
+        if rel_chunks:
+            seen: set[tuple] = set()
+            # (1)+(2) one batched relation pass over the surviving chunks
+            for rr in model.batch_extract_relations(rel_chunks, GLINER2_REL_SCHEMA,
+                                                    threshold=self.rel_thr):
+                for rtype, pairs in (rr.get("relation_extraction") or {}).items():
+                    for p in (pairs or []):
+                        if not (isinstance(p, (list, tuple)) and len(p) >= 2):
+                            continue
+                        h = str(p[0]).strip()
+                        t = str(p[1]).strip()
+                        if not h or not t or h.lower() == t.lower():           # self-loop filter
+                            continue
+                        if h.lower() in _REL_DROP or t.lower() in _REL_DROP:   # pronoun/role/1st-person
+                            continue
+                        key = (h.lower(), rtype, t.lower())
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        names.setdefault(h.lower(), (h, "other"))
+                        names.setdefault(t.lower(), (t, "other"))
+                        rels.append(ExtractedRelation(
+                            source=names[h.lower()][0], target=names[t.lower()][0],
+                            labels=[rtype], provenance=Provenance.EXTRACTED, confidence=0.7))
         ents = [ExtractedEntity(name=s, type=_safe_etype(et)) for s, et in names.values()]
         return ents, rels
-
-    def _inject_me(self, doc, ents, existing_rels):
-        """SUPPLEMENT GLiNER2's own first-person relations with facts it missed: for first-person
-        sentences, take each mapped action verb (spent_on/attended/visited/...) and link `me` ONLY
-        to the verb's TRUE grammatical objects (dobj / prep→pobj subtrees), not just any nearby
-        word. Deduped against the relations GLiNER2 already produced for `me`, so we don't double
-        up. Precision-first: unmapped/generic verbs and non-object entities emit nothing."""
-        if not _FIRST_PERSON.search(doc.text):
-            return ents, []
-        if not any(e.name.lower() == "me" for e in ents):
-            ents = ents + [ExtractedEntity(name="me", type=EntityType.PERSON)]
-        surf = {e.name.lower(): e.name for e in ents
-                if e.name.lower() != "me" and e.type != EntityType.DATE}
-        have = {(r.labels[0] if r.labels else "", r.target.lower())
-                for r in existing_rels if r.source.lower() == "me"}
-        me_rels: list[ExtractedRelation] = []
-        seen: set[tuple] = set()
-        for sent in doc.sents:
-            if not any(t.lemma_.lower() in ("i", "we") and t.dep_ in ("nsubj", "nsubjpass")
-                       for t in sent):
-                continue
-            for tok in sent:
-                pred = _ME_PRED.get(tok.lemma_.lower()) if tok.pos_ == "VERB" else None
-                if not pred:
-                    continue
-                objs = []                          # the verb's true grammatical objects
-                for c in tok.children:
-                    if c.dep_ in ("dobj", "obj", "attr", "dative"):
-                        objs.append(c)
-                    elif c.dep_ == "prep":
-                        objs.extend(g for g in c.children if c.dep_ == "prep" and g.dep_ == "pobj")
-                for o in objs:
-                    otext = " ".join(w.text for w in o.subtree).lower()
-                    for key, name in surf.items():
-                        if key not in otext or (pred, key) in have:
-                            continue
-                        k = ("me", pred, key)
-                        if k in seen:
-                            continue
-                        seen.add(k)
-                        me_rels.append(ExtractedRelation(source="me", target=name, labels=[pred],
-                                                         provenance=Provenance.EXTRACTED, confidence=0.6))
-        return ents, me_rels
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         return Extraction(description=label_hint or "An image.")
 
 
 # --------------------------------------------------------------------------- #
-# Combination: GLiNER2 (typed + me-facts, $0) UNION Haiku (clean open-vocab relations)
+# Combination: GLiNER2 (typed, $0) UNION Haiku (clean open-vocab relations)
 # --------------------------------------------------------------------------- #
 class Gliner2HaikuExtractor:
     """Run BOTH the tuned GLiNER2 extractor and the Haiku LLM extractor on each section and MERGE
     their Extractions (union entities/tags, union relation labels per directed pair). The point:
-    keep Haiku's clean open-vocabulary third-party relations AND add GLiNER2's first-person `me`
-    facts + extra typed entities that Haiku's default prompt misses. Cost == Haiku (GLiNER2 is
-    free); the question the eval answers is whether the GLiNER2 bonus lifts answer accuracy over
-    Haiku alone. The meter is Haiku's, so the dashboard shows the (Haiku) cost."""
+    keep Haiku's clean open-vocabulary third-party relations AND add GLiNER2's extra typed entities
+    and relations that Haiku's default prompt misses. Cost == Haiku (GLiNER2 is free); the question
+    the eval answers is whether the GLiNER2 bonus lifts answer accuracy over Haiku alone. The meter
+    is Haiku's, so the dashboard shows the (Haiku) cost."""
 
     def __init__(self, config: Config, name: str = "gliner2_haiku"):
         from .extractors import HaikuExtractor

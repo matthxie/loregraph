@@ -18,12 +18,13 @@
   (relations)** — all local, ~$0 — gives **−100% ingest cost** with **same retrieval recall and
   same-or-better answer accuracy** on micro+sample A/Bs. Code is in `kg/nlp_extractors.py`
   (`config.extractor_backend`, default `haiku` so the live path is unchanged). See below.
-- 🟢 **Lever 7 — GLiNER2 richer typed relations + first-person `me`-injection — TESTED.** One local
-  0.5B encoder (`fastino/gliner2-large-v1`, 1.95 GB) does typed entities **and** typed relations from
-  a described 30-predicate schema in one pass, $0. Captures the **user's own facts** (`me --spent_on-->
-  coffee mugs`) that Haiku's default prompt misses. Backends `gliner2` / `gliner2_nounchunk` /
-  `gliner2_haiku` (combo). Richer/cleaner relations than co-occur; **entity-noisy** (over-extracts
-  concepts; the 0.65 threshold doesn't fix it because relation endpoints are re-added). See below.
+- 🟢 **Lever 7 — GLiNER2 typed entities + typed relations — TESTED.** One local 0.5B encoder
+  (`fastino/gliner2-large-v1`, 1.95 GB) does typed entities **and** typed relations from a described
+  30-predicate schema, $0. Backends `gliner2` / `gliner2_nounchunk` / `gliner2_haiku` (combo).
+  Richer/cleaner relations than co-occur; **entity-noisy** (over-extracts concepts). See below.
+  **UPDATE 2026-06-26:** the first-person `me`-injection knob (#3) was **removed** and GLiNER2 was
+  **sped up** (batching + skip <2-entity chunks); the `gliner2` backend is now runnable through
+  `kg testrun --extractor-backend gliner2`. See *Lever 7 — UPDATE* below.
 - ❌ **Qwen-1.5B local LLM extractor — TESTED + REMOVED.** A small generative LLM *invents* open-vocab
   predicates like Haiku, but at 1.5B it is **error-prone** (`me --has_pet--> best friend`), types
   entities weakly (mostly `other`), and is slow. Encoder (GLiNER2) is more *reliable* at ≤3 GB because
@@ -209,8 +210,42 @@ with first-person handling, captures `me` facts. All $0, on-device (MPS).
   edges like `sermon --visited--> church`) and entity noise. The research's fix is **GLiREL typed
   `allowed_head`/`allowed_tail`** (structurally kills type-violating edges) or a **propose→verify
   hybrid** (encoder proposes $0 → Haiku relabels survivors). Both deferred behind the eval below.
-- `gliner2_haiku` (union of both, cost = Haiku) exists to test whether GLiNER2's `me`-facts *added to*
-  Haiku lift answer accuracy.
+- `gliner2_haiku` (union of both, cost = Haiku) exists to test whether GLiNER2's extra typed entities
+  *added to* Haiku lift answer accuracy.
+
+### Lever 7 — UPDATE (2026-06-26): drop `me`, speed up, wire into the harness
+
+**1. Removed the first-person `me` node.** Knob #3 (fold `I`/`me`/`my`/`we` relation endpoints onto a
+single `me` narrator + the spaCy `_inject_me` supplement) is **deleted**. Rationale: every LongMemEval
+session is *already* narrated from the user's perspective, so a `me` node carries no new information yet
+hurts retrieval — every user fact collapses onto one over-connected super-hub, and PPR then walks
+*through* it, washing out the specific entities a query seeds on. First-person endpoints are now **dropped**
+(added to `_REL_DROP`), not re-rooted; the concrete object (e.g. `coffee mugs`) still survives as its own
+entity node. Verified on the sample run: **0 first-person nodes** in the graph; top-degree *entity* is a
+normal domain node (deg 19), no `me` hub. `gliner2_haiku` docstring de-`me`'d.
+
+**2. Three GLiNER2 speed wins** (`Gliner2Extractor._gliner2`): (a) **batching** — all word-chunks of a
+section go through GLiNER2 in two `batch_extract_*` calls instead of a per-chunk loop of `2·N` serial
+calls; (b) **consolidated passes** — one batched entity pass + one batched relation pass per section;
+(c) **skip <2-entity chunks** — the relation pass runs only on chunks with ≥2 distinct entities (a chunk
+with <2 can't host an edge between two distinct entities — it only ever yielded dropped self-loops).
+*Caveat:* the literal fused `extract(text, schema)` (one encoder forward for both heads) is **incompatible**
+with the skip, so two-phase was chosen; on **MPS the batching win is modest (~1.08×** on entity-dense text
+— DeBERTa-large doesn't parallelize the batch on Metal); the skip is what helps on sparse chat chunks.
+Removing `me`-injection also dropped the eager spaCy parse from the default (YAKE) path.
+
+**3. Fixed a latent config bug + wired the harness.** `config.py` defined the `gliner2_*` fields **twice**
+(so Lever-7's `0.65` entity threshold *never took effect* — the second def's `0.5` won); collapsed to one
+behavior-preserving definition. Added `kg testrun --extractor-backend <backend>` (there was no way to
+select an NLP backend in the harness before).
+
+**Sample run** (`runs/gliner2-speedwins-nome`, `--tier sample --extractor-backend gliner2`, per-instance,
+n=8): ingest **$0** / 0 LLM calls, 16,248 nodes / 19,834 edges, 6,930 entities / 171 relation types / 903
+RELATED_TO fact edges, 24.7 tags/obj; ingest **1,139 s** (~19 min, MPS-bound). Query: recall@k **1.0**,
+grounding **0.90**, `response_accuracy` **0.606**, $0.052 (reader+judge only). **Caveat:** n=8 accuracy is
+noise (per this file's own standard) — this confirms the speedups + `me`-removal **don't break** the
+pipeline and yield a clean, hub-free graph, but does **not** settle whether dropping `me` *raises* accuracy.
+That needs the full-haystack eval (Next steps #0). No baseline (me-on) A/B was run.
 
 ---
 

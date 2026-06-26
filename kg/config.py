@@ -27,16 +27,11 @@ class Config:
     extractor_backend: str = "haiku"
     gliner_model: str = "urchade/gliner_small-v2.1"
     gliner_threshold: float = 0.5
-    # GLiNER2 (fastino) — ONE local model does typed entities + typed relations (kg/nlp_extractors.py).
+    # GLiNER2 (fastino) — ONE local encoder that emits typed entities AND typed relations, run in
+    # batched forward passes per section (kg/nlp_extractors.py Gliner2Extractor). $0, on-device.
     gliner2_model: str = "fastino/gliner2-large-v1"
-    gliner2_entity_threshold: float = 0.65   # 0.65 trims the generic-concept over-extraction
-    gliner2_relation_threshold: float = 0.4
-    # GLiNER2 (fastino) — one local model that emits entities AND typed relations in a single
-    # forward pass (kg/nlp_extractors.py Gliner2Extractor). Higher relation threshold = cleaner,
-    # fewer spurious edges. self_entity-style "me" facts are added by a first-person rule layer.
-    gliner2_model: str = "fastino/gliner2-large-v1"
-    gliner2_entity_threshold: float = 0.5
-    gliner2_relation_threshold: float = 0.5
+    gliner2_entity_threshold: float = 0.5    # higher trims generic-concept over-extraction
+    gliner2_relation_threshold: float = 0.5  # higher = cleaner, fewer spurious edges
 
     # ---- ingestion (§6) ------------------------------------------------------
     semaphore_limit: int = 5          # bounded LLM concurrency (graphiti SEMAPHORE_LIMIT)
