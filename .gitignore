@@ -33,3 +33,4 @@ runs/
 
 # Throwaway test virtualenv
 .venv-test/
+results/

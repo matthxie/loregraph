@@ -26,10 +26,14 @@ import numpy as np
 from .canonicalize import Canonicalizer, normalize_key
 from .config import Config
 from .embedders import Embedder
-from .models import EdgeType, NodeType, Provenance
+from .facts import FactIndex
+from .models import SELF_ENTITY_ID, EdgeType, NodeType, Provenance
+from .rerank import CrossEncoderReranker
+from .route import MULTIHOP, RECENCY, STATE, route
 from .store import GraphStore, fact_active
 
 _TOK = re.compile(r"[a-z0-9]+")
+_WSP = re.compile(r"\s+")
 
 
 @dataclass
@@ -155,9 +159,13 @@ def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = No
     undirected). Fact (RELATED_TO) edges are filtered to the requested temporal view
     (`as_of=None` → current; `as_of=T` → as-of-T); structural edges are timeless."""
     exclude = _TRAVERSAL_EXCLUDE if exclude_etypes is None else exclude_etypes
+    self_guard = getattr(config, "self_guard", "none")
+    self_cap = float(getattr(config, "self_guard_cap", 0.05))
     G = nx.Graph()
     for n in store.nodes.values():
         if n.valid:
+            if self_guard == "exclude" and n.id == SELF_ENTITY_ID:
+                continue   # drop the self anchor entirely (it carries no discriminating signal)
             G.add_node(n.id)
     pair_w: dict[tuple, dict[str, float]] = {}
     for u, v, data in store.all_edges():
@@ -173,7 +181,14 @@ def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = No
             continue
         if u not in G or v not in G:
             continue
+        # Self-anchor hub guard: stop the single first-person node from being a
+        # PPR super-hub that activation routes through (see config.self_guard).
+        incident_self = self_guard != "none" and (u == SELF_ENTITY_ID or v == SELF_ENTITY_ID)
+        if self_guard == "exclude" and incident_self:
+            continue                               # drop self + its RESOLVES_TO star
         w = max(1e-4, float(data["confidence"]) * float(data["weight"]))
+        if self_guard == "cap" and incident_self:
+            w = min(w, self_cap)                   # keep self, throttle its pull
         pair = (u, v) if u <= v else (v, u)        # symmetrize direction
         by_etype = pair_w.setdefault(pair, {})
         if w > by_etype.get(et, 0.0):              # MAX within an etype (parallel facts
@@ -207,8 +222,11 @@ class PPRRetriever:
         if not seeds:
             return res
         G = projected_graph(self.store, self.config, as_of=as_of)
+        skip_self_seed = getattr(self.config, "self_guard", "none") in ("exclude", "seed")
         pers = {}
         for nid, s in seeds.items():
+            if skip_self_seed and nid == SELF_ENTITY_ID:
+                continue   # don't pour personalization mass into the self anchor
             if nid in G and s > 0:
                 pers[nid] = s * self.canon.idf_weight(nid)
         if not pers or sum(pers.values()) <= 0:
@@ -338,6 +356,87 @@ class VectorRetriever:
                              objects=[(i, float(s)) for i, s in hits],
                              seeds=[i for i, _ in hits])
         res.subgraph = set(res.object_ids)
+        return res
+
+
+class HybridRetriever:
+    """The production answer-path retriever (used by `ask`, NOT by `query`): on top of the
+    PPR pool it adds a 4-lane query router, a fact-bearing-episode augment on state/evolution
+    questions, and a cross-encoder rerank — but ONLY on the hard lanes (config.rerank_lanes),
+    since the web-search cross-encoder can demote the gold on easy single-fact lookups. Stashes
+    `.lane` and `.entity_ids` on the result for the evolution-aware context builder."""
+    mode = "hybrid"
+
+    def __init__(self, store: GraphStore, embedder: Embedder, canon: Canonicalizer,
+                 config: Config):
+        self.store = store
+        self.embedder = embedder
+        self.canon = canon
+        self.config = config
+        self.ppr = PPRRetriever(store, embedder, canon, config)
+        self.facts = FactIndex(store)
+        self._reranker = (CrossEncoderReranker(config.rerank_model)
+                          if getattr(config, "rerank", True) else None)
+
+    @property
+    def rerank_active(self) -> bool | None:
+        return self._reranker.available if self._reranker is not None else None
+
+    def _snippet(self, ep_id: str, n: int = 512) -> str:
+        node = self.store.get_node(ep_id)
+        if not node:
+            return ""
+        text = node.raw_text or node.description or node.name or ""
+        return _WSP.sub(" ", text).strip()[:n]
+
+    def _entity_seeds(self, seeds: list[str]) -> list[str]:
+        out = []
+        for nid in seeds:
+            n = self.store.get_node(nid)
+            if n and n.ntype == NodeType.ENTITY and n.valid:
+                out.append(nid)
+        return out
+
+    def _event_time(self, ep_id: str) -> str:
+        n = self.store.get_node(ep_id)
+        return (n.created_at or n.ingested_at or "") if n else ""
+
+    def retrieve(self, query: str, k: int | None = None,
+                 as_of: str | None = None, kind: str | None = None) -> RetrievalResult:
+        k = k or self.config.top_k
+        lane = route(query, kind) if getattr(self.config, "route", True) else "single"
+        base_pool = max(int(getattr(self.config, "rerank_pool", 32)), k * 3)
+        pool = base_pool * 2 if lane == MULTIHOP else base_pool   # multihop widens the pool
+
+        base = self.ppr.retrieve(query, k=pool, as_of=as_of)
+        cand_ids: list[str] = list(base.object_ids)
+        ent_ids = self._entity_seeds(base.seeds)
+
+        # STATE/evolution: guarantee the fact-bearing episodes are in the pool.
+        if getattr(self.config, "fact_lane_augment", True) and lane == STATE and ent_ids:
+            for ep in self.facts.fact_episodes(ent_ids):
+                n = self.store.get_node(ep)
+                if ep not in cand_ids and n and n.valid and n.ntype == NodeType.EPISODE:
+                    cand_ids.append(ep)
+
+        # RECENCY: restrict to the most recent candidates by event time before ranking.
+        if lane == RECENCY and cand_ids:
+            cand_ids = sorted(cand_ids, key=self._event_time, reverse=True)[: max(k * 2, k)]
+
+        # Conditional rerank: only the hard lanes; single/recency keep PPR / event-time order.
+        rerank_lanes = set(getattr(self.config, "rerank_lanes", ("state", "multihop")))
+        if self._reranker is not None and cand_ids and lane in rerank_lanes:
+            ranked = self._reranker.rerank(
+                query, [(ep, self._snippet(ep)) for ep in cand_ids], k)
+        else:
+            ranked = cand_ids[:k]
+
+        res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,
+                              seeds=list(base.seeds),
+                              subgraph=set(base.subgraph) | set(ranked))
+        res.objects = [(ep, float(len(ranked) - i)) for i, ep in enumerate(ranked)]
+        res.lane = lane            # type: ignore[attr-defined]
+        res.entity_ids = ent_ids   # type: ignore[attr-defined]
         return res
 
 

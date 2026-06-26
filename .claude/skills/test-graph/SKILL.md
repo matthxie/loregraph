@@ -8,10 +8,17 @@ description: Run the knowledge-graph test harness and open its dashboard. Use wh
 This runs `python -m kg testrun`, which ingests a **LongMemEval tier**
 (`dataset/longmemeval/<tier>/`, default `--tier micro`) one chat session at a time (the
 Input view: watch the structure form, with cost/tokens/tags/temporal charts) and runs that
-tier's `questions.jsonl` through the `ask` flow (the Query view: PPR→RAG trace +
+tier's `questions.jsonl` through the `ask` flow (the Query view: retrieve→RAG trace +
 recall@k/MRR/citation-grounding + an LLM-judge response score). It writes `runs/<id>/run.json`
 + a self-contained `dashboard.html`, then the dashboard server lets you browse every run and
 toggle Input ⇄ Query.
+
+> **The pipeline:** `testrun` runs the production strategy by default — cue-gated extraction
+> (a free local `gliner_yake_cooccur` floor + a Haiku call only on entries with a
+> termination/date/identity cue), a 4-lane query router, a cross-encoder reranker on the hard
+> lanes, and the flat as-of/evolution fact path. The query records carry a `lane` field
+> showing how each question was routed. To A/B the full pipeline vs the raw PPR-RAG engine,
+> use `python -m kg.ablate --tier sample --k 3 --ctx 3` (stressed regime).
 
 **The pipeline is LIVE-ONLY** (the offline heuristic/hashing/offline-answerer backends were
 removed). Every run calls Claude Haiku for extraction + answering and uses a local bge

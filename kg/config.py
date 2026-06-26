@@ -20,11 +20,15 @@ class Config:
     extractor: str = "haiku"
     embedder: str = "st"
 
-    # ---- extractor backend (cost-reduction experiment; optimization.md / kg/nlp_extractors.py)
-    # "haiku" (default, full LLM) or an LLM-free / hybrid NLP backend:
-    #   gliner_yake | gliner_yake_cooccur | gliner_keybert_cooccur | spacy_svo |
-    #   hybrid_llm_rel | keyword_only | gliner2 | gliner2_nounchunk
-    extractor_backend: str = "haiku"
+    # ---- extractor backend ---------------------------------------------------
+    # DEFAULT "cue_gated" = the production strategy: a free local NLP floor
+    # (`local_backend`, gliner_yake_cooccur) on every entry, plus ONE Haiku call
+    # ONLY on entries carrying a termination/relative-date/identity cue (kg/cues.py).
+    # Other choices: "haiku" (full LLM on everything), or a pure LLM-free / hybrid NLP
+    # backend (gliner_yake_cooccur | gliner2 | keyword_only | … , see kg/nlp_extractors.py).
+    extractor_backend: str = "cue_gated"
+    local_backend: str = "gliner_yake_cooccur"   # the always-on local floor under cue_gated
+    cue_escalate: bool = True                     # call Haiku on cue-bearing entries (needs key)
     gliner_model: str = "urchade/gliner_small-v2.1"
     gliner_threshold: float = 0.5
     # GLiNER2 (fastino) — ONE local encoder that emits typed entities AND typed relations, run in
@@ -77,6 +81,18 @@ class Config:
     mmr_lambda: float = 0.6           # MMR relevance↔diversity tradeoff
     inferred_confidence_floor: float = 0.3  # drop INFERRED edges below this in traversal
 
+    # ---- answer-path pipeline (the production read strategy; used by `ask`) ----
+    # On top of the PPR pool the answer path adds: a 4-lane query router (kg/route.py),
+    # a fact-bearing-episode augment on state/evolution lanes, and a cross-encoder rerank
+    # of the candidate pool — but ONLY on the hard lanes (rerank_lanes), since the
+    # cross-encoder can demote the gold on easy single-fact lookups. All default ON.
+    route: bool = True                # 4-lane query router (recency|state|multihop|single)
+    rerank: bool = True               # cross-encoder rerank of the candidate pool
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_pool: int = 32             # candidates fed to the cross-encoder
+    rerank_lanes: tuple = ("state", "multihop")   # lanes that get reranked
+    fact_lane_augment: bool = True    # surface fact-bearing episodes on state/evolution lanes
+
     # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----
     # The query path is retrieve-then-read: PPR (or as-of-T PPR) assembles a context blob
     # of the top episodes + the currently-valid facts among the touched entities, then a
@@ -101,6 +117,22 @@ class Config:
     # OFF by default — the offline path is byte-for-byte unchanged when off.
     self_entity: bool = False     # personal-web first-person resolution
     self_name: str = "self"       # display name of the self anchor
+
+    # ---- self-anchor PPR hub guard (only bites when self_entity is on) -------
+    # In personal-web mode every first-person reference resolves to ONE node
+    # (SELF_ENTITY_ID), so on a deep single-user graph that node becomes incident
+    # to a large fraction of RELATED_TO fact edges — a high-degree hub. idf_weight
+    # down-weights it as a SEED but does NOT stop PageRank routing activation
+    # THROUGH it during the diffusion, over-spreading mass to weakly-related
+    # episodes. This guard controls how the self node participates in the PPR
+    # projection. "none" = byte-for-byte unchanged (default, safe):
+    #   none     — no guard; self diffuses like any other entity
+    #   exclude  — drop self + its RESOLVES_TO star from the projection entirely
+    #              (like IN_COMMUNITY); self carries no discriminating signal
+    #   cap      — keep self but cap its incident edge weights (self_guard_cap)
+    #   seed     — keep self in the graph but never SEED it (no personalization mass)
+    self_guard: str = "none"          # none | exclude | cap | seed
+    self_guard_cap: float = 0.05      # 'cap' mode: max weight per self-incident edge
 
     # ---- misc ----------------------------------------------------------------
     random_seed: int = 42

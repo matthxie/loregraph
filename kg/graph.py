@@ -73,18 +73,20 @@ class KnowledgeGraph:
 
     # ------------------------------------------------------------------- ask
     def ask(self, text: str, *, backend: str | None = None, k: int | None = None,
-            as_of: str | None = None, model: str | None = None, client=None) -> RagAnswer:
-        """Graph-RAG answer (docs/ARCHITECTURE.md §5): PPR retrieves a context blob (top
-        episodes + currently-valid facts), then ONE LLM call answers over it with
-        citations. The LLM never traverses. Live-only: needs ANTHROPIC_API_KEY (the offline
-        answerer was removed). `client=` injects a (fake) Anthropic client for tests."""
+            as_of: str | None = None, model: str | None = None, client=None,
+            kind: str | None = None) -> RagAnswer:
+        """Graph-RAG answer (docs/ARCHITECTURE.md §5): the hybrid retriever routes the
+        question, augments state/evolution lanes with fact-bearing episodes, and reranks the
+        hard lanes, then ONE LLM call answers over the context with citations. The LLM never
+        traverses. `kind` is an optional question-type hint for the router. Live-only: needs
+        ANTHROPIC_API_KEY. `client=` injects a (fake) Anthropic client for tests."""
         cfg = self.config
         overrides = {kk: vv for kk, vv in
                      (("rag_backend", backend), ("rag_model", model)) if vv}
         if overrides:
             cfg = replace(cfg, **overrides)
         return get_answerer(self.store, self.embedder, self.canon, cfg,
-                            client=client).run(text, k=k, as_of=as_of)
+                            client=client).run(text, k=k, as_of=as_of, kind=kind)
 
     # ----------------------------------------------------------------- helpers
     def explain(self, result: RetrievalResult, max_objects: int = 5) -> str:

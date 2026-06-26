@@ -394,20 +394,30 @@ def test_get_embedder_returns_sentence_transformer():
     assert np.allclose(a, e.embed(["knowledge graph"]))
 
 
-def test_get_extractor_raises_without_key(monkeypatch):
-    """Extraction is live-only: get_extractor returns a HaikuExtractor, and RAISES when no
-    ANTHROPIC_API_KEY is set (the offline heuristic fallback was removed)."""
+def test_haiku_backend_raises_without_key(monkeypatch):
+    """The 'haiku' backend is live-only: it RAISES when no ANTHROPIC_API_KEY is set. (The
+    default 'cue_gated' backend instead runs a keyless local floor — see below.)"""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    c = cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-        get_extractor(cfg())
+        get_extractor(c)
 
 
-def test_get_extractor_returns_haiku_with_key(monkeypatch):
-    """With a key present, the factory yields the live HaikuExtractor (constructed only — no
-    API call is made until extract_text/extract_image)."""
+def test_haiku_backend_returns_haiku_with_key(monkeypatch):
+    """With a key present, the 'haiku' backend yields the live HaikuExtractor (constructed
+    only — no API call is made until extract_text/extract_image)."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-used")
-    ext = get_extractor(cfg())
+    c = cfg(); c.extractor_backend = "haiku"
+    ext = get_extractor(c)
     assert isinstance(ext, HaikuExtractor) and ext.name == "haiku"
+
+
+def test_default_extractor_is_cue_gated_and_keyless(monkeypatch):
+    """The production default is cue-gated: a keyless local NLP floor, with Haiku escalation
+    only when a key is present (so extraction no longer hard-requires a key)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    ext = get_extractor(cfg())
+    assert ext.name == "cue_gated" and ext.escalate is False   # no key → escalation disabled
 
 
 def test_rag_answerer_raises_without_client_or_key(monkeypatch):

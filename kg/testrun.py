@@ -505,8 +505,10 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         jclient = _build_judge_client(cfg.l3_model)
     qrecords: list[dict] = []
     for q in questions:
-        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
+        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
+                    kind=q.get("kind"))
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
+        rec["lane"] = getattr(ans, "lane", "")
         qrecords.append(rec)
         log(f"  {rec['id'] or rec['query'][:30]:32s} recall@k={rec['recall_at_k']:.2f} "
             f"hit={'Y' if rec['hit'] else '.'} steps={rec['steps']}")
@@ -617,10 +619,10 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         total_sessions += len(sessions)
         if os.path.exists(store_path):
             os.remove(store_path)
-        g = KnowledgeGraph.open(store_path, cfg)         # fresh memory per instance
+        g = KnowledgeGraph.open(store_path, cfg)          # fresh memory per instance
         g.extractor.meter.drain()
         g.canon.meter.drain()
-        rep = g.ingest(sessions)                         # only THIS instance's haystack
+        rep = g.ingest(sessions)                          # only THIS instance's haystack
         recs = g.extractor.meter.drain() + g.canon.meter.drain()
         tok = totals_of(recs)
         if communities:
@@ -647,9 +649,11 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         ingest_trunc += tok["truncated"]
         atpo = _avg_tags_per_object(stats)
 
-        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client)
+        ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
+                    kind=q.get("kind"))
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)
+        rec["lane"] = getattr(ans, "lane", "")
         qrecords.append(rec)
 
         steps.append({
