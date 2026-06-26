@@ -31,6 +31,8 @@ def _config(args) -> Config:
         cfg.extractor = args.extractor
     if getattr(args, "embedder", None):
         cfg.embedder = args.embedder
+    if getattr(args, "extractor_backend", None):   # haiku (paid) vs an LLM-free NLP backend ($0)
+        cfg.extractor_backend = args.extractor_backend
     if getattr(args, "model", None):          # override the LLM model (extractor + L3 + answerer)
         cfg.llm_model = args.model
         cfg.l3_model = args.model
@@ -432,6 +434,10 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--backend", choices=["auto", "claude"], default=None,
                     help="answerer backend for the query half (auto = live if a key is set)")
     pt.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pt.add_argument("--extractor-backend", dest="extractor_backend", default=None,
+                    help="extraction backend: 'haiku' (default, paid LLM) or an LLM-free / hybrid "
+                         "NLP backend (e.g. gliner2, gliner2_nounchunk, gliner_yake_cooccur) — $0 "
+                         "ingest, runs locally. See kg/nlp_extractors.py NLP_BACKENDS.")
     pt.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pt.add_argument("--model", default=None, help="override the LLM model id")
     pt.add_argument("--long-doc-chars", type=int, default=None, dest="long_doc_chars",
