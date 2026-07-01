@@ -102,8 +102,8 @@ class KnowledgeGraph:
     def stats(self) -> dict:
         import os
         s = self.store.stats()
-        ans = ("claude" if os.environ.get("ANTHROPIC_API_KEY")
-               else "unavailable (no ANTHROPIC_API_KEY)")
+        ans = ("openai" if os.environ.get("OPENAI_API_KEY")
+               else "unavailable (no OPENAI_API_KEY)")
         s["backends"] = {"extractor": self.extractor.name, "embedder": self.embedder.name,
                          "answerer": ans}
         return s

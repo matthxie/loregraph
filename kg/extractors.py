@@ -105,61 +105,64 @@ class Extractor(Protocol):
 _ENTITY_ENUM = [t.value for t in EntityType]
 
 GRAPH_TOOL = {
-    "name": "emit_graph",
-    "description": "Emit the knowledge-graph elements extracted from the content.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "entities": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "type": {"type": "string", "enum": _ENTITY_ENUM},
-                    },
-                    "required": ["name", "type"],
-                },
-            },
-            "tags": {"type": "array", "items": {"type": "string"},
-                     "description": "5-12 lowercase topical tags."},
-            "relations": {
-                "type": "array",
-                "description": "Directed relationships between entities.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "source": {"type": "string"},
-                        "target": {"type": "string"},
-                        "labels": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "1-3 short lowercase relationship labels "
-                            "read SOURCE→TARGET, e.g. 'founded', 'works_with', "
-                            "'member_of', 'located_in', 'parent_of'. Use the BASE "
-                            "predicate even for past relationships (use 'works_with' + "
-                            "status 'ended', NOT 'former_colleague'). Consolidated "
-                            "automatically.",
+    "type": "function",
+    "function": {
+        "name": "emit_graph",
+        "description": "Emit the knowledge-graph elements extracted from the content.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "type": {"type": "string", "enum": _ENTITY_ENUM},
                         },
-                        "status": {
-                            "type": "string", "enum": ["asserted", "ended"],
-                            "description": "'asserted' if the relationship holds; 'ended' "
-                            "if the text says it terminated (former, ex-, no longer, left, "
-                            "until X). Default 'asserted'.",
-                        },
-                        "valid_from": {"type": "string",
-                                       "description": "optional ISO date/year the fact began, if stated"},
-                        "valid_to": {"type": "string",
-                                     "description": "optional ISO date/year the fact ended, if stated"},
-                        "confidence": {"type": "number"},
+                        "required": ["name", "type"],
                     },
-                    "required": ["source", "target", "labels"],
                 },
+                "tags": {"type": "array", "items": {"type": "string"},
+                         "description": "5-12 lowercase topical tags."},
+                "relations": {
+                    "type": "array",
+                    "description": "Directed relationships between entities.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source": {"type": "string"},
+                            "target": {"type": "string"},
+                            "labels": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "1-3 short lowercase relationship labels "
+                                "read SOURCE→TARGET, e.g. 'founded', 'works_with', "
+                                "'member_of', 'located_in', 'parent_of'. Use the BASE "
+                                "predicate even for past relationships (use 'works_with' + "
+                                "status 'ended', NOT 'former_colleague'). Consolidated "
+                                "automatically.",
+                            },
+                            "status": {
+                                "type": "string", "enum": ["asserted", "ended"],
+                                "description": "'asserted' if the relationship holds; 'ended' "
+                                "if the text says it terminated (former, ex-, no longer, left, "
+                                "until X). Default 'asserted'.",
+                            },
+                            "valid_from": {"type": "string",
+                                           "description": "optional ISO date/year the fact began, if stated"},
+                            "valid_to": {"type": "string",
+                                         "description": "optional ISO date/year the fact ended, if stated"},
+                            "confidence": {"type": "number"},
+                        },
+                        "required": ["source", "target", "labels"],
+                    },
+                },
+                "description": {"type": "string",
+                                "description": "One-line description (images only)."},
             },
-            "description": {"type": "string",
-                            "description": "One-line description (images only)."},
+            "required": ["entities", "tags"],
         },
-        "required": ["entities", "tags"],
     },
 }
 
@@ -226,15 +229,12 @@ def _parse_tool_payload(payload: dict) -> Extraction:
 # Haiku (real)
 # --------------------------------------------------------------------------- #
 class HaikuExtractor:
-    name = "haiku"
+    name = "gpt4o_mini"
 
     # The system prompt + GRAPH_TOOL are kept STATIC and BLIND (no live graph
     # vocabulary is ever injected) — extraction never diffs against existing state;
     # that is a separate downstream concern (canonicalize.py + the L3 tie-breaker).
     # The predicate list below is a FROZEN soft hint, not the growing vocabulary.
-    # (No cache_control is set: the prefix is ~1K tokens, under Haiku 4.5's 4096-token
-    # minimum cacheable prefix, so it would silently no-op today. Keeping it static
-    # makes it cache-eligible if it ever grows past that minimum — e.g. with few-shots.)
     _SYS = (
         "You extract a knowledge graph from a single piece of content. Work in this order.\n\n"
         "1) ENTITIES. List the salient, nameable entities, each with a type:\n"
@@ -285,10 +285,10 @@ class HaikuExtractor:
     )
 
     def __init__(self, config: Config):
-        import anthropic
+        import openai
         self.config = config
-        self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
-        self.meter = UsageMeter()             # per-call token/cost accounting (testrun)
+        self.client = openai.OpenAI()  # reads OPENAI_API_KEY
+        self.meter = UsageMeter()
 
     @property
     def _system(self) -> str:
@@ -300,22 +300,22 @@ class HaikuExtractor:
         return self._SYS
 
     def _call(self, content_blocks: list) -> Extraction:
-        msg = self.client.messages.create(
+        import json
+        msg = self.client.chat.completions.create(
             model=self.config.llm_model,
             max_tokens=self.config.extract_max_tokens,
-            temperature=0,   # reproducibility: the API default is 1.0. temperature is a
-                             # valid param on Haiku 4.5 / Sonnet 4.6 (only removed on
-                             # Opus 4.7+/Fable 5). The canonicalized topology is what's
-                             # reproducible; the raw LLM output is still not bit-exact.
-            system=self._system,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": self._system},
+                {"role": "user", "content": content_blocks},
+            ],
             tools=[GRAPH_TOOL],
-            tool_choice={"type": "tool", "name": "emit_graph"},
-            messages=[{"role": "user", "content": content_blocks}],
+            tool_choice={"type": "function", "function": {"name": "emit_graph"}},
         )
         self.meter.record("extract", self.config.llm_model, msg)
-        for block in msg.content:
-            if getattr(block, "type", None) == "tool_use" and block.name == "emit_graph":
-                return _parse_tool_payload(block.input)
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if tc and tc[0].function.name == "emit_graph":
+            return _parse_tool_payload(json.loads(tc[0].function.arguments))
         return Extraction()
 
     def _reflexion(self, text: str, first: Extraction) -> Extraction:
@@ -354,8 +354,7 @@ class HaikuExtractor:
             data = base64.standard_b64encode(f.read()).decode()
         hint = f" The image may contain: {label_hint}." if label_hint else ""
         blocks = [
-            {"type": "image", "source": {"type": "base64",
-             "media_type": "image/jpeg", "data": data}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}},
             {"type": "text", "text": "Describe this image in one line and extract its "
              "entities and tags." + hint},
         ]
@@ -430,7 +429,7 @@ class CueGatedExtractor:
         self.local = build_nlp_extractor(
             getattr(config, "local_backend", "gliner_yake_cooccur"), config)
         self.escalate = (bool(getattr(config, "cue_escalate", True))
-                         and bool(os.environ.get("ANTHROPIC_API_KEY")))
+                         and bool(os.environ.get("OPENAI_API_KEY")))
         self._haiku: HaikuExtractor | None = None
         self._fallback_meter = UsageMeter()
         self.n_seen = 0
@@ -484,9 +483,9 @@ def get_extractor(config: Config) -> Extractor:
     if backend not in ("haiku", "auto"):
         from .nlp_extractors import build_nlp_extractor
         return build_nlp_extractor(backend, config)
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError(
-            "No ANTHROPIC_API_KEY found. The 'haiku' extractor is live-only. Use the default "
+            "No OPENAI_API_KEY found. The 'gpt4o_mini' extractor is live-only. Use the default "
             "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
             "ScriptedExtractor directly for deterministic tests/demos.")
     return HaikuExtractor(config)

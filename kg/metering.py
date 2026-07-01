@@ -17,9 +17,10 @@ per-query cost, so this module adds a tiny, **offline-safe** accounting layer:
 Rates are USD per **million** tokens (input, output, cache-read ≈ 0.1×input,
 cache-write/5-min ≈ 1.25×input):
 
-    claude-haiku-4-5(-20251001)   1.00 / 5.00  / 0.10 / 1.25   (extractor + L3 + agent default)
-    claude-sonnet-4-6             3.00 / 15.00 / 0.30 / 3.75   (--model override)
-    claude-opus-4-8               5.00 / 25.00 / 0.50 / 6.25   (--model override)
+    gpt-4o-mini                   0.15 / 0.60  / 0.00 / 0.00   (extractor + L3 + RAG default)
+    claude-haiku-4-5(-20251001)   1.00 / 5.00  / 0.10 / 1.25   (legacy reference)
+    claude-sonnet-4-6             3.00 / 15.00 / 0.30 / 3.75   (legacy reference)
+    claude-opus-4-8               5.00 / 25.00 / 0.50 / 6.25   (legacy reference)
 """
 from __future__ import annotations
 
@@ -30,14 +31,16 @@ _M = 1_000_000.0
 
 # (input, output, cache_read, cache_write) USD per token.
 PRICING: dict[str, tuple[float, float, float, float]] = {
+    "gpt-4o-mini":               (0.15 / _M, 0.60 / _M, 0.00,       0.00),
+    "gpt-4o-mini-2024-07-18":    (0.15 / _M, 0.60 / _M, 0.00,       0.00),
     "claude-haiku-4-5-20251001": (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-haiku-4-5":          (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-sonnet-4-6":         (3.00 / _M, 15.00 / _M, 0.30 / _M, 3.75 / _M),
     "claude-opus-4-8":           (5.00 / _M, 25.00 / _M, 0.50 / _M, 6.25 / _M),
 }
-# Unknown / future model ids fall back to the cheap Haiku rate so a run is never
+# Unknown / future model ids fall back to the cheap gpt-4o-mini rate so a run is never
 # free by accident; the model id is still recorded so the miss is visible.
-_DEFAULT = PRICING["claude-haiku-4-5-20251001"]
+_DEFAULT = PRICING["gpt-4o-mini"]
 
 
 def price(model: str, input_tokens: int, output_tokens: int,
@@ -62,10 +65,17 @@ class CallRecord:
 
 
 def _usage_fields(usage) -> tuple[int, int, int, int]:
-    def g(k: str) -> int:
-        return int(getattr(usage, k, 0) or 0)
-    return (g("input_tokens"), g("output_tokens"),
-            g("cache_read_input_tokens"), g("cache_creation_input_tokens"))
+    def g(*keys: str) -> int:
+        for k in keys:
+            v = getattr(usage, k, None)
+            if v is not None:
+                return int(v)
+        return 0
+    # OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens.
+    return (g("input_tokens", "prompt_tokens"),
+            g("output_tokens", "completion_tokens"),
+            g("cache_read_input_tokens"),
+            g("cache_creation_input_tokens"))
 
 
 def totals_of(records: list[CallRecord]) -> dict:
@@ -103,10 +113,16 @@ class UsageMeter:
         if usage is None:
             return None
         i, o, cr, cw = _usage_fields(usage)
+        # OpenAI: finish_reason on choices[0]; Anthropic: stop_reason on the message.
+        choices = getattr(msg, "choices", None)
+        if choices:
+            truncated = getattr(choices[0], "finish_reason", None) == "length"
+        else:
+            truncated = getattr(msg, "stop_reason", None) == "max_tokens"
         rec = CallRecord(site=site, model=model, input_tokens=i, output_tokens=o,
                          cache_read=cr, cache_write=cw,
                          usd=price(model, i, o, cr, cw), label=label,
-                         truncated=(getattr(msg, "stop_reason", None) == "max_tokens"))
+                         truncated=truncated)
         with self._lock:
             self.records.append(rec)
         return rec

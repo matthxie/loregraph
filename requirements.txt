@@ -5,8 +5,8 @@ rank-bm25>=0.2.2      # BM25 lexical seed signal
 scikit-learn>=1.5     # cosine helpers / label-propagation fallbacks
 
 # LLM pipeline (optional at runtime — falls back to offline heuristics)
-anthropic>=0.40       # Claude Haiku 4.5 structured-output extraction + vision
-python-dotenv>=1.0    # load ANTHROPIC_API_KEY (and friends) from a .env file
+openai>=1.0           # GPT-4o mini structured-output extraction + vision
+python-dotenv>=1.0    # load OPENAI_API_KEY (and friends) from a .env file
 
 # Local embeddings (optional at runtime — falls back to a hashing embedder)
 sentence-transformers>=5.0  # BAAI/bge-small-en-v1.5

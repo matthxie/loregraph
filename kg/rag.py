@@ -6,8 +6,8 @@ projection) does the multi-hop work and assembles a compact context — the top 
 text plus the currently-valid facts among the touched entities — and then a SINGLE LLM
 call answers over that context with citations. No per-hop tool loop, no LLM-in-the-walk.
 
-Answering is live-only: a `ClaudeAnswerer` makes one Anthropic call and validates citations.
-`client=` injects a (possibly fake) Anthropic client for tests. The selectable offline
+Answering is live-only: an `OpenAIAnswerer` makes one OpenAI call and validates citations.
+`client=` injects a (possibly fake) OpenAI client for tests. The selectable offline
 answerer was removed; a deterministic extractive synthesis (`_extractive`) survives ONLY as
 an internal crash-guard if that single live call raises mid-run, so one transient API error
 never sinks a whole test run — it is not a user-facing backend.
@@ -35,12 +35,6 @@ from .store import GraphStore, fact_active
 _WS = re.compile(r"\s+")
 _EP_ID = re.compile(r"\bep_[A-Za-z0-9_#]+\b")
 
-
-def _supports_temperature(model: str) -> bool:
-    """Opus 4.7+ and Fable 5 dropped the `temperature` param (the API rejects it). Haiku 4.5 /
-    Sonnet 4.6 still accept it. Used so the answerer can run on Opus for testing."""
-    m = (model or "").lower()
-    return not (("opus-4-7" in m) or ("opus-4-8" in m) or ("opus-4-9" in m) or ("fable" in m))
 
 
 @dataclass
@@ -75,16 +69,19 @@ _RAG_SYS = (
 )
 
 _ANSWER_TOOL = {
-    "name": "submit_answer",
-    "description": "Submit the final answer grounded in the provided context.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "answer": {"type": "string"},
-            "citations": {"type": "array", "items": {"type": "string"},
-                          "description": "episode ids you used, e.g. ep_2"},
+    "type": "function",
+    "function": {
+        "name": "submit_answer",
+        "description": "Submit the final answer grounded in the provided context.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+                "citations": {"type": "array", "items": {"type": "string"},
+                              "description": "episode ids you used, e.g. ep_2"},
+            },
+            "required": ["answer", "citations"],
         },
-        "required": ["answer", "citations"],
     },
 }
 
@@ -222,8 +219,8 @@ def _extractive(store: GraphStore, query: str, ep_ids: list[str],
     return "\n".join(parts)
 
 
-class ClaudeAnswerer:
-    name = "claude"
+class OpenAIAnswerer:
+    name = "openai"
 
     def __init__(self, store, config: Config, builder: ContextBuilder, *, client):
         self.store = store
@@ -239,14 +236,17 @@ class ClaudeAnswerer:
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph))
         try:
-            kw = dict(
-                model=self.config.rag_model, max_tokens=self.config.rag_max_tokens,
-                system=_RAG_SYS, tools=[_ANSWER_TOOL],
-                tool_choice={"type": "tool", "name": "submit_answer"},
-                messages=[{"role": "user", "content": blob}])
-            if _supports_temperature(self.config.rag_model):
-                kw["temperature"] = 0
-            msg = self.client.messages.create(**kw)
+            msg = self.client.chat.completions.create(
+                model=self.config.rag_model,
+                max_tokens=self.config.rag_max_tokens,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": _RAG_SYS},
+                    {"role": "user", "content": blob},
+                ],
+                tools=[_ANSWER_TOOL],
+                tool_choice={"type": "function", "function": {"name": "submit_answer"}},
+            )
             self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
@@ -256,12 +256,13 @@ class ClaudeAnswerer:
             return base
         base.usage = self.meter.totals()
         ans, raw = "", []
-        for b in msg.content:
-            if getattr(b, "type", None) == "tool_use" and b.name == "submit_answer":
-                ans = str(b.input.get("answer", "")).strip()
-                raw = b.input.get("citations", [])
-            elif getattr(b, "type", None) == "text":
-                ans = ans or b.text.strip()
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if tc and tc[0].function.name == "submit_answer":
+            payload = json.loads(tc[0].function.arguments)
+            ans = str(payload.get("answer", "")).strip()
+            raw = payload.get("citations", [])
+        elif msg.choices and msg.choices[0].message.content:
+            ans = msg.choices[0].message.content.strip()
         if not raw:
             raw = _EP_ID.findall(ans)
         kept, dropped = _validate(raw, ep_ids)
@@ -289,18 +290,18 @@ class RagAnswerer:
         self._backend = self._pick_backend(client)
 
     def _pick_backend(self, client):
-        """Live-only: a ClaudeAnswerer over an injected client, else a real Anthropic client
+        """Live-only: an OpenAIAnswerer over an injected client, else a real OpenAI client
         from the env key. There is no offline backend — without a key (and no injected
         client) we raise, rather than silently degrade to a fake answer."""
         if client is not None:
-            return ClaudeAnswerer(self.store, self.config, self.builder, client=client)
-        if os.environ.get("ANTHROPIC_API_KEY"):
-            import anthropic
-            return ClaudeAnswerer(self.store, self.config, self.builder,
-                                  client=anthropic.Anthropic())
+            return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
+        if os.environ.get("OPENAI_API_KEY"):
+            import openai
+            return OpenAIAnswerer(self.store, self.config, self.builder,
+                                  client=openai.OpenAI())
         raise RuntimeError(
-            "No ANTHROPIC_API_KEY found. The query/answer path is live-only (the offline "
-            "answerer was removed). Set the key (kg auto-reads a project-root .env), or "
+            "No OPENAI_API_KEY found. The query/answer path is live-only. "
+            "Set the key (kg auto-reads a project-root .env), or "
             "inject a client: get_answerer(..., client=fake).")
 
     def run(self, query: str, k: int | None = None, as_of: str | None = None,
