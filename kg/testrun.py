@@ -283,19 +283,22 @@ _JUDGE_SYS = (
     "grade tool exactly once.")
 
 _JUDGE_TOOL = {
-    "name": "grade",
-    "description": "Grade the model answer against the reference.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "correct": {"type": "boolean",
-                        "description": "true if the model answer is factually correct "
-                        "and answers the question"},
-            "score": {"type": "number",
-                      "description": "0.0-1.0 quality: 1 fully correct, 0.5 partial, 0 wrong"},
-            "reason": {"type": "string", "description": "one short sentence"},
+    "type": "function",
+    "function": {
+        "name": "grade",
+        "description": "Grade the model answer against the reference.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "correct": {"type": "boolean",
+                            "description": "true if the model answer is factually correct "
+                            "and answers the question"},
+                "score": {"type": "number",
+                          "description": "0.0-1.0 quality: 1 fully correct, 0.5 partial, 0 wrong"},
+                "reason": {"type": "string", "description": "one short sentence"},
+            },
+            "required": ["correct", "score"],
         },
-        "required": ["correct", "score"],
     },
 }
 
@@ -307,17 +310,21 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
               f"Model answer:\n{answer[:1500]}\n\n"
               "Grade the model answer.")
     try:
-        msg = client.messages.create(
-            model=model, max_tokens=300, temperature=0, system=_JUDGE_SYS,
-            tools=[_JUDGE_TOOL], tool_choice={"type": "tool", "name": "grade"},
-            messages=[{"role": "user", "content": prompt}])
+        msg = client.chat.completions.create(
+            model=model, max_tokens=300, temperature=0,
+            messages=[
+                {"role": "system", "content": _JUDGE_SYS},
+                {"role": "user", "content": prompt},
+            ],
+            tools=[_JUDGE_TOOL],
+            tool_choice={"type": "function", "function": {"name": "grade"}})
         meter.record("judge", model, msg, label=q.get("id", ""))
-        for b in msg.content:
-            if getattr(b, "type", None) == "tool_use" and b.name == "grade":
-                d = b.input or {}
-                return {"correct": bool(d.get("correct")),
-                        "score": round(float(d.get("score", 0.0)), 3),
-                        "reason": str(d.get("reason", ""))[:300]}
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if tc and tc[0].function.name == "grade":
+            d = json.loads(tc[0].function.arguments) or {}
+            return {"correct": bool(d.get("correct")),
+                    "score": round(float(d.get("score", 0.0)), 3),
+                    "reason": str(d.get("reason", ""))[:300]}
     except Exception as e:  # noqa: BLE001 — judge is best-effort, never crash the run
         return {"error": f"{e!r}"}
     return None
@@ -340,12 +347,12 @@ def load_questions(path: str = QUESTIONS_PATH, limit: int | None = None) -> list
 
 
 def _build_judge_client(model: str):
-    """A separate Anthropic client for the response-accuracy judge, or None offline."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    """An OpenAI client for the response-accuracy judge, or None offline."""
+    if not os.environ.get("OPENAI_API_KEY"):
         return None
     try:
-        import anthropic
-        return anthropic.Anthropic()
+        import openai
+        return openai.OpenAI()
     except Exception:  # noqa: BLE001
         return None
 

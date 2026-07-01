@@ -321,17 +321,17 @@ class Canonicalizer:
 
     # ------------------------------------------------------------ L3 tie-breaker
     def _l3(self):
-        """Lazy anthropic client for the L3 adjudicator, or None if disabled / no key
+        """Lazy OpenAI client for the L3 adjudicator, or None if disabled / no key
         (offline parity: with no key the whole L3 path is skipped and resolve_* keep
         their deterministic under-merge default)."""
         if not self.config.l3_enabled:
             return None
         if self._l3_client is _L3_UNSET:
             self._l3_client = None
-            if os.environ.get("ANTHROPIC_API_KEY"):
+            if os.environ.get("OPENAI_API_KEY"):
                 try:
-                    import anthropic
-                    self._l3_client = anthropic.Anthropic()
+                    import openai
+                    self._l3_client = openai.OpenAI()
                 except Exception:  # noqa: BLE001 — missing dep / bad env → stay disabled
                     self._l3_client = None
         return self._l3_client
@@ -359,11 +359,12 @@ class Canonicalizer:
             prompt = _L3_ENT_PROMPT.format(kind=kind, surface=surface, candidates=lines)
         verdict, reason = "NEW", ""
         try:
-            msg = client.messages.create(
+            msg = client.chat.completions.create(
                 model=self.config.l3_model, max_tokens=300, temperature=0,
-                system=_L3_SYS, messages=[{"role": "user", "content": prompt}])
+                messages=[{"role": "system", "content": _L3_SYS},
+                           {"role": "user", "content": prompt}])
             self.meter.record("l3", self.config.l3_model, msg, label=surface)
-            text = next((b.text for b in msg.content if getattr(b, "type", None) == "text"), "")
+            text = msg.choices[0].message.content or "" if msg.choices else ""
             data = _extract_json(text) or {}
             verdict = str(data.get("verdict", "NEW")).strip()
             reason = str(data.get("reason", ""))[:200]

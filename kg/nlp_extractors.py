@@ -330,29 +330,32 @@ def svo_relations(doc, entities: list[ExtractedEntity],
 # Hybrid: one Claude call for relations only, given the NLP-extracted entities
 # --------------------------------------------------------------------------- #
 _REL_TOOL = {
-    "name": "emit_relations",
-    "description": "Emit the directed relationships among the GIVEN entities.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "relations": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "source": {"type": "string"},
-                        "target": {"type": "string"},
-                        "labels": {"type": "array", "items": {"type": "string"},
-                                   "description": "1-3 short lowercase predicates read source→target"},
-                        "status": {"type": "string", "enum": ["asserted", "ended"]},
-                        "valid_from": {"type": "string"},
-                        "valid_to": {"type": "string"},
+    "type": "function",
+    "function": {
+        "name": "emit_relations",
+        "description": "Emit the directed relationships among the GIVEN entities.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source": {"type": "string"},
+                            "target": {"type": "string"},
+                            "labels": {"type": "array", "items": {"type": "string"},
+                                       "description": "1-3 short lowercase predicates read source→target"},
+                            "status": {"type": "string", "enum": ["asserted", "ended"]},
+                            "valid_from": {"type": "string"},
+                            "valid_to": {"type": "string"},
+                        },
+                        "required": ["source", "target", "labels"],
                     },
-                    "required": ["source", "target", "labels"],
                 },
             },
+            "required": ["relations"],
         },
-        "required": ["relations"],
     },
 }
 
@@ -368,43 +371,48 @@ _REL_SYS = (
 
 class _LlmRelations:
     def __init__(self, config: Config):
-        import anthropic
+        import openai
         self.config = config
-        self.client = anthropic.Anthropic()
+        self.client = openai.OpenAI()
         self.meter = UsageMeter()
 
     def __call__(self, text: str, entities: list[ExtractedEntity]) -> list[ExtractedRelation]:
+        import json
         if len(entities) < 2:
             return []
         ent_list = ", ".join(e.name for e in entities[:60])
         prompt = (f"ENTITIES: {ent_list}\n\nCONTENT:\n{text[:self.config.extract_max_chars]}")
         try:
-            msg = self.client.messages.create(
+            msg = self.client.chat.completions.create(
                 model=self.config.llm_model, max_tokens=self.config.extract_max_tokens,
-                temperature=0, system=_REL_SYS, tools=[_REL_TOOL],
-                tool_choice={"type": "tool", "name": "emit_relations"},
-                messages=[{"role": "user", "content": prompt}])
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": _REL_SYS},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=[_REL_TOOL],
+                tool_choice={"type": "function", "function": {"name": "emit_relations"}})
             self.meter.record("extract", self.config.llm_model, msg)
         except Exception:  # noqa: BLE001 — keep ingest alive; degrade to no relations
             return []
         names = {e.name.lower() for e in entities}
         out: list[ExtractedRelation] = []
-        for b in msg.content:
-            if getattr(b, "type", None) != "tool_use" or b.name != "emit_relations":
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if not tc or tc[0].function.name != "emit_relations":
+            return out
+        for r in (json.loads(tc[0].function.arguments) or {}).get("relations", []) or []:
+            s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
+            labels = [str(x).strip() for x in (r.get("labels") or []) if str(x).strip()]
+            if not s or not t or not labels:
                 continue
-            for r in (b.input or {}).get("relations", []) or []:
-                s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
-                labels = [str(x).strip() for x in (r.get("labels") or []) if str(x).strip()]
-                if not s or not t or not labels:
-                    continue
-                if s.lower() not in names or t.lower() not in names:
-                    continue  # never relate something NLP didn't name
-                out.append(ExtractedRelation(
-                    source=s, target=t, labels=labels[:3], provenance=Provenance.EXTRACTED,
-                    confidence=0.8,
-                    status="ended" if str(r.get("status", "")).lower() == "ended" else "asserted",
-                    valid_from=str(r.get("valid_from", "") or ""),
-                    valid_to=str(r.get("valid_to", "") or "")))
+            if s.lower() not in names or t.lower() not in names:
+                continue  # never relate something NLP didn't name
+            out.append(ExtractedRelation(
+                source=s, target=t, labels=labels[:3], provenance=Provenance.EXTRACTED,
+                confidence=0.8,
+                status="ended" if str(r.get("status", "")).lower() == "ended" else "asserted",
+                valid_from=str(r.get("valid_from", "") or ""),
+                valid_to=str(r.get("valid_to", "") or "")))
         return out
 
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 @dataclass
 class Config:
     # ---- models (ARCHITECTURE §0) -------------------------------------------
-    llm_model: str = "claude-haiku-4-5-20251001"
+    llm_model: str = "gpt-4o-mini"
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384  # bge-small / MiniLM both 384; hashing fallback matches
 
@@ -66,7 +66,7 @@ class Config:
 
     # ---- L3 selective LLM canonicalization tie-breaker (§3 L3 — SHIP DISABLED) ----
     l3_enabled: bool = False
-    l3_model: str = "claude-haiku-4-5-20251001"
+    l3_model: str = "gpt-4o-mini"
     rel_gray_floor: float = 0.90
 
     # ---- derived edges (§2 / §6.5) ------------------------------------------
@@ -98,8 +98,8 @@ class Config:
     # of the top episodes + the currently-valid facts among the touched entities, then a
     # SINGLE LLM call answers over it with citations. No per-hop LLM walking. LIVE-ONLY:
     # the offline answerer was removed, so `kg ask` requires a key (or an injected client).
-    rag_backend: str = "claude"       # "claude" | "auto" (both = live Claude)
-    rag_model: str = "claude-haiku-4-5-20251001"
+    rag_backend: str = "openai"        # "openai" | "auto" (both = live OpenAI)
+    rag_model: str = "gpt-4o-mini"
     rag_max_tokens: int = 1024        # answer output cap
     rag_context_episodes: int = 6     # episodes whose text enters the context blob
     rag_episode_chars: int = 1200     # per-episode text budget in the context
