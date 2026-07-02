@@ -28,6 +28,7 @@ from .embedders import Embedder
 from .facts import FactIndex, FactLine
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
+from .profiler import span as prof_span
 from .retrieval import HybridRetriever, RetrievalResult
 from .route import STATE
 from .store import GraphStore, fact_active
@@ -230,23 +231,25 @@ class OpenAIAnswerer:
         self.meter = UsageMeter()
 
     def answer(self, result: RetrievalResult) -> RagAnswer:
-        ep_ids, facts, blob = self.builder.build(result)
+        with prof_span("query.build_context"):
+            ep_ids, facts, blob = self.builder.build(result)
         base = RagAnswer(query=result.query, answer="", backend=self.name,
                          as_of=result.as_of, context_episodes=ep_ids,
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph))
         try:
-            msg = self.client.chat.completions.create(
-                model=self.config.rag_model,
-                max_tokens=self.config.rag_max_tokens,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": _RAG_SYS},
-                    {"role": "user", "content": blob},
-                ],
-                tools=[_ANSWER_TOOL],
-                tool_choice={"type": "function", "function": {"name": "submit_answer"}},
-            )
+            with prof_span("query.llm_answer"):
+                msg = self.client.chat.completions.create(
+                    model=self.config.rag_model,
+                    max_tokens=self.config.rag_max_tokens,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": _RAG_SYS},
+                        {"role": "user", "content": blob},
+                    ],
+                    tools=[_ANSWER_TOOL],
+                    tool_choice={"type": "function", "function": {"name": "submit_answer"}},
+                )
             self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)

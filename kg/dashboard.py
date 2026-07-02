@@ -279,6 +279,13 @@ function barChart(host, items, opts){ opts=opts||{}; const max=Math.max(0.001,..
 function fmtN(v){ if(v>=1e6)return (v/1e6).toFixed(1)+"M"; if(v>=1e3)return (v/1e3).toFixed(1)+"k";
   return (v%1===0)?v:(+v).toFixed(2); }
 function fmtUSD(v){ return "$"+(+v||0).toFixed(v<1?4:2); }
+function fmtS(v){ v=+v||0; return v>=60?(v/60).toFixed(1)+"m":v>=1?v.toFixed(1)+"s":Math.round(v*1000)+"ms"; }
+// profile dict -> sorted barChart items. Values are either bare seconds (per-item compact
+// form) or {seconds, calls} (run-level totals); ×N annotates multi-call stages.
+function profItems(prof, color){ return Object.entries(prof||{}).map(([k,v])=>{
+    const s=(typeof v==="number")?v:(v.seconds||0), c=(v&&v.calls)||0;
+    return {k:k+(c>1?" ×"+c:""), v:s, c:color||"#f5a623"}; })
+  .filter(d=>d.v>0).sort((a,b)=>b.v-a.v); }
 """
 
 # Canvas force-directed graph — Obsidian-style: live gravity/charge/link physics, draggable
@@ -492,6 +499,7 @@ if(!runs.length){host.innerHTML=`<div class="empty card">No runs yet.<br><br>
 runs.forEach(r=>{
   const acc=r.recall_at_k!=null?(r.recall_at_k*100).toFixed(0)+"%":"–";
   const ra=r.response_accuracy!=null?(r.response_accuracy*100).toFixed(0)+"%":"–";
+  const tm=r.ingest_seconds!=null?fmtS(r.ingest_seconds)+(r.query_seconds?" + "+fmtS(r.query_seconds):""):"–";
   const a=el("a",{href:"/run?id="+encodeURIComponent(r.run_id),class:"run card"});
   a.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline">
     <h1 style="font-size:15px">${esc(r.label||r.run_id)}</h1>
@@ -504,6 +512,7 @@ runs.forEach(r=>{
       <div class="stat"><div class="k">recall@k</div><div class="v num">${acc}</div></div>
       <div class="stat"><div class="k">resp acc</div><div class="v num">${ra}</div></div>
       <div class="stat"><div class="k">queries</div><div class="v num">${r.n_queries||0}</div></div>
+      <div class="stat"><div class="k">time (ingest + query)</div><div class="v num">${tm}</div></div>
     </div>`;
   host.appendChild(a);
 });
@@ -549,7 +558,8 @@ _RUN_TEMPLATE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 const DATA=/*__DATA__*/;
 __GRAPHJS__
 __FORCEJS__
-const RUN=DATA.run, ING=RUN.ingest, QRY=RUN.query, tip=document.getElementById("tip");
+const RUN=DATA.run, ING=RUN.ingest, QRY=RUN.query, PROF=RUN.profile||null,
+      tip=document.getElementById("tip");
 
 // ---------- header ----------
 (function(){ const t=document.getElementById("top");
@@ -652,6 +662,12 @@ const Input=(function(){
           <div class="card panel chartbox"><h2>Avg tags per object</h2><div id="c-tpo"></div></div>
           <div class="card panel chartbox"><h2>Temporal tags — doc_frequency of top tags over time</h2><div id="c-temporal"></div>
             <div class="legend mut" id="c-temporal-leg" style="margin-top:4px"></div></div>
+          <div class="card panel chartbox" id="card-iprof" style="display:none"><h2>⏱ Ingest time by stage</h2><div id="c-iprof"></div>
+            <div class="mut" style="font-size:10px;margin-top:4px">ingest.* stages are pipeline wall-clock; extract.* / canon.* are per-call-site
+            time (summed across the extraction thread-pool, so they can exceed wall-clock — that is the concurrency working).</div></div>
+          <div class="card panel chartbox" id="card-csite" style="display:none"><h2>Cost by call site</h2><div id="c-csite"></div>
+            <div class="mut" style="font-size:10px;margin-top:4px">every LLM call site's spend across the whole run (extract = ingestion,
+            l3 = canonicalization tie-breaker, rag = production answer calls, judge = eval-only grading).</div></div>
         </div>
       </div>`;
     wireStatTips(host);
@@ -666,6 +682,16 @@ const Input=(function(){
     charts.temporal=lineChart(document.getElementById("c-temporal"),tagSeries.length?tagSeries:[{color:"#888",pts:[0]}],{h:130});
     document.getElementById("c-temporal-leg").innerHTML=tagSeries.map(s=>
       `<span><i class="dot" style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")||'<span class="mut">no tag activity</span>';
+    if(PROF){
+      const it=profItems(PROF.ingest);
+      if(it.length){ document.getElementById("card-iprof").style.display="";
+        barChart(document.getElementById("c-iprof"),it,{fmt:fmtS}); }
+      const cs=Object.entries(PROF.cost_by_site||{}).map(([k,v])=>
+        ({k:k+" ×"+v.llm_calls+" ("+fmtN(v.tokens)+" tok)",v:v.cost_usd,c:k==="judge"?"#8b949e":"#2ec27e"}))
+        .filter(d=>d.v>0).sort((a,b)=>b.v-a.v);
+      if(cs.length){ document.getElementById("card-csite").style.display="";
+        barChart(document.getElementById("c-csite"),cs,{fmt:fmtUSD}); }
+    }
     document.getElementById("i-scrub").oninput=e=>{stop();setIdx(+e.target.value);};
     document.getElementById("i-all").onclick=()=>{stop();setIdx(steps.length-1);};
     document.getElementById("i-play").onclick=play;
@@ -712,15 +738,18 @@ const Input=(function(){
         <h2 style="margin:0">doc ${s.i+1} · ${esc(s.modality)}</h2>
         <span class="pill">${esc(s.created_at||"")}</span></div>
       <div style="font-weight:600;margin:6px 0 8px">${esc(s.title)}</div>
-      <div class="statbar" style="grid-template-columns:repeat(4,1fr);margin-bottom:8px">
+      <div class="statbar" style="grid-template-columns:repeat(5,1fr);margin-bottom:8px">
         ${statEl("nodes +",signed(s.node_delta))}
         ${statEl("tokens",fmtN(s.tokens||0))}
         ${statEl("cost",fmtUSD(s.cost_usd||0))}
         ${statEl("llm calls",s.llm_calls||0)}
+        ${statEl("time",fmtS(s.seconds||0))}
       </div>
       ${f.tags.length?`<div class="mut" style="font-size:11px">tags</div><div>${f.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`:""}
       ${f.entities.length?`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${f.entities.map(t=>`<span class="tag" style="border-color:#b06ff0">${esc(t)}</span>`).join("")}</div>`:""}
-      ${f.rel_tags.length?`<div class="mut" style="font-size:11px;margin-top:6px">relations</div><div>${f.rel_tags.map(t=>`<span class="tag" style="border-color:#56d4dd">${esc(t)}</span>`).join("")}</div>`:""}`;
+      ${f.rel_tags.length?`<div class="mut" style="font-size:11px;margin-top:6px">relations</div><div>${f.rel_tags.map(t=>`<span class="tag" style="border-color:#56d4dd">${esc(t)}</span>`).join("")}</div>`:""}
+      ${s.profile?`<div class="mut" style="font-size:11px;margin-top:8px">⏱ this step, by stage</div><div id="i-doc-prof"></div>`:""}`;
+    if(s.profile) barChart(document.getElementById("i-doc-prof"), profItems(s.profile), {fmt:fmtS});
   }
   function signed(d){ let tot=0; for(const k in (d||{}))tot+=d[k]; return (tot>=0?"+":"")+tot; }
   function play(){ if(timer){stop();return;} document.getElementById("i-play").textContent="⏸ Pause";
@@ -735,6 +764,8 @@ Input.onShow();
 // =================== QUERY VIEW ===================
 const Query=(function(){
   const qs=QRY.queries, T=QRY.totals; let built=false, graph=null, sel=null;
+  function avgLat(){ const xs=qs.map(q=>q.seconds).filter(v=>v!=null);
+    return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null; }
   function build(){
     const host=document.getElementById("query-view");
     const kinds=Object.entries(T.by_kind||{}).map(([k,v])=>({k,v:v.recall_at_k,c:"#4f8ef7"}));
@@ -747,12 +778,16 @@ const Query=(function(){
         ${statEl("cite grounding",pct(T.citation_grounding),"","Mean fraction of gold evidence sessions the agent actually cited (citations ∩ gold).")}
         ${statEl("resp acc",T.response_accuracy!=null?pct(T.response_accuracy):"–","judge","Mean LLM-judge score of the answer text vs the reference answer (live runs only; – when offline).")}
         ${statEl("avg steps",T.avg_steps,"","Average number of tool-call rounds the agent took per question.")}
+        ${statEl("avg latency",avgLat()!=null?fmtS(avgLat()):"–","/query","Mean wall-clock seconds per production ask() call (retrieve + context + one LLM answer; excludes the eval-only judge).")}
         ${statEl("query cost (prod)",fmtUSD(T.agent_cost_usd ?? T.cost_usd),"","Production USD: the single PPR→RAG answer call per query, summed across all queries. Excludes the eval-only judge — this is what production actually pays.")}
         ${statEl("eval judge",fmtUSD(T.judge_cost_usd ?? 0),"eval-only","Eval-only USD: the LLM grader that certifies answer correctness during testing. Runs every test round but is NOT paid in production.")}
       </div>
       <div class="qlayout">
         <div>
           <div class="card panel chartbox"><h2>recall@k by question kind</h2><div id="q-kinds"></div></div>
+          <div class="card panel chartbox" id="card-qprof" style="display:none"><h2>⏱ Query time by stage</h2><div id="q-prof"></div>
+            <div class="mut" style="font-size:10px;margin-top:4px">totals across all queries. judge.llm is eval-only
+            (not paid in production); everything else is the live ask() path.</div></div>
           <div class="card scroll" style="max-height:62vh">
             <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th class="num">$</th></tr></thead>
             <tbody id="q-list"></tbody></table>
@@ -765,6 +800,9 @@ const Query=(function(){
       </div>`;
     wireStatTips(host);
     barChart(document.getElementById("q-kinds"), kinds, {fmt:pct});
+    if(PROF){ const qp=profItems(PROF.query);
+      if(qp.length){ document.getElementById("card-qprof").style.display="";
+        barChart(document.getElementById("q-prof"),qp,{fmt:fmtS}); } }
     const tb=document.getElementById("q-list");
     qs.forEach((q,i)=>{ const tr=el("tr",{class:"qrow",id:"qr-"+i});
       // "ok" dot = did the ANSWER pass. Prefer the LLM judge's correctness verdict (green
@@ -808,7 +846,7 @@ const Query=(function(){
     document.getElementById("q-detail").innerHTML=`
       <div class="row wrap" style="justify-content:space-between;align-items:baseline">
         <h2 style="margin:0">${esc(q.id||"")} · ${esc(q.kind)} <span class="mut">(${esc(q.difficulty||"")})</span></h2>
-        <span class="pill">${q.steps} steps · ${q.stopped} · ${fmtN(q.tokens||0)} tok · ${fmtUSD(q.cost_usd||0)}</span>
+        <span class="pill">${q.steps} steps · ${q.stopped} · ${fmtN(q.tokens||0)} tok · ${fmtUSD(q.cost_usd||0)}${q.seconds!=null?` · ${fmtS(q.seconds)}`:""}</span>
       </div>
       <div style="font-weight:600;margin:6px 0">${esc(q.query)}</div>
       <div class="statbar" style="grid-template-columns:repeat(4,1fr);margin:8px 0">
@@ -824,9 +862,11 @@ const Query=(function(){
       </div>
       <div style="margin-top:8px"><span class="mut" style="font-size:11px">gold (green=retrieved)</span><br>${gold}</div>
       <div style="margin-top:6px"><span class="mut" style="font-size:11px">citations</span><br>${cites}</div>
+      ${q.profile?`<div style="margin-top:10px"><span class="mut" style="font-size:11px">⏱ this query, by stage (judge.llm is eval-only)</span><div id="qd-prof"></div></div>`:""}
       <div style="margin-top:10px"><span class="mut" style="font-size:11px">tool-call trace</span>
         <div class="scroll" style="max-height:200px;margin-top:4px"><table class="tracetbl">
         <thead><tr><th>#</th><th>tool</th><th>input</th><th>result</th></tr></thead><tbody>${trace}</tbody></table></div></div>`;
+    if(q.profile) barChart(document.getElementById("qd-prof"), profItems(q.profile), {fmt:fmtS});
   }
   function pct(v){ return v==null?"–":(v*100).toFixed(0)+"%"; }
   return {onShow(){ if(!built){build();built=true;} }};

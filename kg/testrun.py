@@ -41,6 +41,8 @@ from .evaluate import _mrr, _recall_at_k
 from .graph import KnowledgeGraph
 from .metering import UsageMeter, totals_of
 from .models import EdgeType, NodeType
+from .profiler import Profiler, activate as prof_activate, compact, \
+    deactivate as prof_deactivate, merge_profiles, span as prof_span
 from .viz import rag_trace_payload
 
 DEFAULT_TIER = "micro"   # tiny committed LIVE smoke set (3 instances); see scripts/build_micro.py
@@ -310,14 +312,15 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
               f"Model answer:\n{answer[:1500]}\n\n"
               "Grade the model answer.")
     try:
-        msg = client.chat.completions.create(
-            model=model, max_tokens=300, temperature=0,
-            messages=[
-                {"role": "system", "content": _JUDGE_SYS},
-                {"role": "user", "content": prompt},
-            ],
-            tools=[_JUDGE_TOOL],
-            tool_choice={"type": "function", "function": {"name": "grade"}})
+        with prof_span("judge.llm"):
+            msg = client.chat.completions.create(
+                model=model, max_tokens=300, temperature=0,
+                messages=[
+                    {"role": "system", "content": _JUDGE_SYS},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=[_JUDGE_TOOL],
+                tool_choice={"type": "function", "function": {"name": "grade"}})
         meter.record("judge", model, msg, label=q.get("id", ""))
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "grade":
@@ -328,6 +331,20 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
     except Exception as e:  # noqa: BLE001 — judge is best-effort, never crash the run
         return {"error": f"{e!r}"}
     return None
+
+
+def _acc_site(sites: dict, site: str, llm_calls: int, tokens: int, cost: float) -> None:
+    """Accumulate one call-site's spend into the profile's cost_by_site breakdown."""
+    e = sites.setdefault(site, {"llm_calls": 0, "tokens": 0, "cost_usd": 0.0})
+    e["llm_calls"] += llm_calls
+    e["tokens"] += tokens
+    e["cost_usd"] = round(e["cost_usd"] + cost, 6)
+
+
+def _acc_site_records(sites: dict, records) -> None:
+    """Group drained UsageMeter CallRecords (site: extract / l3 / ...) into cost_by_site."""
+    for r in records:
+        _acc_site(sites, r.site, 1, r.input_tokens + r.output_tokens, r.usd)
 
 
 # --------------------------------------------------------------------------- #
@@ -440,6 +457,11 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     all_records = []
     prev_ids: set[str] = set(g.store.nodes.keys())
     prev_stats = g.store.stats()
+    prof = Profiler()                  # stage timing (kg/profiler.py); drained per phase
+    ingest_prof: dict = {}
+    query_prof: dict = {}
+    cost_by_site: dict = {}
+    prof_activate(prof)
     t0 = time.time()
     for i, item in enumerate(items):
         g.extractor.meter.drain()        # reset per-document attribution
@@ -447,6 +469,9 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         rep = g.ingest_object(item)
         recs = g.extractor.meter.drain() + g.canon.meter.drain()
         all_records.extend(recs)
+        _acc_site_records(cost_by_site, recs)
+        step_prof = prof.drain()
+        merge_profiles(ingest_prof, step_prof)
         after = g.store.stats()
         cur_ids = set(g.store.nodes.keys())
         added = cur_ids - prev_ids
@@ -461,6 +486,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
             "status": ("ingested" if rep.ingested else
                        "skipped" if rep.skipped else "failed"),
             "seconds": round(rep.seconds, 3),
+            "profile": compact(step_prof),
             "nodes": after["nodes"], "edges": after["edges"],
             "by_node_type": after["by_node_type"], "by_edge_type": after["by_edge_type"],
             "vocab": _vocab(after), "node_delta": delta,
@@ -483,8 +509,10 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
 
     if communities:
         log("detecting communities ...")
-        g.build_communities()
+        with prof_span("ingest.communities"):
+            g.build_communities()
     g.save()
+    merge_profiles(ingest_prof, prof.drain())   # communities + any stragglers
 
     log("assembling the object/entity/tag graph ...")
     graph = _full_graph(g.store)
@@ -512,14 +540,27 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         jclient = _build_judge_client(cfg.l3_model)
     qrecords: list[dict] = []
     for q in questions:
+        t_ask = time.time()
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
                     kind=q.get("kind"))
+        ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["lane"] = getattr(ans, "lane", "")
+        rec["seconds"] = round(ask_seconds, 3)             # production ask() wall time
+        q_prof = prof.drain()                              # ask stages + eval-only judge.llm
+        rec["profile"] = compact(q_prof)
+        merge_profiles(query_prof, q_prof)
+        u = ans.usage or {}
+        _acc_site(cost_by_site, "rag", u.get("llm_calls", 0), u.get("tokens", 0),
+                  u.get("cost_usd", 0.0))
         qrecords.append(rec)
         log(f"  {rec['id'] or rec['query'][:30]:32s} recall@k={rec['recall_at_k']:.2f} "
             f"hit={'Y' if rec['hit'] else '.'} steps={rec['steps']}")
 
+    prof_deactivate()
+    jt = judge_meter.totals()
+    if jt["llm_calls"]:
+        _acc_site(cost_by_site, "judge", jt["llm_calls"], jt["tokens"], jt["cost_usd"])
     query_totals = _query_totals(qrecords, judge_meter, kk)
 
     # ---------------------------------------------------------------- assemble
@@ -539,6 +580,8 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
                    "match": "session-level (gold evidence sessions vs ingested episodes)"},
         "cost_usd": round(ingest_totals["cost_usd"] + query_totals["cost_usd"], 6),
         "tokens": ingest_totals["tokens"] + query_totals["tokens"],
+        "profile": {"ingest": ingest_prof, "query": query_prof,
+                    "cost_by_site": cost_by_site},
         "ingest": {"totals": ingest_totals, "steps": steps, "graph": graph},
         "query": {"totals": query_totals, "queries": qrecords},
     }
@@ -620,6 +663,11 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     rep_graph: dict | None = None
     rep_nodes = -1
     backends_seen: dict | None = None
+    prof = Profiler()                  # stage timing (kg/profiler.py); drained per phase
+    ingest_prof: dict = {}
+    query_prof: dict = {}
+    cost_by_site: dict = {}
+    prof_activate(prof)
     t0 = time.time()
 
     for i, (q, sessions) in enumerate(instances):
@@ -632,8 +680,12 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         rep = g.ingest(sessions)                          # only THIS instance's haystack
         recs = g.extractor.meter.drain() + g.canon.meter.drain()
         tok = totals_of(recs)
+        _acc_site_records(cost_by_site, recs)
         if communities:
-            g.build_communities()
+            with prof_span("ingest.communities"):
+                g.build_communities()
+        step_prof = prof.drain()
+        merge_profiles(ingest_prof, step_prof)
         stats = g.store.stats()
         agg_nodes += stats["nodes"]
         agg_edges += stats["edges"]
@@ -656,17 +708,27 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         ingest_trunc += tok["truncated"]
         atpo = _avg_tags_per_object(stats)
 
+        t_ask = time.time()
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
                     kind=q.get("kind"))
+        ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)
         rec["lane"] = getattr(ans, "lane", "")
+        rec["seconds"] = round(ask_seconds, 3)             # production ask() wall time
+        q_prof = prof.drain()                              # ask stages + eval-only judge.llm
+        rec["profile"] = compact(q_prof)
+        merge_profiles(query_prof, q_prof)
+        u = ans.usage or {}
+        _acc_site(cost_by_site, "rag", u.get("llm_calls", 0), u.get("tokens", 0),
+                  u.get("cost_usd", 0.0))
         qrecords.append(rec)
 
         steps.append({
             "i": i, "doc_id": q["id"], "title": q["query"][:80], "modality": "text",
             "created_at": q.get("question_date"), "status": "ingested",
             "seconds": round(rep.seconds, 3),
+            "profile": compact(step_prof),
             "nodes": agg_nodes, "edges": agg_edges,            # cumulative across the run
             "by_node_type": stats["by_node_type"], "by_edge_type": stats["by_edge_type"],
             "vocab": dict(cum_vocab), "node_delta": {},
@@ -693,6 +755,10 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                 f"${ingest_cost:.4f}")
 
     ingest_seconds = round(time.time() - t0, 1)
+    prof_deactivate()
+    jt = judge_meter.totals()
+    if jt["llm_calls"]:
+        _acc_site(cost_by_site, "judge", jt["llm_calls"], jt["tokens"], jt["cost_usd"])
     if os.path.exists(store_path):
         os.remove(store_path)
 
@@ -736,6 +802,8 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                            "graph is a representative single instance"},
         "cost_usd": round(ingest_totals["cost_usd"] + query_totals["cost_usd"], 6),
         "tokens": ingest_totals["tokens"] + query_totals["tokens"],
+        "profile": {"ingest": ingest_prof, "query": query_prof,
+                    "cost_by_site": cost_by_site},
         "ingest": {"totals": ingest_totals, "steps": steps,
                    "graph": rep_graph or {"nodes": [], "edges": [], "build_order": [],
                                           "stats": {}, "kind": "full"}},
@@ -800,6 +868,9 @@ def _update_index(out_dir: str, run: dict) -> None:
         "n_input": run["dataset"]["n_input"], "n_queries": run["dataset"]["n_queries"],
         "nodes": run["ingest"]["totals"]["nodes"], "edges": run["ingest"]["totals"]["edges"],
         "cost_usd": run["cost_usd"], "tokens": run["tokens"],
+        "ingest_seconds": run["ingest"]["totals"].get("seconds"),
+        "query_seconds": round(sum(q.get("seconds") or 0
+                                   for q in run["query"]["queries"]), 1),
         "recall_at_k": run["query"]["totals"].get("recall_at_k"),
         "mrr": run["query"]["totals"].get("mrr"),
         "hit_rate": run["query"]["totals"].get("hit_rate"),

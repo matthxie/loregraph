@@ -29,6 +29,7 @@ from .config import Config
 from .cues import cue_kinds, has_cue
 from .metering import UsageMeter
 from .models import EntityType, Provenance
+from .profiler import span as prof_span
 
 # --------------------------------------------------------------------------- #
 # Result types
@@ -301,17 +302,18 @@ class OpenAIExtractor:
 
     def _call(self, content_blocks: list) -> Extraction:
         import json
-        msg = self.client.chat.completions.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.extract_max_tokens,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": self._system},
-                {"role": "user", "content": content_blocks},
-            ],
-            tools=[GRAPH_TOOL],
-            tool_choice={"type": "function", "function": {"name": "emit_graph"}},
-        )
+        with prof_span("extract.llm"):
+            msg = self.client.chat.completions.create(
+                model=self.config.llm_model,
+                max_tokens=self.config.extract_max_tokens,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": self._system},
+                    {"role": "user", "content": content_blocks},
+                ],
+                tools=[GRAPH_TOOL],
+                tool_choice={"type": "function", "function": {"name": "emit_graph"}},
+            )
         self.meter.record("extract", self.config.llm_model, msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":
@@ -447,7 +449,8 @@ class CueGatedExtractor:
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         self.n_seen += 1
-        local = self.local.extract_text(text, title)
+        with prof_span("extract.local_nlp"):
+            local = self.local.extract_text(text, title)
         if self.escalate and has_cue(text):
             self.n_escalated += 1
             for kind in cue_kinds(text):

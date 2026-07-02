@@ -28,6 +28,7 @@ from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex
 from .models import SELF_ENTITY_ID, EdgeType, NodeType, Provenance
+from .profiler import span as prof_span
 from .rerank import CrossEncoderReranker
 from .route import MULTIHOP, RECENCY, STATE, route
 from .store import GraphStore, fact_active
@@ -217,11 +218,13 @@ class PPRRetriever:
         k = k or self.config.top_k
         if not query or not query.strip():
             return RetrievalResult(query=query, mode=self.mode, as_of=as_of)
-        seeds = self.seeder.seed(query)
+        with prof_span("query.seed"):
+            seeds = self.seeder.seed(query)
         res = RetrievalResult(query=query, mode=self.mode, seeds=list(seeds), as_of=as_of)
         if not seeds:
             return res
-        G = projected_graph(self.store, self.config, as_of=as_of)
+        with prof_span("query.project_graph"):
+            G = projected_graph(self.store, self.config, as_of=as_of)
         skip_self_seed = getattr(self.config, "self_guard", "none") in ("exclude", "seed")
         pers = {}
         for nid, s in seeds.items():
@@ -231,8 +234,9 @@ class PPRRetriever:
                 pers[nid] = s * self.canon.idf_weight(nid)
         if not pers or sum(pers.values()) <= 0:
             return res
-        ppr = nx.pagerank(G, alpha=self.config.ppr_damping, personalization=pers,
-                          weight="weight", max_iter=200)
+        with prof_span("query.pagerank"):
+            ppr = nx.pagerank(G, alpha=self.config.ppr_damping, personalization=pers,
+                              weight="weight", max_iter=200)
         cand = []
         for nid, sc in ppr.items():
             n = self.store.get_node(nid)
@@ -240,7 +244,8 @@ class PPRRetriever:
                 cand.append((nid, sc))
         cand.sort(key=lambda x: -x[1])
         cand = cand[: max(k * 3, k)]
-        ranked = self._rerank(query, cand, seeds, G, k)
+        with prof_span("query.mmr_rerank"):
+            ranked = self._rerank(query, cand, seeds, G, k)
         res.objects = ranked
         res.subgraph = set(seeds) | {oid for oid, _ in ranked}
         return res
@@ -414,10 +419,11 @@ class HybridRetriever:
 
         # STATE/evolution: guarantee the fact-bearing episodes are in the pool.
         if getattr(self.config, "fact_lane_augment", True) and lane == STATE and ent_ids:
-            for ep in self.facts.fact_episodes(ent_ids):
-                n = self.store.get_node(ep)
-                if ep not in cand_ids and n and n.valid and n.ntype == NodeType.EPISODE:
-                    cand_ids.append(ep)
+            with prof_span("query.fact_augment"):
+                for ep in self.facts.fact_episodes(ent_ids):
+                    n = self.store.get_node(ep)
+                    if ep not in cand_ids and n and n.valid and n.ntype == NodeType.EPISODE:
+                        cand_ids.append(ep)
 
         # RECENCY: restrict to the most recent candidates by event time before ranking.
         if lane == RECENCY and cand_ids:
@@ -426,8 +432,9 @@ class HybridRetriever:
         # Conditional rerank: only the hard lanes; single/recency keep PPR / event-time order.
         rerank_lanes = set(getattr(self.config, "rerank_lanes", ("state", "multihop")))
         if self._reranker is not None and cand_ids and lane in rerank_lanes:
-            ranked = self._reranker.rerank(
-                query, [(ep, self._snippet(ep)) for ep in cand_ids], k)
+            with prof_span("query.cross_encoder"):
+                ranked = self._reranker.rerank(
+                    query, [(ep, self._snippet(ep)) for ep in cand_ids], k)
         else:
             ranked = cand_ids[:k]
 

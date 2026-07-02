@@ -26,6 +26,7 @@ import numpy as np
 from .config import Config
 from .embedders import Embedder
 from .metering import UsageMeter
+from .profiler import span as prof_span
 from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
                      Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
@@ -359,10 +360,11 @@ class Canonicalizer:
             prompt = _L3_ENT_PROMPT.format(kind=kind, surface=surface, candidates=lines)
         verdict, reason = "NEW", ""
         try:
-            msg = client.chat.completions.create(
-                model=self.config.l3_model, max_tokens=300, temperature=0,
-                messages=[{"role": "system", "content": _L3_SYS},
-                           {"role": "user", "content": prompt}])
+            with prof_span("canon.l3_llm"):
+                msg = client.chat.completions.create(
+                    model=self.config.l3_model, max_tokens=300, temperature=0,
+                    messages=[{"role": "system", "content": _L3_SYS},
+                              {"role": "user", "content": prompt}])
             self.meter.record("l3", self.config.l3_model, msg, label=surface)
             text = msg.choices[0].message.content or "" if msg.choices else ""
             data = _extract_json(text) or {}
