@@ -29,7 +29,7 @@ These choices override the option menus in §4 and §7 below.
 
 | Concern | Decision | Notes |
 |---|---|---|
-| **Pipeline LLM** (tag/entity extraction, image description) | **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) | Vision-capable; cheapest tier for the batch. **API key** auth (`ANTHROPIC_API_KEY`, Console pay-per-token) — full corpus costs ~$1 (§ cost note). `ant auth login` OAuth/subscription is the alt; don't pass `output_config.effort` (400s on Haiku). |
+| **Pipeline LLM** (tag/entity extraction, image description) | **gpt-4o-mini** | Vision-capable; cheapest tier for the batch. **API key** auth (`OPENAI_API_KEY`, pay-per-token) — full corpus costs ~$1 (§ cost note). |
 | **Embeddings** | **Local `sentence-transformers`** | Default model `BAAI/bge-small-en-v1.5` (384-dim, strong quality/size); `all-MiniLM-L6-v2` as a lighter fallback (what A-MEM used). Fully offline, no API key. |
 | **Embedding grain** | **Raw object-text embeddings = primary** retrieval surface (no summary step); tag/entity-string embeddings = synonymy linking only | Per §4 (rev 2). Articles: embed the raw text (lead section for very long docs). Images: embed the VLM's one-line description. Bare-tag embeddings alone are too lossy. |
 | **No summary** | Extract tags/entities **directly** from raw content | rev 2. Drops one LLM call + a failure point. The summary was only a proxy for the text — embed the text instead. |
@@ -113,7 +113,7 @@ The store is a NetworkX **`MultiDiGraph`**: every edge keeps its real direction 
 
 ### Multimodal (image) nodes
 
-Images become **ObjectNodes with modality=image**. An image has no text, so the VLM (Claude Haiku 4.5 with vision) is the *only* way to get a textual handle — this is the one place a description survives the rev-2 "no summary" rule. The VLM emits **tags/entities directly + one short description line** in a single structured call; the description is the image's embedding/retrieval surface (you can't embed a photo as text otherwise), and the tags flow through the identical canonicalization path as text tags. The image's semantics are only as good as the VLM (RAPTOR's caution: the describer is the ceiling). Store the original image ref + the one-line description on the node.
+Images become **ObjectNodes with modality=image**. An image has no text, so the VLM (gpt-4o-mini with vision) is the *only* way to get a textual handle — this is the one place a description survives the rev-2 "no summary" rule. The VLM emits **tags/entities directly + one short description line** in a single structured call; the description is the image's embedding/retrieval surface (you can't embed a photo as text otherwise), and the tags flow through the identical canonicalization path as text tags. The image's semantics are only as good as the VLM (RAPTOR's caution: the describer is the ceiling). Store the original image ref + the one-line description on the node.
 
 ---
 
@@ -302,7 +302,7 @@ Each milestone is independently shippable and demoable.
 **Phase 0 — Skeleton + ingestion (MVP-of-MVP).**
 - Load corpus from `dataset/longmemeval/` (chat-session episodes — see [dataset/longmemeval/README.md](../dataset/longmemeval/README.md)). *(Built by `scripts/build_longmemeval.py`.)*
 - SHA256 cache. NetworkX graph + SQLite (metadata) + NumPy cosine (vectors).
-- Claude Haiku 4.5 **structured-output extraction directly from raw content** (no summary; rev 2): typed `{entities[], tags[], relations∈enum[]}` in one call (+ vision call for images → tags + description). Provenance back-pointers.
+- gpt-4o-mini **structured-output extraction directly from raw content** (no summary; rev 2): typed `{entities[], tags[], relations∈enum[]}` in one call (+ vision call for images → tags + description). Provenance back-pointers.
 - L1 hash normalization only. Write ObjectNodes (with `created_at`/`last_modified`/`valid`) + TagNodes + `TAGGED_AS` + derived `SHARED_TAG` edges. Bounded-concurrency semaphore.
 - **Ship:** "ingest 200 nodes, dump the graph, eyeball it in a notebook."
 

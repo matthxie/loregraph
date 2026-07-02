@@ -18,10 +18,10 @@ embeddings are an **entry-point index**, not the main path.
 **Built** — the `kg/` package implements the design end-to-end (episodic ingestion → typed,
 bi-temporal directed graph → routed hybrid retrieval → cross-encoder rerank → graph-RAG answers →
 eval). The default **production pipeline**: cue-gated extraction (a free local `gliner_yake_cooccur`
-NLP floor on every entry + a Claude Haiku call only on entries carrying a termination/date/identity
+NLP floor on every entry + a gpt-4o-mini call only on entries carrying a termination/date/identity
 cue), a 4-lane query router, a fact-bearing-episode augment on state/evolution questions, and a
 cross-encoder reranker on the hard lanes. Embeddings use local `bge-small`. Extraction runs keyless
-on the local floor; the Haiku escalation and the single answer call need `ANTHROPIC_API_KEY`.
+on the local floor; the escalation and the single answer call need `OPENAI_API_KEY`.
 
 ```bash
 pip install -r requirements.txt
@@ -41,7 +41,7 @@ algorithmic retrievers directly (PPR / BFS / vector / community) and returns ran
 state/evolution lanes with fact-bearing episodes, reranks the hard lanes with a cross-encoder, and
 a **single** LLM call answers over the assembled context (top episodes + currently-valid, or as-of-T,
 facts; plus the full closed+open history on evolution questions) with citations. The answer path is
-live-only (needs `ANTHROPIC_API_KEY`); a deterministic extractive synthesis survives only as an
+live-only (needs `OPENAI_API_KEY`); a deterministic extractive synthesis survives only as an
 internal crash-guard. Pass `--as-of <date>` to either surface to read the world as it was then.
 To A/B the full pipeline vs the raw PPR-RAG engine: `python -m kg.ablate --tier sample --k 3 --ctx 3`.
 
@@ -52,7 +52,7 @@ results, BFS hops animated). `python -m kg serve` for live typed queries, or `py
 
 ## Decided stack
 
-- **Pipeline LLM:** Claude Haiku 4.5 (`claude-haiku-4-5-20251001`), vision-capable for images.
+- **Pipeline LLM:** gpt-4o-mini, vision-capable for images.
 - **Embeddings:** local `sentence-transformers` (`BAAI/bge-small-en-v1.5`), fully offline.
 - **Graph:** NetworkX `MultiDiGraph` (directed, in-memory, persisted) — PageRank/BFS/Leiden
   out of the box; traversal runs over a symmetrized projection so direction never costs recall.

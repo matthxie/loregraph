@@ -6,13 +6,14 @@ facts, then a SINGLE LLM call answers over it. These tests assert the LLM does N
 the world as it was then.
 
 The answer path is now LIVE-ONLY (the selectable offline answerer was removed). To keep this
-suite deterministic and free we inject a FAKE Anthropic client into `g.ask(..., client=...)`,
-so `ClaudeAnswerer` runs end-to-end without touching the real API. Extraction is stubbed with
+suite deterministic and free we inject a FAKE OpenAI client into `g.ask(..., client=...)`,
+so `OpenAIAnswerer` runs end-to-end without touching the real API. Extraction is stubbed with
 a `ScriptedExtractor`; embeddings use the real local bge model ("st" — deterministic, no key,
 no network once cached). Run: python -m pytest tests/test_rag.py -q
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import types
@@ -45,7 +46,7 @@ def becky_graph() -> KnowledgeGraph:
 
     KnowledgeGraph.__init__ builds an extractor via get_extractor(), which is now live-only
     and would need a key. We patch it to a ScriptedExtractor so this helper works with NO
-    ANTHROPIC_API_KEY (and never makes a real extraction call); the embedder is the real bge.
+    OPENAI_API_KEY (and never makes a real extraction call); the embedder is the real bge.
     """
     items, table = becky_stream()
     scripted = ScriptedExtractor(table)
@@ -56,35 +57,41 @@ def becky_graph() -> KnowledgeGraph:
     return g
 
 
-# ---- scripted fake Anthropic client (no real API; ClaudeAnswerer runs over it) -------- #
-class _FakeAnthropic:
-    """Minimal stand-in for anthropic.Anthropic. `.messages.create(**kw)` returns a message
-    whose single content block is a `submit_answer` tool_use. A zeroed `.usage` is attached
-    so UsageMeter.record(...) reads real attributes without crashing."""
+# ---- scripted fake OpenAI client (no real API; OpenAIAnswerer runs over it) -------- #
+class _FakeOpenAI:
+    """Minimal stand-in for openai.OpenAI. `.chat.completions.create(**kw)` returns a message
+    whose single tool call is `submit_answer`. A zeroed `.usage` is attached so
+    UsageMeter.record(...) reads real attributes without crashing."""
 
     def __init__(self, answer: str = "", citations: list[str] | None = None):
         self._a, self._c = answer, (citations or [])
-        self.messages = self
+        self.chat = self
+        self.completions = self
         self.calls: list[dict] = []
 
     def create(self, **kw):
         self.calls.append(kw)
-        blk = types.SimpleNamespace(type="tool_use", name="submit_answer",
-                                    input={"answer": self._a, "citations": self._c})
-        usage = types.SimpleNamespace(input_tokens=0, output_tokens=0)
-        return types.SimpleNamespace(content=[blk], usage=usage, stop_reason="tool_use")
+        tc = types.SimpleNamespace(
+            id="call_0",
+            function=types.SimpleNamespace(
+                name="submit_answer",
+                arguments=json.dumps({"answer": self._a, "citations": self._c})))
+        message = types.SimpleNamespace(content=None, tool_calls=[tc])
+        choice = types.SimpleNamespace(message=message, finish_reason="tool_calls")
+        usage = types.SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
 # --------------------------------------------------------------------------- #
-# claude path via injected fake client — grounding, citations, as-of
+# openai path via injected fake client — grounding, citations, as-of
 # (these replace the old selectable-offline-answerer tests)
 # --------------------------------------------------------------------------- #
 def test_answer_is_grounded_and_cites_episodes():
     g = becky_graph()
-    client = _FakeAnthropic(answer="Becky lives in Berlin and works with Dana.",
-                            citations=["ep_becky02", "ep_becky04"])
+    client = _FakeOpenAI(answer="Becky lives in Berlin and works with Dana.",
+                         citations=["ep_becky02", "ep_becky04"])
     ans = g.ask("Where does Becky live and who does she work with?", client=client)
-    assert ans.backend == "claude"
+    assert ans.backend == "openai"
     assert "Berlin" in ans.answer
     # the current-view facts that drive a grounded answer are surfaced in the context
     assert any("Berlin" in f for f in ans.facts)
@@ -96,9 +103,9 @@ def test_answer_is_grounded_and_cites_episodes():
 def test_answer_respects_as_of():
     g = becky_graph()
     now = g.ask("Where does Becky live?",
-                client=_FakeAnthropic(answer="Berlin.", citations=["ep_becky02"]))
+                client=_FakeOpenAI(answer="Berlin.", citations=["ep_becky02"]))
     past = g.ask("Where does Becky live?", as_of="2022",
-                 client=_FakeAnthropic(answer="Toronto.", citations=["ep_becky01"]))
+                 client=_FakeOpenAI(answer="Toronto.", citations=["ep_becky01"]))
     # the FACTS context is temporally filtered: current view vs the world as of 2022
     assert any("Berlin" in f for f in now.facts)
     assert any("Toronto" in f for f in past.facts)
@@ -109,28 +116,29 @@ def test_answer_respects_as_of():
 def test_object_ids_feed_recall():
     from kg.evaluate import _recall_at_k
     g = becky_graph()
-    ans = g.ask("Becky Berlin", client=_FakeAnthropic(answer="Berlin.", citations=[]))
+    ans = g.ask("Becky Berlin", client=_FakeOpenAI(answer="Berlin.", citations=[]))
     assert ans.object_ids  # the PPR ranking is exposed as the eval seam
     assert 0.0 <= _recall_at_k(ans.object_ids, {"ep_becky02"}, 8) <= 1.0
 
 
 # --------------------------------------------------------------------------- #
-# claude path: the LLM does NOT traverse (exactly one create() call)
+# openai path: the LLM does NOT traverse (exactly one create() call)
 # --------------------------------------------------------------------------- #
-def test_claude_single_call_no_traversal():
+def test_openai_single_call_no_traversal():
     g = becky_graph()
-    client = _FakeAnthropic("Becky lives in Berlin.", [])
+    client = _FakeOpenAI("Becky lives in Berlin.", [])
     ans = g.ask("Where does Becky live?", client=client)
-    assert ans.backend == "claude" and "Berlin" in ans.answer
+    assert ans.backend == "openai" and "Berlin" in ans.answer
     assert len(client.calls) == 1   # exactly ONE LLM call — no per-hop tool loop
-    # the call was given the context as a single user message, plus the submit tool
-    assert client.calls[0]["messages"][0]["role"] == "user"
-    assert client.calls[0]["tool_choice"]["name"] == "submit_answer"
+    # the call is given a system prompt + the context as a user message, plus the submit tool
+    assert client.calls[0]["messages"][0]["role"] == "system"
+    assert client.calls[0]["messages"][1]["role"] == "user"
+    assert client.calls[0]["tool_choice"]["function"]["name"] == "submit_answer"
 
 
-def test_claude_citation_validation():
+def test_openai_citation_validation():
     g = becky_graph()
-    client = _FakeAnthropic("see evidence", ["ep_nope", "entity_0000"])
+    client = _FakeOpenAI("see evidence", ["ep_nope", "entity_0000"])
     ans = g.ask("Becky", client=client)
     # citations not present in the retrieved context are dropped
     assert set(ans.citations) <= set(ans.context_episodes)
@@ -164,18 +172,19 @@ def test_extractive_empty_context_is_graceful():
 
 
 def test_extractive_used_as_crash_guard_when_client_raises():
-    """If the single live call raises mid-run, ClaudeAnswerer degrades to _extractive rather
+    """If the single live call raises mid-run, OpenAIAnswerer degrades to _extractive rather
     than crashing the whole run — so one transient API error never sinks a test run."""
     class _BoomClient:
         def __init__(self):
-            self.messages = self
+            self.chat = self
+            self.completions = self
 
         def create(self, **kw):
             raise RuntimeError("simulated API failure")
 
     g = becky_graph()
     ans = g.ask("Where does Becky live?", client=_BoomClient())
-    assert ans.backend == "claude"
+    assert ans.backend == "openai"
     # the extractive fallback grounds on the same context (Berlin fact + episode citations)
     assert "Berlin" in ans.answer
     assert ans.citations == ans.context_episodes
@@ -197,7 +206,7 @@ def test_context_builder_surfaces_current_facts():
 
 def test_empty_query_does_not_crash():
     g = becky_graph()
-    ans = g.ask("   ", client=_FakeAnthropic(answer="(empty query)", citations=[]))
+    ans = g.ask("   ", client=_FakeOpenAI(answer="(empty query)", citations=[]))
     assert ans.answer and not ans.citations
 
 
@@ -210,9 +219,9 @@ def test_get_embedder_is_sentence_transformer():
 
 
 def test_answerer_without_client_or_key_raises(monkeypatch):
-    """No injected client AND no ANTHROPIC_API_KEY -> RuntimeError. There is no offline
+    """No injected client AND no OPENAI_API_KEY -> RuntimeError. There is no offline
     backend to silently degrade to anymore."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     g = becky_graph()
     c = cfg()
     with pytest.raises(RuntimeError):

@@ -43,7 +43,7 @@ class RagAnswer:
     answer: str
     citations: list[str] = field(default_factory=list)        # episode ids used
     dropped_citations: list[str] = field(default_factory=list)
-    backend: str = "claude"
+    backend: str = "openai"
     mode: str = "rag"
     as_of: str | None = None
     context_episodes: list[str] = field(default_factory=list)  # episode ids in the context

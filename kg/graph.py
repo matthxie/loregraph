@@ -79,7 +79,7 @@ class KnowledgeGraph:
         question, augments state/evolution lanes with fact-bearing episodes, and reranks the
         hard lanes, then ONE LLM call answers over the context with citations. The LLM never
         traverses. `kind` is an optional question-type hint for the router. Live-only: needs
-        ANTHROPIC_API_KEY. `client=` injects a (fake) Anthropic client for tests."""
+        OPENAI_API_KEY. `client=` injects a (fake) OpenAI client for tests."""
         cfg = self.config
         overrides = {kk: vv for kk, vv in
                      (("rag_backend", backend), ("rag_model", model)) if vv}
