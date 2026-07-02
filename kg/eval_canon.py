@@ -6,11 +6,11 @@ single load-bearing metric is `wrong_antonym_inverse_merges == 0`: over-merging 
 inverse/antonym is the asymmetrically-harmful failure the whole design guards against.
 
 Runs fully offline on the deterministic L1/L2 path (hashing/bge embedder). Add `--l3`
-(needs ANTHROPIC_API_KEY) to also exercise the LLM tie-breaker.
+(needs OPENAI_API_KEY) to also exercise the LLM tie-breaker.
 
     python -m kg eval-canon                          # deterministic path, hashing/bge
     python -m kg eval-canon --embedder st            # real bge-small embeddings
-    python -m kg eval-canon --l3 --model claude-haiku-4-5-20251001   # + L3 adjudicator
+    python -m kg eval-canon --l3 --model gpt-4o-mini   # + L3 adjudicator
 """
 from __future__ import annotations
 

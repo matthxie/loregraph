@@ -28,14 +28,14 @@ def _no_live_llm(monkeypatch):
     """Keep the whole module deterministic + free + key-independent.
 
     The library is LIVE-ONLY: ``kg`` auto-loads a project-root ``.env`` on import and
-    ``KnowledgeGraph.__init__`` eagerly builds a (live) HaikuExtractor via get_extractor,
-    which RAISES without ANTHROPIC_API_KEY. These temporal tests never touch the LLM — the
+    ``KnowledgeGraph.__init__`` eagerly builds a (live) OpenAIExtractor via get_extractor,
+    which RAISES without OPENAI_API_KEY. These temporal tests never touch the LLM — the
     facts come from the synthetic stream's ScriptedExtractor and the assertions are about
     the graph's bi-temporal evolution. So we (a) drop any key the .env may have injected and
     (b) make the graph build a ScriptedExtractor instead of the live one. becky_graph() then
     overrides g.extractor with the real Becky table anyway, so extraction stays deterministic
-    and no Anthropic call is ever made."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    and no OpenAI call is ever made."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(kg_graph, "get_extractor",
                         lambda config: ScriptedExtractor({}))
 
@@ -197,12 +197,12 @@ def test_get_embedder_is_sentence_transformer():
 
 
 def test_haiku_backend_requires_key(monkeypatch):
-    """The 'haiku' backend is live-only: with no ANTHROPIC_API_KEY it RAISES. (The default
+    """The 'haiku' backend is live-only: with no OPENAI_API_KEY it RAISES. (The default
     'cue_gated' backend runs a keyless local floor; the temporal suite sidesteps extraction
     entirely with a ScriptedExtractor — see the _no_live_llm fixture.)"""
     from kg.extractors import get_extractor
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     c = cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError):
         get_extractor(c)

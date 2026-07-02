@@ -14,15 +14,15 @@ recall@k/MRR/citation-grounding + an LLM-judge response score). It writes `runs/
 toggle Input ⇄ Query.
 
 > **The pipeline:** `testrun` runs the production strategy by default — cue-gated extraction
-> (a free local `gliner_yake_cooccur` floor + a Haiku call only on entries with a
+> (a free local `gliner_yake_cooccur` floor + a gpt-4o-mini call only on entries with a
 > termination/date/identity cue), a 4-lane query router, a cross-encoder reranker on the hard
 > lanes, and the flat as-of/evolution fact path. The query records carry a `lane` field
 > showing how each question was routed. To A/B the full pipeline vs the raw PPR-RAG engine,
 > use `python -m kg.ablate --tier sample --k 3 --ctx 3` (stressed regime).
 
 **The pipeline is LIVE-ONLY** (the offline heuristic/hashing/offline-answerer backends were
-removed). Every run calls Claude Haiku for extraction + answering and uses a local bge
-embedder, so a run needs `ANTHROPIC_API_KEY` (kg auto-reads the project-root `.env`) and
+removed). Every run calls gpt-4o-mini for extraction + answering and uses a local bge
+embedder, so a run needs `OPENAI_API_KEY` (kg auto-reads the project-root `.env`) and
 costs real (small) money. The default `micro` tier is sized so a full live run is cheap and
 finishes in well under a minute.
 
@@ -35,7 +35,7 @@ finishes in well under a minute.
 
 1. **Pick the interpreter.** Use the project venv (it has the deps + the API key):
    `.venv/bin/python` if it exists, else `python3`. Call it `$PY`. A live run needs the key —
-   if `ANTHROPIC_API_KEY` is unset and there's no `.env`, stop and tell the user.
+   if `OPENAI_API_KEY` is unset and there's no `.env`, stop and tell the user.
 
    **Tier build:** `micro` and `sample` ship their episodes (committed) — no build needed.
    For `small`/`med`/`large`, if `dataset/longmemeval/<tier>/episodes.jsonl` is missing run
@@ -49,7 +49,7 @@ finishes in well under a minute.
    - a number / cap → add `--queries M` (per-instance: caps instances) and/or `--limit N`
      (shared mode: caps session episodes).
 
-3. **Heads-up on cost before a bigger run.** Every run is live (~one Haiku extraction per
+3. **Heads-up on cost before a bigger run.** Every run is live (~one gpt-4o-mini extraction per
    session + the queries + judge). `micro` ≈ 18 sessions (cents, seconds). `sample` ≈ 48.
    `small` ≈ 4.7k sessions, `med` ≈ 24k — real money and many minutes; confirm before `small`+
    and especially `med`. Default to `micro`; mention the cost of anything larger, then proceed.
@@ -60,7 +60,7 @@ finishes in well under a minute.
    ```
    Useful flags: `--tier {micro,sample,small,med,large}`, `--mode {per-instance,shared}`,
    `--queries`, `--limit`, `--no-judge` (skip the LLM judge), `--no-communities` (faster),
-   `--label my-run`, `--model claude-sonnet-4-6`, `--out runs`. It prints a summary
+   `--label my-run`, `--model gpt-4o`, `--out runs`. It prints a summary
    (sessions → nodes/edges, avg tags/obj, tokens, $, then recall@k / MRR / hit-rate /
    grounding / judge-accuracy).
 

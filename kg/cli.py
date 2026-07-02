@@ -382,8 +382,8 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser("ask", help="answer a question: PPR retrieves a context, one LLM "
                                     "call answers (the LLM does not traverse)")
     pa.add_argument("text")
-    pa.add_argument("--backend", choices=["auto", "claude"], default="auto",
-                    help="answerer backend (live-only: Claude). Needs ANTHROPIC_API_KEY.")
+    pa.add_argument("--backend", choices=["auto"], default="auto",
+                    help="answerer backend (live-only: OpenAI). Needs OPENAI_API_KEY.")
     pa.add_argument("--model", default=None, help="override the answerer LLM model id")
     pa.add_argument("--k", type=int, default=8, help="episodes retrieved for the context")
     pa.add_argument("--as-of", default=None, dest="as_of",
@@ -431,7 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "cap instances in per-instance mode)")
     pt.add_argument("--queries", type=int, default=None,
                     help="cap the number of eval questions (default: all)")
-    pt.add_argument("--backend", choices=["auto", "claude"], default=None,
+    pt.add_argument("--backend", choices=["auto"], default=None,
                     help="answerer backend for the query half (auto = live if a key is set)")
     pt.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
     pt.add_argument("--extractor-backend", dest="extractor_backend", default=None,

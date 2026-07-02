@@ -245,7 +245,7 @@ class Canonicalizer:
         self._relation_keys: dict[str, str] = {}  # normalized key -> relation-tag id
         self._emb_cache: dict[str, np.ndarray] = {}  # surface -> embedding (batch primed)
         self._next = Counter()
-        self._l3_client = _L3_UNSET                   # lazy anthropic client (L3 tie-breaker)
+        self._l3_client = _L3_UNSET                   # lazy OpenAI client (L3 tie-breaker)
         self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
         self.meter = UsageMeter()                     # L3 token/cost accounting (testrun)
         self._reindex()

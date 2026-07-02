@@ -7,10 +7,10 @@ answerer were removed). This suite stays deterministic + FREE + offline anyway b
                 deterministic, no key, no network once the model is cached.
   * extraction — a ``ScriptedExtractor`` ({episode_text: Extraction}) injected as
                 ``g.extractor`` so the graph build runs on KNOWN facts (no LLM call).
-  * answering  — a fake Anthropic client injected via ``g.ask(..., client=...)`` so the
-                RAG ``ClaudeAnswerer`` runs without touching the API.
+  * answering  — a fake OpenAI client injected via ``g.ask(..., client=...)`` so the
+                RAG ``OpenAIAnswerer`` runs without touching the API.
 
-No test calls the real Anthropic API and no ``ANTHROPIC_API_KEY`` is required. Run:
+No test calls the real OpenAI API and no ``OPENAI_API_KEY`` is required. Run:
     python -m pytest tests/test_kg.py -q
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
                              normalize_relation, predicate_cardinality, relation_merge_vetoed)
 from kg.corpus import CorpusItem, load_longmemeval, load_longmemeval_questions
 from kg.embedders import SentenceTransformerEmbedder, get_embedder
-from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation, HaikuExtractor,
+from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation, OpenAIExtractor,
                           ScriptedExtractor, get_extractor)
 from kg.models import (Belief, Edge, EdgeType, Modality, Node, NodeType, Provenance,
                        EntityType, episode_node, entity_node,
@@ -46,7 +46,7 @@ def cfg() -> Config:
 @pytest.fixture(autouse=True)
 def _no_live_extractor(monkeypatch):
     """KnowledgeGraph.__init__ eagerly calls get_extractor(), which is LIVE-ONLY and RAISES
-    without a key (and would otherwise hold a real Anthropic client). Patch the reference the
+    without a key (and would otherwise hold a real OpenAI client). Patch the reference the
     graph builds against so EVERY KnowledgeGraph.open(...) in this file gets a deterministic,
     keyless ScriptedExtractor — tests that need real extractions still overwrite g.extractor
     with their own table afterward. This patches kg.graph.get_extractor only; the tests that
@@ -132,22 +132,28 @@ def scripted_graph(items_extractor: dict[str, Extraction] | None = None) -> Know
 
 
 # --------------------------------------------------------------------------- #
-# Fake Anthropic client for the RAG answerer (no API call). Shape matches what
-# kg.rag.ClaudeAnswerer.answer reads off the message and what kg.metering.UsageMeter
+# Fake OpenAI client for the RAG answerer (no API call). Shape matches what
+# kg.rag.OpenAIAnswerer.answer reads off the message and what kg.metering.UsageMeter
 # .record reads off msg.usage.
 # --------------------------------------------------------------------------- #
-class _FakeAnthropic:
+class _FakeOpenAI:
     def __init__(self, answer="", citations=None):
         self._a, self._c = answer, (citations or [])
-        self.messages = self
+        self.chat = self
+        self.completions = self
         self.calls: list[dict] = []
 
     def create(self, **kw):
         self.calls.append(kw)
-        blk = types.SimpleNamespace(type="tool_use", name="submit_answer",
-                                    input={"answer": self._a, "citations": self._c})
-        usage = types.SimpleNamespace(input_tokens=0, output_tokens=0)
-        return types.SimpleNamespace(content=[blk], usage=usage, stop_reason="tool_use")
+        tc = types.SimpleNamespace(
+            id="call_0",
+            function=types.SimpleNamespace(
+                name="submit_answer",
+                arguments=json.dumps({"answer": self._a, "citations": self._c})))
+        message = types.SimpleNamespace(content=None, tool_calls=[tc])
+        choice = types.SimpleNamespace(message=message, finish_reason="tool_calls")
+        usage = types.SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
 # --------------------------------------------------------------------------- #
@@ -305,12 +311,15 @@ class _FakeL3Client:
     def __init__(self, verdict: str):
         self._verdict = verdict
         self.calls: list[dict] = []
-        self.messages = self
+        self.chat = self
+        self.completions = self
 
     def create(self, **kw):
         self.calls.append(kw)
         text = json.dumps({"verdict": self._verdict, "reason": "test"})
-        return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=text)])
+        message = types.SimpleNamespace(content=text)
+        choice = types.SimpleNamespace(message=message)
+        return types.SimpleNamespace(choices=[choice])
 
 
 def _l3_canon(verdict: str):
@@ -395,27 +404,27 @@ def test_get_embedder_returns_sentence_transformer():
 
 
 def test_haiku_backend_raises_without_key(monkeypatch):
-    """The 'haiku' backend is live-only: it RAISES when no ANTHROPIC_API_KEY is set. (The
+    """The 'haiku' backend is live-only: it RAISES when no OPENAI_API_KEY is set. (The
     default 'cue_gated' backend instead runs a keyless local floor — see below.)"""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     c = cfg(); c.extractor_backend = "haiku"
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         get_extractor(c)
 
 
 def test_haiku_backend_returns_haiku_with_key(monkeypatch):
-    """With a key present, the 'haiku' backend yields the live HaikuExtractor (constructed
+    """With a key present, the 'haiku' backend yields the live OpenAIExtractor (constructed
     only — no API call is made until extract_text/extract_image)."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-used")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-used")
     c = cfg(); c.extractor_backend = "haiku"
     ext = get_extractor(c)
-    assert isinstance(ext, HaikuExtractor) and ext.name == "haiku"
+    assert isinstance(ext, OpenAIExtractor) and ext.name == "gpt4o_mini"
 
 
 def test_default_extractor_is_cue_gated_and_keyless(monkeypatch):
     """The production default is cue-gated: a keyless local NLP floor, with Haiku escalation
     only when a key is present (so extraction no longer hard-requires a key)."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     ext = get_extractor(cfg())
     assert ext.name == "cue_gated" and ext.escalate is False   # no key → escalation disabled
 
@@ -424,11 +433,11 @@ def test_rag_answerer_raises_without_client_or_key(monkeypatch):
     """The query/answer path is live-only: RagAnswerer with neither an injected client nor a
     key RAISES (no offline answerer to silently degrade to)."""
     from kg.rag import RagAnswerer
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     store = GraphStore(cfg())
     c = cfg()
     canon = Canonicalizer(store, get_embedder(c), c)
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         RagAnswerer(store, get_embedder(c), canon, c, client=None)
 
 
@@ -636,7 +645,7 @@ def test_ppr_excludes_community_edges():
 # --------------------------------------------------------------------------- #
 def test_eval_metrics_and_retrieval_modes():
     """recall@k / MRR helpers + evaluate() over the retrieval modes. 'rag' is excluded here
-    because evaluate() routes it through the LIVE Claude answerer (no client injection
+    because evaluate() routes it through the LIVE OpenAI answerer (no client injection
     seam); the RAG answer path is exercised separately in test_rag_answer_with_fake_client."""
     from kg.evaluate import (_mrr, _recall_at_k, cross_article_questions, evaluate,
                              single_article_questions)
@@ -653,15 +662,15 @@ def test_eval_metrics_and_retrieval_modes():
 
 def test_rag_answer_with_fake_client():
     """The §5 graph-RAG answer flow (PPR-retrieve → context → ONE answer call) runs through
-    ClaudeAnswerer over an INJECTED fake Anthropic client — no real API call. Citations that
+    OpenAIAnswerer over an INJECTED fake OpenAI client — no real API call. Citations that
     name an episode actually in the retrieved context survive validation."""
     g = scripted_graph()
     g.ingest(sample_items())
-    fake = _FakeAnthropic(answer="Turing worked at Bletchley Park on cryptography.",
-                          citations=["ep_a"])
+    fake = _FakeOpenAI(answer="Turing worked at Bletchley Park on cryptography.",
+                       citations=["ep_a"])
     ans = g.ask("Where did Alan Turing work on cryptography?", client=fake)
     assert fake.calls, "the answerer never called the (fake) client"
-    assert ans.backend == "claude"
+    assert ans.backend == "openai"
     assert ans.answer == "Turing worked at Bletchley Park on cryptography."
     # ep_a is in the retrieved context, so the citation is kept (not dropped)
     assert "ep_a" in ans.citations

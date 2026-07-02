@@ -1,13 +1,13 @@
 """Tests for the test-run dashboard: token/cost metering, the live-token capture path
-(via a fake Anthropic client carrying a `.usage`), article-collapsed scoring, and an
+(via a fake OpenAI client carrying a `.usage`), article-collapsed scoring, and an
 end-to-end run_testrun that writes the artifact + static dashboard.
 
 The kg library is now LIVE-ONLY (the offline heuristic extractor / hashing embedder /
 offline answerer were removed). These tests stay deterministic + free WITHOUT calling
-the real Anthropic API by:
+the real OpenAI API by:
   * embedding with the real local bge model (`embedder="st"` — deterministic, no key),
   * stubbing extraction with a `ScriptedExtractor` (a {text: Extraction} table), and
-  * injecting a FAKE Anthropic client into the answerer/judge so no network call happens.
+  * injecting a FAKE OpenAI client into the answerer/judge so no network call happens.
 
 Run: python -m pytest tests/test_dashboard.py -q
 """
@@ -40,56 +40,65 @@ def _cfg() -> Config:
 
 
 # --------------------------------------------------------------------------- #
-# Fake Anthropic clients (no network). Two flavours:
+# Fake OpenAI clients (no network). Two flavours:
 #   _FakeAnthropic — the canonical single-turn submit_answer/grade stub used as an
-#                    `agent_client` / `judge_client` injection.
+#                    `agent_client` / `judge_client` injection. (Name kept for the
+#                    historical "fake external LLM client" role; it now speaks the
+#                    OpenAI chat.completions shape, matching kg.rag.OpenAIAnswerer
+#                    and kg.testrun._judge.)
 #   _FakeClient    — a scripted multi-turn client for the lower-level g.ask() test that
 #                    asserts exact usage attribution.
 # --------------------------------------------------------------------------- #
 class _FakeAnthropic:
-    """A fake Anthropic client whose .messages.create returns one tool_use block.
+    """A fake OpenAI client whose .chat.completions.create returns one tool call.
     Works for BOTH the answerer (tool 'submit_answer') and the judge (tool 'grade'):
-    it echoes back whatever `input` the caller's tool expects, keyed off tool_choice."""
+    it echoes back whatever arguments the caller's tool expects, keyed off tool_choice."""
 
     def __init__(self, answer="", citations=None, *, correct=True, score=1.0):
         self._answer = answer
         self._citations = citations or []
         self._correct = correct
         self._score = score
-        self.messages = self
+        self.chat = self
+        self.completions = self
         self.calls = []
 
     def create(self, **kw):
         self.calls.append(kw)
-        name = (kw.get("tool_choice") or {}).get("name", "submit_answer")
+        name = ((kw.get("tool_choice") or {}).get("function") or {}).get("name", "submit_answer")
         if name == "grade":
-            inp = {"correct": self._correct, "score": self._score, "reason": "ok"}
+            args = {"correct": self._correct, "score": self._score, "reason": "ok"}
         else:
-            inp = {"answer": self._answer, "citations": list(self._citations)}
-        blk = types.SimpleNamespace(type="tool_use", name=name, input=inp)
-        usage = types.SimpleNamespace(input_tokens=0, output_tokens=0,
-                                      cache_read_input_tokens=0,
-                                      cache_creation_input_tokens=0)
-        return types.SimpleNamespace(content=[blk], usage=usage, stop_reason="tool_use")
+            args = {"answer": self._answer, "citations": list(self._citations)}
+        tc = types.SimpleNamespace(id="call_0", function=types.SimpleNamespace(
+            name=name, arguments=json.dumps(args)))
+        message = types.SimpleNamespace(content=None, tool_calls=[tc])
+        choice = types.SimpleNamespace(message=message, finish_reason="tool_calls")
+        usage = types.SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
-def _usage(i, o, cr=0, cw=0):
-    return types.SimpleNamespace(input_tokens=i, output_tokens=o,
-                                 cache_read_input_tokens=cr, cache_creation_input_tokens=cw)
+def _usage(i, o):
+    return types.SimpleNamespace(prompt_tokens=i, completion_tokens=o)
 
 
-def _turn(*blocks, usage=None):
-    return types.SimpleNamespace(content=list(blocks), stop_reason="tool_use", usage=usage)
+def _turn(*tool_calls, usage=None):
+    message = types.SimpleNamespace(content=None, tool_calls=list(tool_calls) or None)
+    choice = types.SimpleNamespace(message=message,
+                                   finish_reason="tool_calls" if tool_calls else "stop")
+    return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
 def _tool_use(tid, name, inp):
-    return types.SimpleNamespace(type="tool_use", id=tid, name=name, input=inp)
+    return types.SimpleNamespace(id=tid, function=types.SimpleNamespace(
+        name=name, arguments=json.dumps(inp)))
 
 
 class _FakeClient:
     def __init__(self, script):
         self._script = list(script)
-        self.messages = self
+        self.chat = self
+        self.completions = self
         self.calls = []
 
     def create(self, **kw):
@@ -149,7 +158,7 @@ def test_get_embedder_is_sentence_transformer():
 
 def test_haiku_backend_requires_key(monkeypatch):
     # default 'cue_gated' is keyless; the live 'haiku' backend still RAISES without a key
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     c = _cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError):
         get_extractor(c)
@@ -159,7 +168,7 @@ def test_answerer_requires_client_or_key(monkeypatch):
     """No injected client + no key => the live-only answerer refuses to silently
     degrade (the offline answerer was removed)."""
     g = _scripted_graph()                              # build while the key is present
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(RuntimeError):
         RagAnswerer(g.store, g.embedder, g.canon, _cfg(), client=None)
 
@@ -193,26 +202,27 @@ def test_meter_reads_usage_and_no_usage_is_zero():
 # --------------------------------------------------------------------------- #
 # live-token capture path (the whole reason the dashboard can show real cost)
 # --------------------------------------------------------------------------- #
-def test_claude_agent_populates_usage():
+def test_openai_agent_populates_usage():
     g = _scripted_graph()
     turn = _turn(_tool_use("t1", "submit_answer",
                            {"answer": "Turing worked at Bletchley Park.",
                             "citations": ["ep_a"]}),
                  usage=_usage(1500, 300))
     ans = g.ask("how is Turing connected to Bletchley Park", client=_FakeClient([turn]))
-    assert ans.backend == "claude"
+    assert ans.backend == "openai"
     assert ans.usage["llm_calls"] == 1
     assert ans.usage["input_tokens"] == 1500 and ans.usage["output_tokens"] == 300
-    assert abs(ans.usage["cost_usd"] - (1500 * 1e-6 + 300 * 5e-6)) < 1e-9
+    # rag_model defaults to gpt-4o-mini: $0.15/$0.60 per MTok in/out
+    assert abs(ans.usage["cost_usd"] - (1500 * 0.15e-6 + 300 * 0.60e-6)) < 1e-9
 
 
 def test_fake_client_with_zero_usage_reports_zero_cost():
     """The canonical _FakeAnthropic stub carries a zero-token .usage, so the meter
-    records a (free) call: backend is the live 'claude' answerer, cost is $0."""
+    records a (free) call: backend is the live 'openai' answerer, cost is $0."""
     g = _scripted_graph()
     ans = g.ask("Turing Bletchley", client=_FakeAnthropic(answer="Turing was at Bletchley.",
                                                           citations=["ep_a"]))
-    assert ans.backend == "claude"
+    assert ans.backend == "openai"
     assert ans.usage["cost_usd"] == 0.0
 
 
@@ -260,8 +270,8 @@ def test_run_testrun_writes_artifact(monkeypatch):
                       label="t", out_dir=os.path.join(tmp, "runs"), config=cfg,
                       agent_client=_FakeAnthropic(answer="An answer.", citations=[]),
                       judge_client=_FakeAnthropic())
-    # shape — the agent backend is the live 'claude' answerer (over the fake client)
-    assert run["backends"]["agent"] == "claude"
+    # shape — the agent backend is the live 'openai' answerer (over the fake client)
+    assert run["backends"]["agent"] == "openai"
     assert len(run["ingest"]["steps"]) == 8
     assert run["ingest"]["graph"]["nodes"] and "build_order" in run["ingest"]["graph"]
     assert run["ingest"]["totals"]["nodes"] > 0

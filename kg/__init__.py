@@ -8,13 +8,13 @@ See docs/ARCHITECTURE.md for the design this implements. The public surface is s
     g.query("...")                        # 2-path retriever (§5)
     g.ask("...")                          # PPR-retrieve → context → one LLM answer (§5)
 
-The pipeline is LIVE-ONLY: extraction uses Claude Haiku and embeddings use a local
+The pipeline is LIVE-ONLY: extraction uses gpt-4o-mini and embeddings use a local
 sentence-transformers model (BAAI/bge-small). The old offline heuristic/hashing
 backends were removed. Deterministic tests/demos stub the LLM with a ScriptedExtractor
-and inject a fake Anthropic client; the embedder runs the real (local, deterministic)
+and inject a fake OpenAI client; the embedder runs the real (local, deterministic)
 model.
 
-On import we load a project-root ``.env`` (if present) so ``ANTHROPIC_API_KEY`` is
+On import we load a project-root ``.env`` (if present) so ``OPENAI_API_KEY`` is
 available before the extractor/answerer construct. Real environment variables always
 win — the file only fills in what isn't already set — and a missing python-dotenv is
 non-fatal (then the key must come from the real environment).

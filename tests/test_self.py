@@ -61,7 +61,7 @@ def test_get_embedder_is_sentence_transformer():
 
 def test_haiku_backend_requires_key(monkeypatch):
     # the default 'cue_gated' backend is keyless; the live 'haiku' backend still RAISES
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     c = _cfg(); c.extractor_backend = "haiku"
     with pytest.raises(RuntimeError):
         get_extractor(c)

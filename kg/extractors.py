@@ -5,8 +5,8 @@ summary step) in one structured-output call, with an optional reflexion recall p
 Relations are directed and carry open-vocabulary `labels[]` (rev 3) that are
 consolidated into canonical relationship-tag nodes downstream.
 
-  * HaikuExtractor   — the real, live path: Claude Haiku 4.5 forced into a typed tool
-                       call, vision for images. Needs ANTHROPIC_API_KEY.
+  * OpenAIExtractor  — the real, live path: gpt-4o-mini forced into a typed tool
+                       call, vision for images. Needs OPENAI_API_KEY.
   * ScriptedExtractor — a deterministic {text: Extraction} table used ONLY by the
                        synthetic temporal demo + unit tests (it stubs the LLM so the
                        graph's open/close/supersede logic runs on known facts). Not a
@@ -226,9 +226,9 @@ def _parse_tool_payload(payload: dict) -> Extraction:
 
 
 # --------------------------------------------------------------------------- #
-# Haiku (real)
+# OpenAI (real)
 # --------------------------------------------------------------------------- #
-class HaikuExtractor:
+class OpenAIExtractor:
     name = "gpt4o_mini"
 
     # The system prompt + GRAPH_TOOL are kept STATIC and BLIND (no live graph
@@ -420,7 +420,7 @@ class CueGatedExtractor:
     temporal relation fields (status=ended, valid_from/to) survive; the local entities/tags
     union in for recall. The exposed `meter` is Haiku's, so the testrun's per-document cost
     drain captures exactly the escalation spend (the local floor is free). With no
-    ANTHROPIC_API_KEY, escalation is disabled and extraction runs local-only."""
+    OPENAI_API_KEY, escalation is disabled and extraction runs local-only."""
     name = "cue_gated"
 
     def __init__(self, config: Config):
@@ -430,15 +430,15 @@ class CueGatedExtractor:
             getattr(config, "local_backend", "gliner_yake_cooccur"), config)
         self.escalate = (bool(getattr(config, "cue_escalate", True))
                          and bool(os.environ.get("OPENAI_API_KEY")))
-        self._haiku: HaikuExtractor | None = None
+        self._haiku: OpenAIExtractor | None = None
         self._fallback_meter = UsageMeter()
         self.n_seen = 0
         self.n_escalated = 0
         self.cue_counts: dict[str, int] = {}
 
-    def _haiku_ext(self) -> HaikuExtractor:
+    def _haiku_ext(self) -> OpenAIExtractor:
         if self._haiku is None:
-            self._haiku = HaikuExtractor(self.config)
+            self._haiku = OpenAIExtractor(self.config)
         return self._haiku
 
     @property
@@ -473,8 +473,8 @@ class CueGatedExtractor:
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
     """Default 'cue_gated' = a local NLP floor + a Haiku call only on cue-bearing entries
-    (escalation needs ANTHROPIC_API_KEY; without it, extraction runs local-only). 'haiku'/
-    'auto' = full Claude Haiku on every entry (needs the key). Any other value selects a
+    (escalation needs OPENAI_API_KEY; without it, extraction runs local-only). 'haiku'/
+    'auto' = full gpt-4o-mini on every entry (needs the key). Any other value selects a
     pure LLM-free / hybrid NLP backend (kg/nlp_extractors.py). The deterministic
     ScriptedExtractor is constructed directly (demo + tests), never here."""
     backend = getattr(config, "extractor_backend", "cue_gated")
@@ -488,4 +488,4 @@ def get_extractor(config: Config) -> Extractor:
             "No OPENAI_API_KEY found. The 'gpt4o_mini' extractor is live-only. Use the default "
             "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
             "ScriptedExtractor directly for deterministic tests/demos.")
-    return HaikuExtractor(config)
+    return OpenAIExtractor(config)

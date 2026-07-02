@@ -1,7 +1,7 @@
 """LLM-free (and hybrid) extractors — a cost-reduction experiment (optimization.md).
 
-The live HaikuExtractor (kg/extractors.py) pulls entities/tags/relations from raw content in
-one-or-two Claude calls per section — the dominant ingest cost. This module provides drop-in
+The live OpenAIExtractor (kg/extractors.py) pulls entities/tags/relations from raw content in
+one-or-two OpenAI calls per section — the dominant ingest cost. This module provides drop-in
 alternatives that do the same `{entities[], tags[], relations[]}` job with local NLP models at
 ~$0, plus hybrids that keep the LLM only for the part NLP does worst (relations):
 
@@ -629,11 +629,11 @@ class Gliner2HaikuExtractor:
     is Haiku's, so the dashboard shows the (Haiku) cost."""
 
     def __init__(self, config: Config, name: str = "gliner2_haiku"):
-        from .extractors import HaikuExtractor
+        from .extractors import OpenAIExtractor
         self.config = config
         self.name = name
         self._g2 = Gliner2Extractor(config, name="gliner2", tag_fn=yake_tags)
-        self._haiku = HaikuExtractor(config)
+        self._haiku = OpenAIExtractor(config)
         self.meter = self._haiku.meter          # cost attribution flows through Haiku's meter
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
