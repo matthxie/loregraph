@@ -427,6 +427,7 @@ class Canonicalizer:
         node = self.store.get_node(tag_id)
         if node and surface.lower() != node.name and surface.lower() not in node.aliases:
             node.aliases.append(surface.lower())
+            self.store.touch_node(tag_id)
             self._tag_keys.setdefault(normalize_key(surface), tag_id)
 
     # -------------------------------------------------------------- self anchor
@@ -445,13 +446,17 @@ class Canonicalizer:
         elif node.name != self.config.self_name:   # honour a changed --self across sessions
             node.name = self.config.self_name
             node.last_modified = now_iso()
+            self.store.touch_node(SELF_ENTITY_ID)
         # The self anchor carries NO entity embedding ON PURPOSE: it is resolved only by the
         # first-person pronoun guard + the lexical routes below, never by embedding
         # similarity. Keeping it out of the "entity" vector index is what makes a --self
         # that happens to share a real entity's NAME (another "Jude") unable to L2-merge that
         # entity into self — neither the name key nor a name embedding routes here, only the
         # pronouns. The forms persist as aliases so a reload reconstructs the routes (_reindex).
-        node.aliases = sorted(set(node.aliases) | set(_FIRST_PERSON))
+        merged = sorted(set(node.aliases) | set(_FIRST_PERSON))
+        if merged != node.aliases:
+            node.aliases = merged
+            self.store.touch_node(SELF_ENTITY_ID)
         for key in _FIRST_PERSON:
             self._entity_keys[key] = SELF_ENTITY_ID
         return SELF_ENTITY_ID
@@ -554,6 +559,7 @@ class Canonicalizer:
         node = self.store.get_node(rid)
         if node and display != node.name and display not in node.aliases:
             node.aliases.append(display)
+            self.store.touch_node(rid)
         self._relation_keys.setdefault(relation_content_key(display), rid)
 
     # ---------------------------------------------------------- IDF / specificity
@@ -561,6 +567,7 @@ class Canonicalizer:
         n = self.store.get_node(node_id)
         if n is not None:
             n.doc_frequency += 1
+            self.store.touch_node(node_id)
 
     def idf_weight(self, node_id: str) -> float:
         """1 / (1 + df) style specificity — generic tags downranked (HippoRAG/TaxoGen)."""

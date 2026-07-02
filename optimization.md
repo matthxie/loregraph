@@ -374,3 +374,53 @@ noisy) **and** a saturated retrieval setup (6 sessions ≤ 6 context slots). Nei
 - ❌ **Post-merge tag cap:** runs *after* tokens are billed → $0 output saved while deleting captured
   tags (richness violation) and thinning SHARED_TAG bridges.
 - ❌ **Route the judge to Sonnet:** +$0.28/100 for a metric, not the product. No tier below Haiku.
+
+---
+
+## Lever 8 — scale-path rewrite: write-through store, cached retrieval, incremental derive  `[SHIPPED 2026-07-02]`
+
+**TL;DR:** every per-query / per-batch **full-corpus rescan** in the implementation layer was replaced
+with an incremental or cached equivalent. Graph content is byte-identical (verified single-batch);
+rankings are identical except among *exactly tied* scores, where selection changed from
+argsort-arbitrary to deterministic-by-id (and is now stable across save/load by construction).
+101 pre-existing tests pass unchanged (1 updated to the new `add_hash` API); +5 new invariant tests.
+
+### What changed
+1. **Write-through persistence (`kg/store.py`).** `save()` no longer DELETEs and rewrites the whole
+   DB; it flushes exactly the dirty/deleted rows in one WAL transaction. Every mutator is tracked —
+   including in-place edge mutations from `kg/temporal.py` (confirm/supersede/backfill; a backfilled
+   `valid_at` deletes its old PK row) and community-rebuild node removals. The ingest loop checkpoints
+   every `config.ingest_flush_every` (200) episodes and at the end, so a crash loses ≤1 window.
+   `store.version` / `store.episode_version` counters let retrieval caches detect staleness.
+2. **Incremental derived edges (`kg/ingest.py`).** `_derive_episode_edges` now computes SHARED_TAG /
+   SHARED_ENTITY / kNN only for pairs involving THIS batch's new episodes (exact weights — full
+   shared-hub overlap × current IDF). Cost is proportional to new data, killing the O(N²)-over-time
+   full-corpus pass. Accepted drift (multi-batch only): old-old pairs keep the IDF-stale weight from
+   when the later episode arrived; incremental-kNN asymmetry can skip an old→new SIMILAR_TO edge.
+   `config.shared_edges=False` is the SHARED_* removal A/B (the tag/entity star already links those
+   episodes at 2 hops); `config.shared_hub_cap` (256) bounds pairing against degenerate hub tags.
+3. **Cached retrieval hot path (`kg/retrieval.py`, `kg/graph.py`, `kg/vectors.py`).**
+   The projection is cached per (store.version, params) instead of rebuilt O(E) per query; PPR runs
+   a power iteration over a cached row-normalized CSR operator (same math as nx.pagerank — unit-tested
+   to 1e-10 — minus the per-call graph→CSR conversion); the seed-distance boost is one multi-source BFS
+   instead of per-seed BFS×cutoff-5; BM25 rebuilds only when the episode set changes; retrievers/
+   answerer are hoisted onto `KnowledgeGraph` so all of this survives across calls; vector search uses
+   argpartition top-k with an amortized-growth buffer (appends were O(n²) via per-add vstack).
+4. **Determinism hardening** (found by the equivalence harness): projection built in sorted order,
+   ties in vector/BM25/candidate ranking broken by node id — retrieval is now a function of graph
+   CONTENT, not insertion/load order. The old code's mem-vs-reloaded ranking equality held only
+   incidentally (full-rewrite preserved row order); the new code guarantees it.
+
+### Verification
+- Equivalence harness (60-episode synthetic + Becky temporal stream, ScriptedExtractor + bge, offline;
+  single-batch AND two-batch ingest × {in-memory, save→reload} × {ppr, bfs, vector, hybrid, as-of}):
+  single-batch graph content EXACT vs HEAD; two-batch drift confined to derived-edge weights (max Δ
+  0.26) + 16 SIMILAR_TO identity diffs as documented; mem==reloaded rankings on the new code
+  (the old code's incidental guarantee, now by construction). Louvain community MEMBERSHIP identical
+  (ids relabel under the sorted projection).
+- `pytest -q`: 106 passed (was 101; +5 new: PPR≡networkx, write-through in-place mutations,
+  community-rebuild row deletion, incremental≡single-batch derived edges, shared_edges flag).
+
+### Measured (400 synthetic episodes, single process, CPU)
+See bench below — headline: warm PPR query and post-ingest save go from O(corpus) rescans to
+near-constant; numbers in the shipped-commit message.

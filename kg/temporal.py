@@ -54,26 +54,31 @@ def apply_fact(store: GraphStore, *, src: str, dst: str, rel_tag: str, status: s
     # SUPERSEDE: a single-valued predicate's new value closes any open value with a
     # DIFFERENT target (you can't live in two cities) before the new one opens.
     if functional:
-        for v, _k, data in list(store.find_facts(src, rel_tag=rel_tag, open_only=True)):
+        for v, gkey, data in list(store.find_facts(src, rel_tag=rel_tag, open_only=True)):
             if v != dst:
                 data["invalid_at"] = start
+                store.touch_edge(src, v, gkey)
 
     # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate.
     open_existing = list(store.find_facts(src, dst, rel_tag, open_only=True))
     if open_existing:
-        for _v, _k, data in open_existing:
+        for _v, gkey, data in open_existing:
+            old_valid = data.get("valid_at", "")
             data["confidence"] = max(float(data.get("confidence", 0.0)), confidence)
             if not data.get("valid_at") and valid_from:
                 data["valid_at"] = valid_from
             if valid_to and not data.get("invalid_at"):
                 data["invalid_at"] = valid_to
+            store.touch_edge(src, dst, gkey, old_valid_at=old_valid)
         return "confirm"
 
     # BACKFILL: order-independence — an end-first closed edge with unknown start gets its
     # start filled instead of spawning a duplicate open edge.
-    for _v, _k, data in store.find_facts(src, dst, rel_tag, open_only=False):
+    for _v, gkey, data in store.find_facts(src, dst, rel_tag, open_only=False):
         if data.get("invalid_at") and not data.get("valid_at"):
+            old_valid = data.get("valid_at", "")
             data["valid_at"] = start
+            store.touch_edge(src, dst, gkey, old_valid_at=old_valid)
             return "backfill"
 
     # OPEN: a brand-new fact.

@@ -4,8 +4,8 @@ Per entry: intake → SHA256 cache check → normalize → extract (directly fro
 → write an immutable **Episode** + one immutable **Mention** per entity occurrence
 (MENTIONED_IN → episode, RESOLVES_TO → a lean canonical **Entity** anchor) → canonicalize
 tags/entities/relations → resolve each relationship through the bi-temporal fact logic
-(kg/temporal.py: open / confirm / close / supersede). Then a global pass derives
-Episode↔Episode edges (shared tags/entities + embedding kNN).
+(kg/temporal.py: open / confirm / close / supersede). Then an incremental pass derives
+Episode↔Episode edges for the new episodes (shared tags/entities + embedding kNN).
 
 Embeddings are written ONLY to immutable nodes (episode text, mention surfaces) — never to
 the canonical entity anchors — so embedding cost is strictly proportional to new data and
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
@@ -137,21 +136,30 @@ class Ingestor:
             uniq_ments = sorted({s for s in ment_surfaces if s.strip()})
             ment_vecs = dict(zip(uniq_ments, self.embedder.embed(uniq_ments))) if uniq_ments else {}
 
-        # 4. write each episode (sequential — canonicalize + bi-temporal fact logic inside)
+        # 4. write each episode (sequential — canonicalize + bi-temporal fact logic inside),
+        #    checkpointing to SQLite as we go so a crash loses at most one flush window
+        new_eps: list[str] = []
+        flush_every = getattr(self.config, "ingest_flush_every", 0)
         with prof_span("ingest.write_episodes"):
-            for (item, h, ep_id), ext, vec in zip(pending, extractions, ep_vecs):
+            for i, ((item, h, ep_id), ext, vec) in enumerate(
+                    zip(pending, extractions, ep_vecs)):
                 try:
                     m, f = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
+                    new_eps.append(ep_id)
                     report.ingested += 1
                     report.mentions += m
                     report.facts += f
                 except Exception as e:  # noqa: BLE001
                     report.failed += 1
                     report.notes.append(f"{item.id}: {e!r}")
+                if flush_every and self.store.path and (i + 1) % flush_every == 0:
+                    self.store.flush()
 
-        # 5. derive Episode↔Episode edges across the whole graph
+        # 5. derive Episode↔Episode edges for the NEW episodes only (incremental)
         with prof_span("ingest.derive_edges"):
-            self._derive_episode_edges()
+            self._derive_episode_edges(new_eps)
+        if self.store.path:
+            self.store.flush()
 
         report.seconds = time.time() - t0
         return report
@@ -194,7 +202,7 @@ class Ingestor:
         node.name = item.title or item.id
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)
-        self.store.hash_cache[h] = ep_id
+        self.store.add_hash(h, ep_id)
 
         # tags → TAGGED_AS (Episode → Tag)
         seen_tags: set[str] = set()
@@ -269,32 +277,25 @@ class Ingestor:
         return [i, i + len(surface)] if i >= 0 else None
 
     # --------------------------------------------------------- derived edges
-    def _derive_episode_edges(self) -> None:
-        """SHARED_TAG / SHARED_ENTITY (overlap × IDF) + episode-embedding kNN, over the
-        full episode set (paid once at MVP scale)."""
-        episodes = [n.id for n in self.store.nodes_of_type(NodeType.EPISODE)]
+    def _derive_episode_edges(self, new_eps: list[str]) -> None:
+        """SHARED_TAG / SHARED_ENTITY (overlap × IDF) + episode-embedding kNN,
+        **incrementally**: only pairs involving one of this batch's NEW episodes are
+        (re)computed, so derive cost is proportional to new data, not corpus size.
 
-        tag_eps: dict[str, list[str]] = defaultdict(list)
-        for eid in episodes:
-            for nbr, data in self.store.neighbors(eid, etypes={EdgeType.TAGGED_AS},
-                                                  direction="out"):
-                tag_eps[nbr].append(eid)
+        For a pair touching a new episode the weight is exact — full shared-hub overlap
+        × current IDF, identical to what a full recompute would produce. Two accepted
+        drifts vs the old full-corpus pass: an old-old pair keeps the (IDF-stale) weight
+        it got when the later of the two arrived, and an old episode whose kNN would
+        newly include a fresh episode only gets that SIMILAR_TO edge if the fresh
+        episode's own top-k catches it (standard incremental-kNN asymmetry)."""
+        if not new_eps:
+            return
+        if getattr(self.config, "shared_edges", True):
+            self._shared_edges_for(new_eps, EdgeType.SHARED_TAG)
+            self._shared_edges_for(new_eps, EdgeType.SHARED_ENTITY)
 
-        # entity → episodes, via the mention star
-        ent_eps: dict[str, list[str]] = defaultdict(list)
-        for m in self.store.nodes_of_type(NodeType.MENTION):
-            ep = m.episode_id
-            if not ep or not self.store.has_node(ep):
-                continue
-            for nbr, _d in self.store.neighbors(m.id, etypes={EdgeType.RESOLVES_TO},
-                                                direction="out"):
-                ent_eps[nbr].append(ep)
-
-        self._add_shared_edges(tag_eps, EdgeType.SHARED_TAG)
-        self._add_shared_edges(ent_eps, EdgeType.SHARED_ENTITY)
-
-        # episode embedding kNN → SIMILAR_TO
-        for eid in episodes:
+        # episode embedding kNN → SIMILAR_TO (new episodes only)
+        for eid in new_eps:
             qv = self.store.vectors.get("episode", eid)
             if qv is None:
                 continue
@@ -305,21 +306,60 @@ class Ingestor:
                                         provenance=Provenance.SIMILAR,
                                         confidence=round(cos, 3), weight=round(cos, 3)))
 
-    def _add_shared_edges(self, hub_eps: dict[str, list[str]], etype: EdgeType) -> None:
-        pair_weight: dict[tuple[str, str], float] = defaultdict(float)
-        pair_count: dict[tuple[str, str], int] = defaultdict(int)
-        for hub_id, eps in hub_eps.items():
-            uniq = sorted(set(eps))
-            if len(uniq) < 2:
-                continue
-            w = self.canon.idf_weight(hub_id)   # rare shared tags/entities weigh more
-            for i in range(len(uniq)):
-                for j in range(i + 1, len(uniq)):
-                    pair_weight[(uniq[i], uniq[j])] += w
-                    pair_count[(uniq[i], uniq[j])] += 1
-        for (a, b), w in pair_weight.items():
-            if pair_count[(a, b)] < self.config.shared_min_overlap:
-                continue
-            self.store.add_edge(Edge(src=a, dst=b, etype=etype,
-                                    provenance=Provenance.DERIVED,
-                                    confidence=min(1.0, w / 3.0), weight=round(w, 3)))
+    def _episode_hubs(self, ep_id: str, etype: EdgeType) -> set[str]:
+        """The hub nodes an episode shares through: its tags, or (via the mention star)
+        its resolved entities."""
+        if etype == EdgeType.SHARED_TAG:
+            return {nbr for nbr, _d in self.store.neighbors(
+                ep_id, etypes={EdgeType.TAGGED_AS}, direction="out")}
+        ents: set[str] = set()
+        for mid, _d in self.store.neighbors(ep_id, etypes={EdgeType.MENTIONED_IN},
+                                            direction="in"):
+            for ent, _d2 in self.store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
+                                                 direction="out"):
+                ents.add(ent)
+        return ents
+
+    def _hub_members(self, hub: str, etype: EdgeType) -> list[str]:
+        """Valid episodes attached to a hub, capped at the `shared_hub_cap` most recent
+        (a hub big enough to hit the cap has high df, hence near-zero IDF weight)."""
+        if etype == EdgeType.SHARED_TAG:
+            eps = {ep for ep, _d in self.store.neighbors(
+                hub, etypes={EdgeType.TAGGED_AS}, direction="in")}
+        else:
+            eps = self.store.entity_episodes(hub)
+        members = [e for e in eps
+                   if (n := self.store.get_node(e)) and n.valid]
+        cap = int(getattr(self.config, "shared_hub_cap", 0))
+        if cap and len(members) > cap:
+            members.sort(key=lambda e: (self.store.get_node(e).created_at, e))
+            return members[-cap:]
+        return members
+
+    def _shared_edges_for(self, new_eps: list[str], etype: EdgeType) -> None:
+        hubs_of: dict[str, set[str]] = {}
+
+        def hubs(ep: str) -> set[str]:
+            got = hubs_of.get(ep)
+            if got is None:
+                got = hubs_of[ep] = self._episode_hubs(ep, etype)
+            return got
+
+        done: set[tuple[str, str]] = set()
+        for ep in new_eps:
+            for hub in hubs(ep):
+                for other in self._hub_members(hub, etype):
+                    if other == ep:
+                        continue
+                    pair = (ep, other) if ep <= other else (other, ep)
+                    if pair in done:
+                        continue
+                    done.add(pair)
+                    shared = hubs(ep) & hubs(other)
+                    if len(shared) < self.config.shared_min_overlap:
+                        continue
+                    w = sum(self.canon.idf_weight(h) for h in sorted(shared))
+                    self.store.add_edge(Edge(src=pair[0], dst=pair[1], etype=etype,
+                                            provenance=Provenance.DERIVED,
+                                            confidence=min(1.0, w / 3.0),
+                                            weight=round(w, 3)))

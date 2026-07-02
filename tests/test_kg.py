@@ -465,7 +465,7 @@ def test_store_save_load_roundtrip():
     store.add_edge(Edge("a", "b", EdgeType.SIMILAR_TO, Provenance.SIMILAR, 0.9, 0.9))
     store.add_edge(Edge("a", "b", EdgeType.SHARED_TAG, Provenance.DERIVED, 0.5, 2.0))
     store.vectors.add("episode", "a", np.ones(cfg().embed_dim, dtype=np.float32))
-    store.hash_cache["1"] = "a"
+    store.add_hash("1", "a")   # write-through save persists only tracked mutations
     store.save()
     s2 = GraphStore.open(path, cfg())
     assert s2.has_node("a") and s2.has_node("b")
@@ -702,3 +702,102 @@ def test_corpus_loads_from_disk():
     assert qs and all(q.get("gold") and "answer" in q and "kind" in q for q in qs)
     # gold ids namespace each evidence session by question_id (collide-safe)
     assert all(g.startswith("obj_") for q in qs for g in q["gold"])
+
+
+# --------------------------------------------------------------------------- #
+# perf-path invariants (write-through store, cached PPR operator, incremental derive)
+# --------------------------------------------------------------------------- #
+def test_personalized_pagerank_matches_networkx():
+    """The cached-CSR power iteration must reproduce nx.pagerank exactly (same math,
+    minus the per-call graph→CSR conversion)."""
+    import networkx as nx
+    from kg.retrieval import personalized_pagerank
+    rng = np.random.default_rng(7)
+    G = nx.Graph()
+    G.add_nodes_from(f"n{i}" for i in range(40))
+    for _ in range(120):
+        a, b = rng.integers(0, 40, 2)
+        if a != b:
+            G.add_edge(f"n{a}", f"n{b}", weight=float(rng.random()) + 0.05)
+    pers = {f"n{i}": float(rng.random()) + 0.01 for i in range(0, 40, 3)}
+    mine = personalized_pagerank(G, alpha=0.5, personalization=pers, max_iter=200)
+    ref = nx.pagerank(G, alpha=0.5, personalization=pers, weight="weight", max_iter=200)
+    assert set(mine) == set(ref)
+    assert all(abs(mine[n] - ref[n]) < 1e-10 for n in ref)
+    # second call reuses the cached operator — must be identical
+    again = personalized_pagerank(G, alpha=0.5, personalization=pers, max_iter=200)
+    assert again == mine
+
+
+def _edge_dump(store):
+    rows = set()
+    for u, v, d in store.g.edges(data=True):
+        rows.add((u, v, d["etype"], d.get("rel_tag") or "", d.get("valid_at", ""),
+                  d.get("invalid_at", ""), round(float(d["confidence"]), 6),
+                  round(float(d["weight"]), 6)))
+    return rows
+
+
+def test_write_through_persists_in_place_mutations():
+    """Two-batch Becky ingest: batch 2 supersedes/closes facts opened by batch 1 (in-place
+    edge mutation) and bumps doc frequencies on loaded nodes. The dirty-tracked flush must
+    persist all of it — reloaded store == in-memory store, with no full rewrite."""
+    from kg.synthetic import becky_stream
+    path = tmp_store()
+    g = KnowledgeGraph.open(path, cfg())
+    items, table = becky_stream()
+    g.extractor = ScriptedExtractor(table)
+    g.ingest(items[:2])
+    g.ingest(items[2:])          # closes/supersedes batch-1 facts in place
+    g.save()
+    s2 = GraphStore.open(path, cfg())
+    assert set(s2.nodes) == set(g.store.nodes)
+    assert _edge_dump(s2) == _edge_dump(g.store)
+    assert s2.hash_cache == g.store.hash_cache
+    for nid, n in g.store.nodes.items():
+        assert s2.nodes[nid].doc_frequency == n.doc_frequency, nid
+        assert sorted(s2.nodes[nid].aliases) == sorted(n.aliases), nid
+
+
+def test_community_rebuild_does_not_resurrect_rows():
+    """build_communities removes the previous CommunityNodes; the flush must DELETE their
+    rows (not leave them to come back on the next load)."""
+    g = scripted_graph()
+    g.ingest(sample_items())
+    g.build_communities()
+    g.save()
+    g.build_communities()       # rebuild → previous comm_* removed then re-added
+    g.save()
+    s2 = GraphStore.open(g.store.path, cfg())
+    live = {n.id for n in g.store.nodes_of_type(NodeType.COMMUNITY, valid_only=False)}
+    loaded = {n.id for n in s2.nodes_of_type(NodeType.COMMUNITY, valid_only=False)}
+    assert loaded == live
+
+
+def test_incremental_derived_edges_match_single_batch():
+    """Derived-edge identities (SHARED_TAG / SHARED_ENTITY / SIMILAR_TO) must be the same
+    whether the corpus arrives in one ingest call or two."""
+    items = sample_items()
+    g1 = scripted_graph()
+    g1.ingest(items)
+    g2 = scripted_graph()
+    g2.ingest(items[:2])
+    g2.ingest(items[2:])
+    derived = {"SHARED_TAG", "SHARED_ENTITY", "SIMILAR_TO"}
+
+    def ident(store):
+        return {(u, v, d["etype"]) for u, v, d in store.g.edges(data=True)
+                if d["etype"] in derived}
+
+    assert ident(g1.store) == ident(g2.store)
+
+
+def test_shared_edges_flag_disables_shared_derivation():
+    c = cfg()
+    c.shared_edges = False
+    g = KnowledgeGraph.open(tmp_store(), c)
+    g.extractor = ScriptedExtractor(_sample_table())
+    g.ingest(sample_items())
+    etypes = {d["etype"] for _u, _v, d in g.store.g.edges(data=True)}
+    assert "SHARED_TAG" not in etypes and "SHARED_ENTITY" not in etypes
+    assert "SIMILAR_TO" in etypes    # kNN edges are governed separately

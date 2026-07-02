@@ -24,8 +24,10 @@ class VectorIndex:
     def __init__(self, dim: int):
         self.dim = dim
         self._ids: dict[str, list[str]] = {}      # kind -> [node_id, ...]
-        self._mat: dict[str, np.ndarray] = {}     # kind -> (n, dim) normalised
+        self._mat: dict[str, np.ndarray] = {}     # kind -> (n, dim) capacity-doubled buffer
+        self._len: dict[str, int] = {}            # kind -> rows actually in use
         self._row: dict[str, dict[str, int]] = {}  # kind -> {node_id: row}
+        self.on_add = None                        # optional hook (GraphStore dirty tracking)
 
     # ---- mutation -----------------------------------------------------------
     def add(self, kind: str, node_id: str, vec: np.ndarray) -> None:
@@ -34,13 +36,23 @@ class VectorIndex:
         rows = self._row.setdefault(kind, {})
         if node_id in rows:                       # update in place
             self._mat[kind][rows[node_id]] = vec
+            if self.on_add:
+                self.on_add(kind, node_id)
             return
         rows[node_id] = len(ids)
         ids.append(node_id)
-        if kind not in self._mat:
-            self._mat[kind] = vec
-        else:
-            self._mat[kind] = np.vstack([self._mat[kind], vec])
+        n = self._len.get(kind, 0)
+        mat = self._mat.get(kind)
+        if mat is None or n >= mat.shape[0]:      # amortized growth: a vstack per add
+            cap = max(64, (0 if mat is None else mat.shape[0]) * 2)  # is O(n²) overall
+            grown = np.zeros((cap, vec.shape[1]), dtype=np.float32)
+            if mat is not None:
+                grown[:n] = mat[:n]
+            self._mat[kind] = mat = grown
+        mat[n] = vec
+        self._len[kind] = n + 1
+        if self.on_add:
+            self.on_add(kind, node_id)
 
     def get(self, kind: str, node_id: str) -> np.ndarray | None:
         row = self._row.get(kind, {}).get(node_id)
@@ -55,8 +67,10 @@ class VectorIndex:
                ) -> list[tuple[str, float]]:
         """Top-k (node_id, cosine) for one kind, cosine >= floor."""
         mat = self._mat.get(kind)
-        if mat is None or len(mat) == 0:
+        n = self._len.get(kind, 0)
+        if mat is None or n == 0:
             return []
+        mat = mat[:n]                             # live rows only (buffer over-allocates)
         q = l2_normalize(query).reshape(-1)
         if q.shape[0] != mat.shape[1]:
             raise ValueError(
@@ -64,10 +78,21 @@ class VectorIndex:
                 f"kind={kind!r}. The store was built with a different embedder; "
                 f"re-ingest with the same --embedder, or rebuild the store.")
         sims = mat @ q                            # both unit-norm → cosine
-        order = np.argsort(-sims)
         ids = self._ids[kind]
-        out: list[tuple[str, float]] = []
         exclude = exclude or set()
+        # Top-k via partial sort (argpartition), widened to include every score tied at
+        # the boundary, then ordered by (-score, id). The id tie-break makes results a
+        # function of index CONTENT, not insertion order — identical before and after a
+        # save/load cycle (repeated mention surfaces produce exact ties).
+        take = min(n, max(k + len(exclude), k) * 2)
+        if take < n:
+            part = np.argpartition(-sims, take - 1)[:take]
+            cand = np.nonzero(sims >= sims[part].min())[0]
+        else:
+            cand = np.arange(n)
+        cand_ids = np.asarray([ids[i] for i in cand], dtype=object)
+        order = cand[np.lexsort((cand_ids, -sims[cand]))]
+        out: list[tuple[str, float]] = []
         for idx in order:
             nid = ids[idx]
             if nid in exclude:

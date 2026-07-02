@@ -73,6 +73,19 @@ class Config:
     episode_knn_k: int = 6            # SIMILAR_TO neighbours per episode
     episode_knn_floor: float = 0.55   # min cosine for an episode↔episode SIMILAR_TO edge
     shared_min_overlap: int = 1       # min shared tags/entities for a SHARED_* edge
+    # SHARED_TAG / SHARED_ENTITY derivation. Derivation is incremental (only pairs that
+    # involve a NEW episode are computed), but a popular hub still pairs each new episode
+    # against every member — shared_hub_cap bounds that at the `cap` most recent members
+    # (a hub big enough to hit the cap has high df and near-zero IDF weight anyway).
+    # shared_edges=False skips SHARED_* entirely — the removal A/B: the tag/entity star
+    # already connects the same episodes at path length 2, so PPR may not need shortcuts.
+    shared_edges: bool = True
+    shared_hub_cap: int = 256
+
+    # ---- write-through flush cadence ----------------------------------------
+    # The ingest loop checkpoints the store to SQLite every N episodes (and always at the
+    # end), so a crash mid-ingest loses at most one window. 0 disables mid-loop flushes.
+    ingest_flush_every: int = 200
 
     # ---- retrieval (§5) ------------------------------------------------------
     ppr_damping: float = 0.5          # HippoRAG personalization damping

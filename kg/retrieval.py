@@ -18,6 +18,7 @@ contained T (point-in-time retrieval). Structural edges (mention/episode/tag) ar
 from __future__ import annotations
 
 import re
+import weakref
 from dataclasses import dataclass, field
 
 import networkx as nx
@@ -64,12 +65,18 @@ class Seeder:
         self._bm25 = None
         self._bm25_ids: list[str] = []
         self._bm25_corpus: list[list[str]] = []
+        self._bm25_version: int = -1
 
     def _ensure_bm25(self):
-        if self._bm25 is not None:
+        # Rebuild only when the EPISODE set has changed since the last build (episode
+        # text is immutable, so nothing else can stale the corpus). Retrievers are
+        # long-lived (hoisted onto KnowledgeGraph), so across queries this is a no-op.
+        version = getattr(self.store, "episode_version", None)
+        if self._bm25 is not None and version == self._bm25_version:
             return
+        self._bm25_version = version
         corpus, ids = [], []
-        for n in self.store.nodes_of_type(NodeType.EPISODE):
+        for n in sorted(self.store.nodes_of_type(NodeType.EPISODE), key=lambda n: n.id):
             surface = n.raw_text or n.description or n.name or ""
             corpus.append(_TOK.findall(surface.lower()))
             ids.append(n.id)
@@ -105,7 +112,8 @@ class Seeder:
             return []
         scores = scores / peak
         out = []
-        for i in np.argsort(-scores)[:k]:
+        # ids are pre-sorted (corpus build), so argsort's stable ties are id-ordered
+        for i in np.argsort(-scores, kind="stable")[:k]:
             if scores[i] <= 0:
                 break
             out.append((self._bm25_ids[i], float(scores[i])))
@@ -153,17 +161,45 @@ class Seeder:
 # IN_COMMUNITY would turn each CommunityNode into a high-degree hub and distort the spread.
 _TRAVERSAL_EXCLUDE = {EdgeType.IN_COMMUNITY.value}
 
+# Projection cache, keyed by store identity (weak: a dropped store frees its cache),
+# holding {params_key: graph} for ONE store version at a time. Building the projection
+# is O(all edges) — the single biggest per-query cost — but it only changes when the
+# store does, so across queries this makes it O(1).
+_PROJ_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
 
 def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = None,
                     exclude_etypes: set[str] | None = None) -> nx.Graph:
     """Undirected, weighted projection of the directed store (HippoRAG runs PPR
     undirected). Fact (RELATED_TO) edges are filtered to the requested temporal view
-    (`as_of=None` → current; `as_of=T` → as-of-T); structural edges are timeless."""
+    (`as_of=None` → current; `as_of=T` → as-of-T); structural edges are timeless.
+    Cached per (store.version, parameters); rebuilt only after the graph mutates."""
     exclude = _TRAVERSAL_EXCLUDE if exclude_etypes is None else exclude_etypes
+    version = getattr(store, "version", None)
+    key = (as_of, frozenset(exclude), getattr(config, "self_guard", "none"),
+           float(getattr(config, "self_guard_cap", 0.05)),
+           config.inferred_confidence_floor)
+    cached_version, views = _PROJ_CACHE.get(store, (None, None))
+    if views is not None and cached_version == version and key in views:
+        return views[key]
+    G = _build_projection(store, config, as_of=as_of, exclude=exclude)
+    if cached_version != version:
+        views = {}                        # store moved → every cached view is stale
+        _PROJ_CACHE[store] = (version, views)
+    views[key] = G
+    return G
+
+
+def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
+                      exclude: set[str]) -> nx.Graph:
     self_guard = getattr(config, "self_guard", "none")
     self_cap = float(getattr(config, "self_guard_cap", 0.05))
+    # Deterministic construction (sorted nodes / sorted pair accumulation): the
+    # projection — and everything downstream of it, PPR float sums included — is a
+    # function of graph CONTENT, not of node/edge insertion or load order.
     G = nx.Graph()
-    for n in store.nodes.values():
+    for nid in sorted(store.nodes):
+        n = store.nodes[nid]
         if n.valid:
             if self_guard == "exclude" and n.id == SELF_ENTITY_ID:
                 continue   # drop the self anchor entirely (it carries no discriminating signal)
@@ -194,9 +230,61 @@ def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = No
         by_etype = pair_w.setdefault(pair, {})
         if w > by_etype.get(et, 0.0):              # MAX within an etype (parallel facts
             by_etype[et] = w                       # count once); SUM across distinct etypes
-    for (u, v), by_etype in pair_w.items():
-        G.add_edge(u, v, weight=sum(by_etype.values()))
+    for (u, v) in sorted(pair_w):
+        by_etype = pair_w[(u, v)]
+        G.add_edge(u, v, weight=sum(w for _et, w in sorted(by_etype.items())))
     return G
+
+
+# --------------------------------------------------------------------------- #
+# Personalized PageRank over a cached sparse operator
+# --------------------------------------------------------------------------- #
+# nx.pagerank rebuilds the row-normalized CSR matrix from the graph on EVERY call —
+# an O(E) conversion that dwarfs the actual power iteration. The projection is cached
+# above, so the operator derived from it can be too: keyed weakly by the graph object
+# (a rebuilt projection is a new object, so its operator follows automatically).
+_PPR_OP_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _ppr_operator(G: nx.Graph):
+    bundle = _PPR_OP_CACHE.get(G)
+    if bundle is None:
+        import scipy.sparse as sp
+        nodelist = list(G)
+        A = nx.to_scipy_sparse_array(G, nodelist=nodelist, weight="weight", dtype=float)
+        S = np.asarray(A.sum(axis=1)).flatten()
+        S[S != 0] = 1.0 / S[S != 0]
+        Q = sp.csr_array(sp.spdiags(S.T, 0, *A.shape))
+        A = Q @ A                               # row-normalized transition operator
+        is_dangling = np.where(S == 0)[0]
+        index = {n: i for i, n in enumerate(nodelist)}
+        bundle = (nodelist, index, A, is_dangling)
+        _PPR_OP_CACHE[G] = bundle
+    return bundle
+
+
+def personalized_pagerank(G: nx.Graph, *, alpha: float, personalization: dict,
+                          max_iter: int = 200, tol: float = 1e-6) -> dict:
+    """Same math as nx.pagerank's scipy path (uniform start, dangling mass to the
+    personalization vector, L1 convergence at N*tol), minus the per-call graph→CSR
+    conversion. Raises nx.PowerIterationFailedConvergence like nx.pagerank does."""
+    N = len(G)
+    if N == 0:
+        return {}
+    nodelist, index, A, is_dangling = _ppr_operator(G)
+    p = np.zeros(N, dtype=float)
+    for n, val in personalization.items():
+        i = index.get(n)
+        if i is not None:
+            p[i] = val
+    p /= p.sum()
+    x = np.repeat(1.0 / N, N)
+    for _ in range(max_iter):
+        xlast = x
+        x = alpha * (x @ A + sum(x[is_dangling]) * p) + (1 - alpha) * p
+        if np.absolute(x - xlast).sum() < N * tol:
+            return dict(zip(nodelist, map(float, x)))
+    raise nx.PowerIterationFailedConvergence(max_iter)
 
 
 # --------------------------------------------------------------------------- #
@@ -235,14 +323,14 @@ class PPRRetriever:
         if not pers or sum(pers.values()) <= 0:
             return res
         with prof_span("query.pagerank"):
-            ppr = nx.pagerank(G, alpha=self.config.ppr_damping, personalization=pers,
-                              weight="weight", max_iter=200)
+            ppr = personalized_pagerank(G, alpha=self.config.ppr_damping,
+                                        personalization=pers, max_iter=200)
         cand = []
         for nid, sc in ppr.items():
             n = self.store.get_node(nid)
             if n and n.ntype == NodeType.EPISODE and n.valid:
                 cand.append((nid, sc))
-        cand.sort(key=lambda x: -x[1])
+        cand.sort(key=lambda x: (-x[1], x[0]))    # id tie-break: order-insensitive
         cand = cand[: max(k * 3, k)]
         with prof_span("query.mmr_rerank"):
             ranked = self._rerank(query, cand, seeds, G, k)
@@ -282,14 +370,20 @@ class PPRRetriever:
 
     @staticmethod
     def _seed_distances(G, seeds, cutoff: int = 5) -> dict:
-        dist: dict[str, float] = {}
-        for s in seeds:
-            if s not in G:
-                continue
-            lengths = nx.single_source_shortest_path_length(G, s, cutoff=cutoff)
-            for node, d in lengths.items():
-                if d < dist.get(node, float("inf")):
-                    dist[node] = d
+        """Min hop-distance from ANY seed, as one multi-source BFS. Equivalent to (but
+        one traversal instead of len(seeds)) a per-seed BFS keeping the minimum."""
+        dist: dict[str, int] = {s: 0 for s in seeds if s in G}
+        frontier = list(dist)
+        d = 0
+        while frontier and d < cutoff:
+            d += 1
+            nxt = []
+            for u in frontier:
+                for v in G.adj[u]:
+                    if v not in dist:
+                        dist[v] = d
+                        nxt.append(v)
+            frontier = nxt
         return dist
 
 
@@ -420,7 +514,7 @@ class HybridRetriever:
         # STATE/evolution: guarantee the fact-bearing episodes are in the pool.
         if getattr(self.config, "fact_lane_augment", True) and lane == STATE and ent_ids:
             with prof_span("query.fact_augment"):
-                for ep in self.facts.fact_episodes(ent_ids):
+                for ep in sorted(self.facts.fact_episodes(ent_ids)):
                     n = self.store.get_node(ep)
                     if ep not in cand_ids and n and n.valid and n.ntype == NodeType.EPISODE:
                         cand_ids.append(ep)

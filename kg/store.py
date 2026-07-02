@@ -67,6 +67,33 @@ class GraphStore:
         self.vectors = VectorIndex(self.config.embed_dim)
         self.hash_cache: dict[str, str] = {}  # content_hash -> episode node id
         self._ep_count: int | None = None     # cached len(EPISODE nodes), see episode_count()
+        # Mutation bookkeeping: save() persists only what changed (write-through), and
+        # retrieval-side caches (projection / BM25) key off `version` to know when the
+        # graph has moved under them. Every mutator below bumps _touch().
+        # `episode_version` moves only when the EPISODE set changes — the BM25 corpus
+        # (immutable episode text) depends on nothing else.
+        self.version: int = 0
+        self.episode_version: int = 0
+        self._loading = False                 # _load() replays rows; don't mark them dirty
+        self._dirty_nodes: set[str] = set()
+        self._dirty_edges: set[tuple[str, str, str]] = set()   # (src, dst, gkey)
+        self._dirty_vectors: set[tuple[str, str]] = set()      # (kind, node_id)
+        self._dirty_cache: set[str] = set()                    # content hashes
+        self._deleted_nodes: set[str] = set()
+        self._deleted_edge_rows: set[tuple] = set()   # full SQL PKs to DELETE (see touch_edge)
+        self.vectors.on_add = self._mark_vector
+
+    def _mark_vector(self, kind: str, node_id: str) -> None:
+        if not self._loading:
+            self._dirty_vectors.add((kind, node_id))
+
+    def add_hash(self, content_hash: str, node_id: str) -> None:
+        self.hash_cache[content_hash] = node_id
+        self._dirty_cache.add(content_hash)
+
+    def _touch(self) -> None:
+        if not self._loading:
+            self.version += 1
 
     # ------------------------------------------------------------------ nodes
     def add_node(self, node: Node) -> None:
@@ -74,6 +101,30 @@ class GraphStore:
         self.g.add_node(node.id, ntype=node.ntype.value)
         if node.ntype == NodeType.EPISODE:
             self._ep_count = None  # invalidate cache
+            if not self._loading:
+                self.episode_version += 1
+        self._dirty_nodes.add(node.id)
+        self._deleted_nodes.discard(node.id)
+        self._touch()
+
+    def touch_node(self, node_id: str) -> None:
+        """Mark an existing node's payload as changed (aliases, doc_frequency, …) so the
+        next flush persists it. In-place mutators MUST call this — save() no longer
+        rewrites the world, it only writes what was touched."""
+        self._dirty_nodes.add(node_id)
+        self._touch()
+
+    def remove_node(self, node_id: str) -> None:
+        """Remove a node and its incident edges (communities rebuild path). Tracked so the
+        next flush deletes its rows; incident edge rows go with it (same DELETE)."""
+        if node_id in self.g:
+            self.g.remove_node(node_id)
+        self.nodes.pop(node_id, None)
+        self._dirty_nodes.discard(node_id)
+        self._deleted_nodes.add(node_id)
+        self._ep_count = None
+        self.episode_version += 1
+        self._touch()
 
     def episode_count(self) -> int:
         """Cached count of valid EPISODE nodes (the IDF denominator); lazy."""
@@ -116,6 +167,25 @@ class GraphStore:
             belief=edge.belief.value if isinstance(edge.belief, Belief) else edge.belief,
             episode_id=edge.episode_id, valid=edge.valid, created_at=edge.created_at,
         )
+        self._dirty_edges.add((edge.src, edge.dst, gkey))
+        self._touch()
+
+    def touch_edge(self, src: str, dst: str, gkey: str,
+                   old_valid_at: str | None = None) -> None:
+        """Mark an edge whose attribute dict was mutated in place (kg/temporal.py's
+        confirm/supersede/backfill) so the next flush persists it.
+
+        `old_valid_at` MUST be passed when the mutation changed the edge's `valid_at`
+        (backfill / confirm filling an unknown start): valid_at is part of the SQL
+        primary key, so the row under the old key has to be deleted or it would come
+        back as a duplicate fact on the next load."""
+        if old_valid_at is not None:
+            d = (self.g.get_edge_data(src, dst) or {}).get(gkey)
+            if d is not None and old_valid_at != d.get("valid_at", ""):
+                self._deleted_edge_rows.add(
+                    (src, dst, d["etype"], d.get("rel_tag") or "", old_valid_at))
+        self._dirty_edges.add((src, dst, gkey))
+        self._touch()
 
     # ----------------------------------------------------- fact-edge helpers
     def find_facts(self, src: str, dst: str | None = None, rel_tag: str | None = None,
@@ -140,8 +210,9 @@ class GraphStore:
         """Close every still-open (src→dst, rel_tag) fact at time `at` (set invalid_at).
         Returns the number closed. The edge stays in the graph — just no longer current."""
         closed = 0
-        for _v, _k, data in self.find_facts(src, dst, rel_tag, open_only=True):
+        for _v, gkey, data in self.find_facts(src, dst, rel_tag, open_only=True):
             data["invalid_at"] = at
+            self.touch_edge(src, dst, gkey)
             closed += 1
         return closed
 
@@ -210,7 +281,13 @@ class GraphStore:
         return store
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path)
+        con = sqlite3.connect(self.path)
+        # WAL: a crash mid-flush can't corrupt the store, and readers don't block the
+        # writer. NORMAL sync is the standard WAL pairing (durable to app crash; an OS
+        # crash can lose the last transaction, never corrupt).
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        return con
 
     def _init_db(self) -> None:
         con = self._connect()
@@ -234,21 +311,39 @@ class GraphStore:
         con.close()
 
     def save(self) -> None:
+        """Flush every change since the last save/flush to SQLite (write-through model:
+        one transaction of upserts/deletes for exactly the dirty items, NOT a full
+        rewrite — save cost is proportional to what changed, so the ingest loop can
+        flush periodically and a crash loses at most one flush window)."""
         if not self.path:
             raise ValueError("GraphStore has no path; open(path) first")
+        if not (self._dirty_nodes or self._dirty_edges or self._dirty_vectors
+                or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows):
+            return
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._init_db()
         con = self._connect()
         cur = con.cursor()
-        cur.execute("DELETE FROM nodes")
-        cur.execute("DELETE FROM edges")
-        cur.execute("DELETE FROM vectors")
+        if self._deleted_nodes:
+            gone = [(nid,) for nid in self._deleted_nodes]
+            cur.executemany("DELETE FROM nodes WHERE id=?", gone)
+            cur.executemany("DELETE FROM vectors WHERE node_id=?", gone)
+            cur.executemany("DELETE FROM edges WHERE src=? OR dst=?",
+                            [(nid, nid) for nid in self._deleted_nodes])
+        if self._deleted_edge_rows:
+            cur.executemany(
+                "DELETE FROM edges WHERE src=? AND dst=? AND etype=? AND rel_tag=? "
+                "AND valid_at=?", sorted(self._deleted_edge_rows))
         cur.executemany(
-            "INSERT INTO nodes(id, ntype, payload) VALUES (?,?,?)",
-            [(n.id, n.ntype.value, n.to_payload()) for n in self.nodes.values()],
+            "INSERT OR REPLACE INTO nodes(id, ntype, payload) VALUES (?,?,?)",
+            [(n.id, n.ntype.value, n.to_payload())
+             for nid in sorted(self._dirty_nodes) if (n := self.nodes.get(nid))],
         )
         edge_rows = []
-        for u, v, d in self.g.edges(data=True):
+        for u, v, gkey in sorted(self._dirty_edges):
+            d = (self.g.get_edge_data(u, v) or {}).get(gkey)
+            if d is None:
+                continue   # replaced-then-removed within the window; the survivor is dirty too
             edge_rows.append((u, v, d["etype"], d.get("rel_tag") or "", d["provenance"],
                               d["confidence"], d["weight"], d.get("valid_at", ""),
                               d.get("invalid_at", ""), d.get("belief", "asserted"),
@@ -256,17 +351,36 @@ class GraphStore:
                               d.get("created_at", "")))
         cur.executemany(
             "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", edge_rows)
-        vec_rows = [(nid, kind, np.asarray(vec, dtype=np.float32).tobytes())
-                    for kind, nid, vec in self.vectors.iter_vectors()]
+        vec_rows = []
+        for kind, nid in sorted(self._dirty_vectors):
+            vec = self.vectors.get(kind, nid)
+            if vec is not None:
+                vec_rows.append((nid, kind, np.asarray(vec, dtype=np.float32).tobytes()))
         cur.executemany("INSERT OR REPLACE INTO vectors VALUES (?,?,?)", vec_rows)
         cur.executemany(
             "INSERT OR REPLACE INTO cache VALUES (?,?,?)",
-            [(h, nid, "") for h, nid in self.hash_cache.items()],
+            [(h, self.hash_cache[h], "")
+             for h in sorted(self._dirty_cache) if h in self.hash_cache],
         )
         con.commit()
         con.close()
+        self._dirty_nodes.clear()
+        self._dirty_edges.clear()
+        self._dirty_vectors.clear()
+        self._dirty_cache.clear()
+        self._deleted_nodes.clear()
+        self._deleted_edge_rows.clear()
+
+    flush = save   # the ingest loop's periodic checkpoint is the same operation
 
     def _load(self) -> None:
+        self._loading = True
+        try:
+            self._load_rows()
+        finally:
+            self._loading = False
+
+    def _load_rows(self) -> None:
         con = self._connect()
         cur = con.cursor()
         for _id, _ntype, payload in cur.execute("SELECT id, ntype, payload FROM nodes"):
