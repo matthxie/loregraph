@@ -31,11 +31,10 @@ def is_global_query(query: str) -> bool:
 
 def build_communities(store: GraphStore, embedder: Embedder, config: Config) -> int:
     """(Re)build CommunityNodes + IN_COMMUNITY edges + summaries. Returns count."""
-    # drop any previous communities
+    # drop any previous communities (store.remove_node tracks the deletion so the
+    # write-through flush removes their rows instead of leaving them to resurrect)
     for cid in [n.id for n in store.nodes_of_type(NodeType.COMMUNITY, valid_only=False)]:
-        if cid in store.g:
-            store.g.remove_node(cid)
-        store.nodes.pop(cid, None)
+        store.remove_node(cid)
 
     G = projected_graph(store, config)
     if G.number_of_nodes() == 0:

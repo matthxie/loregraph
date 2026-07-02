@@ -33,6 +33,13 @@ class KnowledgeGraph:
         self.embedder = get_embedder(self.config)
         self.extractor = get_extractor(self.config)
         self.canon = Canonicalizer(store, self.embedder, self.config)
+        # Long-lived retrieval state: retrievers/answerers are hoisted here so their
+        # warm caches (BM25 corpus, projection, PPR operator) survive across calls
+        # instead of being rebuilt per query. Staleness is handled inside (they key
+        # off store.version / store.episode_version), so ingesting more data is safe.
+        self._retrievers: dict[str, object] = {}
+        self._answerer = None
+        self._answerer_key: tuple | None = None
 
     # ------------------------------------------------------------------ open
     @classmethod
@@ -68,7 +75,10 @@ class KnowledgeGraph:
         if mode == "community":
             return CommunityRetriever(self.store, self.embedder, self.config).retrieve(
                 text, k=k or 5)
-        retriever = get_retriever(mode, self.store, self.embedder, self.canon, self.config)
+        retriever = self._retrievers.get(mode)
+        if retriever is None:
+            retriever = self._retrievers[mode] = get_retriever(
+                mode, self.store, self.embedder, self.canon, self.config)
         return retriever.retrieve(text, k=k, as_of=as_of)
 
     # ------------------------------------------------------------------- ask
@@ -85,8 +95,14 @@ class KnowledgeGraph:
                      (("rag_backend", backend), ("rag_model", model)) if vv}
         if overrides:
             cfg = replace(cfg, **overrides)
-        return get_answerer(self.store, self.embedder, self.canon, cfg,
-                            client=client).run(text, k=k, as_of=as_of, kind=kind)
+        if client is not None:   # injected (test) client → no caching, exact old semantics
+            return get_answerer(self.store, self.embedder, self.canon, cfg,
+                                client=client).run(text, k=k, as_of=as_of, kind=kind)
+        akey = (cfg.rag_backend, cfg.rag_model)
+        if self._answerer is None or self._answerer_key != akey:
+            self._answerer = get_answerer(self.store, self.embedder, self.canon, cfg)
+            self._answerer_key = akey
+        return self._answerer.run(text, k=k, as_of=as_of, kind=kind)
 
     # ----------------------------------------------------------------- helpers
     def explain(self, result: RetrievalResult, max_objects: int = 5) -> str:
