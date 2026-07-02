@@ -127,6 +127,28 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
     hubs = list(dict.fromkeys(seed_hubs + hubs))[:max_hubs]
 
     keep = set(obj_set) | set(hubs)
+    sub, nodes, edges = _focused_subgraph(store, keep, obj_set, seeds, ranked)
+
+    # BFS hop ordering from the seed objects, for the "watch it traverse" animation
+    hops = _bfs_hops(sub, seed_objs or [n for n in sub.nodes()][:1])
+
+    rank_of = {oid: i + 1 for i, (oid, _) in enumerate(ranked)}
+    ranked_list = [{"id": oid, "rank": rank_of[oid], "score": round(float(sc), 4),
+                    "label": _obj_meta(store, oid)["label"],
+                    "modality": _obj_meta(store, oid)["modality"]}
+                   for oid, sc in ranked]
+    return {"query": query, "mode": mode, "nodes": nodes, "edges": edges,
+            "ranked": ranked_list, "seeds": list(seeds), "hops": hops}
+
+
+def _focused_subgraph(store: GraphStore, keep: set[str], obj_set: list[str],
+                      seeds: list[str],
+                      ranked: list[tuple[str, float]]) -> tuple[nx.Graph, list[dict], list[dict]]:
+    """Build the drawable (nodes, edges) for a focused subgraph over `keep`: episode↔hub
+    edges from the store, plus directed entity→entity relationship edges (rev 4 — one
+    parallel edge per relation, labels aggregated per ordered pair for display). Shared by
+    query_trace (algorithmic modes) and rag_trace_payload (the live RAG path) so both draw
+    the same way."""
     sub = nx.Graph()
     for nid in keep:
         sub.add_node(nid)
@@ -134,8 +156,6 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
         for nbr, d in store.neighbors(oid):
             if nbr in keep and not sub.has_edge(oid, nbr):
                 sub.add_edge(oid, nbr, etype=d["etype"], weight=float(d["weight"]))
-    # directed entity→entity relationship edges (rev 4 — one parallel edge per
-    # relation); aggregate the parallel labels per ordered pair for display
     rel_by_pair: dict[tuple[str, str], list[str]] = {}
     for src in keep:
         sn = store.get_node(src)
@@ -186,16 +206,7 @@ def query_trace(g: KnowledgeGraph, query: str, mode: str = "bfs",
                           "rel": d.get("rel", "")})
         else:
             edges.append({"s": u, "t": v, "etype": d["etype"]})
-
-    # BFS hop ordering from the seed objects, for the "watch it traverse" animation
-    hops = _bfs_hops(sub, seed_objs or [n for n in sub.nodes()][:1])
-
-    ranked_list = [{"id": oid, "rank": rank_of[oid], "score": round(float(sc), 4),
-                    "label": _obj_meta(store, oid)["label"],
-                    "modality": _obj_meta(store, oid)["modality"]}
-                   for oid, sc in ranked]
-    return {"query": query, "mode": mode, "nodes": nodes, "edges": edges,
-            "ranked": ranked_list, "seeds": list(seeds), "hops": hops}
+    return sub, nodes, edges
 
 
 # Node types the dashboard's force graph actually draws (episodes + the two anchor kinds).
@@ -204,11 +215,13 @@ _DRAWN = {NodeType.EPISODE, NodeType.ENTITY, NodeType.TAG}
 
 def rag_trace_payload(ans, store: GraphStore) -> dict:
     """Map a RagAnswer (kg/rag.py) onto the dashboard's per-query subgraph schema
-    {query, mode, ranked, seeds, hops}. There is no per-hop LLM walk to replay, so the
-    'hops' are the retrieve-then-read layers PPR produced — seeds → the entity/tag anchors
-    it touched → the episodes it surfaced — revealed in order over the ingest graph. Ids
-    are filtered to the node types the graph draws so the animation never references a node
-    that isn't on screen (e.g. mention seeds)."""
+    {query, mode, nodes, edges, ranked, seeds, hops}. There is no per-hop LLM walk to
+    replay, so the 'hops' are the retrieve-then-read layers PPR produced — seeds → the
+    entity/tag anchors it touched → the episodes it surfaced — revealed in order over the
+    ingest graph. The drawable subgraph is built the same way query_trace() builds it
+    (via _focused_subgraph) so the Query tab's graph stage renders. Ids are filtered to
+    the node types the graph draws so the animation never references a node that isn't on
+    screen (e.g. mention seeds)."""
     def is_t(nid, *types) -> bool:
         n = store.get_node(nid)
         return n is not None and n.ntype in types
@@ -231,7 +244,15 @@ def rag_trace_payload(ans, store: GraphStore) -> dict:
         ranked.append({"id": oid, "rank": i + 1, "score": "",
                        "label": (n.name or oid) if n else oid,
                        "modality": (n.modality.value if n and n.modality else "text")})
-    return {"query": ans.query, "mode": "rag", "nodes": [], "edges": [],
+
+    seed_eps = [s for s in seeds if is_t(s, NodeType.EPISODE)]
+    seed_hubs = [s for s in seeds if is_t(s, NodeType.ENTITY, NodeType.TAG)]
+    obj_set = list(dict.fromkeys(seed_eps + episodes))
+    keep = set(obj_set) | set(anchors) | set(seed_hubs)
+    _sub, nodes, edges = _focused_subgraph(
+        store, keep, obj_set, seeds, [(oid, 0.0) for oid in episodes])
+
+    return {"query": ans.query, "mode": "rag", "nodes": nodes, "edges": edges,
             "ranked": ranked, "seeds": seeds, "hops": [h for h in hops if h]}
 
 
