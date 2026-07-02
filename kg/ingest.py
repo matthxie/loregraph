@@ -29,6 +29,7 @@ from .embedders import Embedder
 from .extractors import Extraction, Extractor, extract_text_sectioned
 from .models import (Edge, EdgeType, EntityType, Modality, NodeType, Provenance,
                      episode_node, mention_node)
+from .profiler import span as prof_span
 from .store import GraphStore, now_iso
 from .temporal import apply_fact
 
@@ -105,7 +106,8 @@ class Ingestor:
             return report
 
         # 2. extract concurrently (bounded semaphore on the LLM calls)
-        extractions, errors = self._extract_all([p[0] for p in pending])
+        with prof_span("ingest.extract"):
+            extractions, errors = self._extract_all([p[0] for p in pending])
         report.extraction_failures = len(errors)
         if errors:
             report.notes.append(f"extraction failed for {len(errors)} item(s); "
@@ -114,7 +116,8 @@ class Ingestor:
         # 3. embed episode surfaces (raw text / image description) in one batch
         surfaces = [self._embed_surface(item, ext)
                     for (item, *_), ext in zip(pending, extractions)]
-        ep_vecs = self.embedder.embed(surfaces)
+        with prof_span("ingest.embed_episodes"):
+            ep_vecs = self.embedder.embed(surfaces)
 
         # 3b. batch-embed every tag/entity/relation surface for canonicalization
         canon_surfaces: list[str] = []
@@ -126,25 +129,29 @@ class Ingestor:
                 ment_surfaces.append(e.name)
             for r in ext.relations:
                 canon_surfaces.extend([r.source, r.target, *r.labels])
-        self.canon.prime_embeddings(canon_surfaces)
+        with prof_span("ingest.embed_canon_prime"):
+            self.canon.prime_embeddings(canon_surfaces)
 
         # 3c. batch-embed mention surfaces (the immutable mention layer's embeddings)
-        uniq_ments = sorted({s for s in ment_surfaces if s.strip()})
-        ment_vecs = dict(zip(uniq_ments, self.embedder.embed(uniq_ments))) if uniq_ments else {}
+        with prof_span("ingest.embed_mentions"):
+            uniq_ments = sorted({s for s in ment_surfaces if s.strip()})
+            ment_vecs = dict(zip(uniq_ments, self.embedder.embed(uniq_ments))) if uniq_ments else {}
 
-        # 4. write each episode (sequential)
-        for (item, h, ep_id), ext, vec in zip(pending, extractions, ep_vecs):
-            try:
-                m, f = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
-                report.ingested += 1
-                report.mentions += m
-                report.facts += f
-            except Exception as e:  # noqa: BLE001
-                report.failed += 1
-                report.notes.append(f"{item.id}: {e!r}")
+        # 4. write each episode (sequential — canonicalize + bi-temporal fact logic inside)
+        with prof_span("ingest.write_episodes"):
+            for (item, h, ep_id), ext, vec in zip(pending, extractions, ep_vecs):
+                try:
+                    m, f = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
+                    report.ingested += 1
+                    report.mentions += m
+                    report.facts += f
+                except Exception as e:  # noqa: BLE001
+                    report.failed += 1
+                    report.notes.append(f"{item.id}: {e!r}")
 
         # 5. derive Episode↔Episode edges across the whole graph
-        self._derive_episode_edges()
+        with prof_span("ingest.derive_edges"):
+            self._derive_episode_edges()
 
         report.seconds = time.time() - t0
         return report

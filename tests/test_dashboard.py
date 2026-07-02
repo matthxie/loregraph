@@ -290,6 +290,51 @@ def test_run_testrun_writes_artifact(monkeypatch):
     # round-trips through the index/run renderers without error
     assert "<svg" in dashboard.render_run_html(run) or "svg" in dashboard.render_run_html(run)
     assert dashboard.render_index_html(idx)
+    # profiler: stage timing + cost-by-site land in the run and per-item records
+    prof = run["profile"]
+    assert set(prof) == {"ingest", "query", "cost_by_site"}
+    assert any(k.startswith("ingest.") for k in prof["ingest"])       # pipeline wall stages
+    assert all(v["seconds"] >= 0 and v["calls"] >= 1 for v in prof["ingest"].values())
+    assert any(k.startswith("query.") for k in prof["query"])         # ask() stages
+    assert "rag" in prof["cost_by_site"]                              # answer-call site
+    for s in run["ingest"]["steps"]:
+        assert "profile" in s                                         # per-step breakdown
+    for r in q:
+        assert "profile" in r and r["seconds"] >= 0                   # per-query breakdown
+    assert idx[0]["ingest_seconds"] is not None                       # run-to-run comparison
+
+
+def test_profiler_spans_and_ambient_activation():
+    """kg/profiler.py: spans aggregate per label into the ACTIVE profiler; with none
+    active span() is a no-op; drain() resets; merge_profiles accumulates label-wise."""
+    from kg.profiler import (Profiler, activate, compact, deactivate,
+                             merge_profiles, span)
+
+    with span("orphan.stage"):        # no active profiler -> silently does nothing
+        pass
+    p = Profiler()
+    activate(p)
+    try:
+        with span("stage.a"):
+            pass
+        with span("stage.a"):
+            pass
+        with span("stage.b"):
+            pass
+    finally:
+        deactivate()
+    snap = p.snapshot()
+    assert snap["stage.a"]["calls"] == 2 and snap["stage.b"]["calls"] == 1
+    assert all(v["seconds"] >= 0 for v in snap.values())
+    with span("stage.late"):          # deactivated -> not recorded
+        pass
+    assert "stage.late" not in p.snapshot()
+    total: dict = {}
+    merge_profiles(total, p.drain())
+    merge_profiles(total, {"stage.a": {"seconds": 1.0, "calls": 3}})
+    assert total["stage.a"]["calls"] == 5
+    assert p.snapshot() == {}         # drained
+    assert compact({"x": {"seconds": 0.5, "calls": 2}}) == {"x": 0.5}
 
 
 def test_summarize_runs(monkeypatch):
