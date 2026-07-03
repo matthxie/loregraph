@@ -35,6 +35,7 @@ import re
 import time
 from datetime import datetime, timezone
 
+from .backoff import call_with_backoff
 from .config import Config
 from .corpus import load_longmemeval
 from .evaluate import _mrr, _recall_at_k
@@ -281,8 +282,14 @@ def _response_proxy(answer: str, expected) -> dict:
 _JUDGE_SYS = (
     "You are a strict grader. Given a question, a reference answer, and a model's "
     "answer, decide whether the model's answer is factually correct and actually "
-    "answers the question. Be lenient about phrasing, strict about facts. Call the "
-    "grade tool exactly once.")
+    "answers the question. Be lenient about phrasing, strict about facts.\n"
+    "The reference answer (and the conversation it was drawn from) is the ONLY ground "
+    "truth. If a date or fact implied by the question/reference conflicts with your "
+    "world knowledge (real calendars, real events, real people), the reference wins — "
+    "never mark an answer incorrect for agreeing with the reference's own facts.\n"
+    "Accept mathematically or logically equivalent formulations of the reference "
+    "answer (e.g. '2 fewer now than before' is the same fact as '2 more before than "
+    "now'). Call the grade tool exactly once.")
 
 _JUDGE_TOOL = {
     "type": "function",
@@ -313,14 +320,14 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
               "Grade the model answer.")
     try:
         with prof_span("judge.llm"):
-            msg = client.chat.completions.create(
+            msg = call_with_backoff(lambda: client.chat.completions.create(
                 model=model, max_tokens=300, temperature=0,
                 messages=[
                     {"role": "system", "content": _JUDGE_SYS},
                     {"role": "user", "content": prompt},
                 ],
                 tools=[_JUDGE_TOOL],
-                tool_choice={"type": "function", "function": {"name": "grade"}})
+                tool_choice={"type": "function", "function": {"name": "grade"}}))
         meter.record("judge", model, msg, label=q.get("id", ""))
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "grade":
@@ -393,17 +400,29 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
     grounding = (round(len(cited_art & gold_art) / len(gold_art), 3) if gold_art else 0.0)
     hit = bool(topk_art & gold_art)
     gold_marks = [{"id": x, "hit": _article(x) in topk_art} for x in sorted(gold)]
+    # precision@k: gold density of the top-k. NB the ceiling is n_gold/k (LongMemEval
+    # questions carry ~2 gold sessions), so read it against that, not against 1.0.
+    topk_list = ranked_art[:kk]
+    precision = (round(sum(1 for a in topk_list if a in gold_art) / len(topk_list), 3)
+                 if topk_list else 0.0)
+    gold_ranks = [i + 1 for i, a in enumerate(ranked_art) if a in gold_art]
     proxy = _response_proxy(ans.answer, q.get("answer", ""))
     jres = _judge(jclient, cfg.l3_model, q, ans.answer, judge_meter) if jclient else None
     return {
         "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
         "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
         "gold_marks": gold_marks,
+        "question_date": q.get("question_date"), "as_of": getattr(ans, "as_of", None),
         "answer_expected": q.get("answer", ""), "rationale": q.get("rationale", ""),
         "abstention": q.get("abstention", False),
         "answer": ans.answer, "citations": ans.citations,
         "dropped_citations": ans.dropped_citations, "object_ids": ranked,
+        # what the reader actually saw — makes "was the evidence in the context?"
+        # auditable post-hoc instead of unknowable (episode text is capped per config)
+        "context_episodes": list(getattr(ans, "context_episodes", []) or []),
+        "facts": list(getattr(ans, "facts", []) or []),
         "recall_at_k": round(recall, 3), "mrr": round(mrr, 3),
+        "precision_at_k": precision, "gold_ranks": gold_ranks,
         "hit": hit, "rank": rank,
         "citation_grounding": grounding,
         "response_contains": proxy["contains"], "response_token_recall": proxy["token_recall"],
@@ -542,7 +561,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     for q in questions:
         t_ask = time.time()
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
-                    kind=q.get("kind"))
+                    kind=q.get("kind"), as_of=q.get("question_date"))
         ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["lane"] = getattr(ans, "lane", "")
@@ -569,6 +588,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     backends.setdefault("agent", backends.get("answerer", "offline"))  # dashboard alias
     run = {
         "run_id": run_id, "label": label or run_id, "created_at": _now(),
+        "git": _git_info(),
         "backends": backends,
         "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
                    "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
@@ -709,8 +729,11 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         atpo = _avg_tags_per_object(stats)
 
         t_ask = time.time()
+        # question_date is the dataset's "today": pass it as the as-of anchor so the
+        # bi-temporal path filters facts to that moment and the reader knows what "now"
+        # means (temporal-arithmetic questions are unanswerable without it).
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
-                    kind=q.get("kind"))
+                    kind=q.get("kind"), as_of=q.get("question_date"))
         ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)
@@ -788,6 +811,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     backends.setdefault("agent", backends.get("answerer", "offline"))
     run = {
         "run_id": run_id, "label": label or run_id, "created_at": _now(),
+        "git": _git_info(),
         "backends": backends,
         "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
                    "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
@@ -841,6 +865,8 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
     return {
         "n": n,
         "recall_at_k": mean("recall_at_k"), "mrr": mean("mrr"),
+        "precision_at_k": (round(sum(r.get("precision_at_k", 0) for r in qrecords) / n, 3)
+                           if any("precision_at_k" in r for r in qrecords) else None),
         "hit_rate": round(sum(1 for r in qrecords if r["hit"]) / n, 3),
         "citation_grounding": mean("citation_grounding"),
         "response_accuracy": round(sum(judged) / len(judged), 3) if judged else None,
@@ -858,11 +884,26 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
     }
 
 
+def _git_info() -> dict:
+    """Best-effort code provenance for the run artifact: short SHA + dirty flag, so every
+    benchmark number is attributable to an exact tree state (or flagged as uncommitted)."""
+    import subprocess
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain"],
+                                    capture_output=True, text=True, timeout=5).stdout.strip())
+        return {"sha": sha or None, "dirty": dirty}
+    except Exception:  # noqa: BLE001 — not a git checkout / git missing
+        return {"sha": None, "dirty": None}
+
+
 def _update_index(out_dir: str, run: dict) -> None:
     """Append/replace this run's summary in runs/index.json (newest first)."""
     idx_path = os.path.join(out_dir, "index.json")
     summary = {
         "run_id": run["run_id"], "label": run["label"], "created_at": run["created_at"],
+        "git": run.get("git"),
         "mode": run.get("config", {}).get("mode", "shared"),
         "backends": run["backends"], "models": run["models"],
         "n_input": run["dataset"]["n_input"], "n_queries": run["dataset"]["n_queries"],

@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .backoff import call_with_backoff
 from .config import Config
 from .cues import cue_kinds, has_cue
 from .metering import UsageMeter
@@ -303,7 +304,7 @@ class OpenAIExtractor:
     def _call(self, content_blocks: list) -> Extraction:
         import json
         with prof_span("extract.llm"):
-            msg = self.client.chat.completions.create(
+            msg = call_with_backoff(lambda: self.client.chat.completions.create(
                 model=self.config.llm_model,
                 max_tokens=self.config.extract_max_tokens,
                 temperature=0,
@@ -313,7 +314,7 @@ class OpenAIExtractor:
                 ],
                 tools=[GRAPH_TOOL],
                 tool_choice={"type": "function", "function": {"name": "emit_graph"}},
-            )
+            ))
         self.meter.record("extract", self.config.llm_model, msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":

@@ -17,7 +17,7 @@ per-query cost, so this module adds a tiny, **offline-safe** accounting layer:
 Rates are USD per **million** tokens (input, output, cache-read ≈ 0.1×input,
 cache-write/5-min ≈ 1.25×input):
 
-    gpt-4o-mini                   0.15 / 0.60  / 0.00 / 0.00   (extractor + L3 + RAG default)
+    gpt-4o-mini                   0.15 / 0.60  / 0.075 / 0.00  (extractor + L3 + RAG default)
     claude-haiku-4-5(-20251001)   1.00 / 5.00  / 0.10 / 1.25   (legacy reference)
     claude-sonnet-4-6             3.00 / 15.00 / 0.30 / 3.75   (legacy reference)
     claude-opus-4-8               5.00 / 25.00 / 0.50 / 6.25   (legacy reference)
@@ -31,8 +31,10 @@ _M = 1_000_000.0
 
 # (input, output, cache_read, cache_write) USD per token.
 PRICING: dict[str, tuple[float, float, float, float]] = {
-    "gpt-4o-mini":               (0.15 / _M, 0.60 / _M, 0.00,       0.00),
-    "gpt-4o-mini-2024-07-18":    (0.15 / _M, 0.60 / _M, 0.00,       0.00),
+    # OpenAI automatic prefix caching bills cached input at 50% ($0.075/M for 4o-mini);
+    # there is no cache-write surcharge.
+    "gpt-4o-mini":               (0.15 / _M, 0.60 / _M, 0.075 / _M, 0.00),
+    "gpt-4o-mini-2024-07-18":    (0.15 / _M, 0.60 / _M, 0.075 / _M, 0.00),
     "claude-haiku-4-5-20251001": (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-haiku-4-5":          (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-sonnet-4-6":         (3.00 / _M, 15.00 / _M, 0.30 / _M, 3.75 / _M),
@@ -72,10 +74,20 @@ def _usage_fields(usage) -> tuple[int, int, int, int]:
                 return int(v)
         return 0
     # OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens.
-    return (g("input_tokens", "prompt_tokens"),
-            g("output_tokens", "completion_tokens"),
-            g("cache_read_input_tokens"),
-            g("cache_creation_input_tokens"))
+    i = g("input_tokens", "prompt_tokens")
+    o = g("output_tokens", "completion_tokens")
+    cr = g("cache_read_input_tokens")            # Anthropic name
+    cw = g("cache_creation_input_tokens")
+    if cr == 0:
+        # OpenAI reports automatic prefix-cache hits under prompt_tokens_details.cached_tokens,
+        # and (unlike Anthropic) its prompt_tokens INCLUDES the cached portion — split it out
+        # so cached tokens are priced at the discounted cache_read rate, not double-counted.
+        ptd = getattr(usage, "prompt_tokens_details", None)
+        cached = int(getattr(ptd, "cached_tokens", 0) or 0) if ptd is not None else 0
+        if cached:
+            cr = cached
+            i = max(0, i - cached)
+    return (i, o, cr, cw)
 
 
 def totals_of(records: list[CallRecord]) -> dict:

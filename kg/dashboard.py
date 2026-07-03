@@ -774,6 +774,7 @@ const Query=(function(){
         ${statEl("queries",T.n,"","Eval questions answered via the PPR→RAG ask() path (retrieve-then-read): the non-LLM retriever builds the context, one LLM call answers. No agentic per-hop traversal.")}
         ${statEl("recall@k",pct(T.recall_at_k),"","Mean recall@k — fraction of each question's gold evidence sessions retrieved in the top-k episodes.")}
         ${statEl("MRR",(T.mrr||0).toFixed(3),"","Mean reciprocal rank of the first gold evidence session across questions.")}
+        ${statEl("precision@k",T.precision_at_k!=null?pct(T.precision_at_k):"–","gold density","Fraction of the top-k retrieved episodes that are gold evidence. NB the ceiling is n_gold/k — LongMemEval questions carry ~2 gold sessions, so ~0.25 at k=8 is perfect, not poor.")}
         ${statEl("hit rate",pct(T.hit_rate),"","Fraction of questions where at least one gold evidence session was retrieved in the top-k.")}
         ${statEl("cite grounding",pct(T.citation_grounding),"","Mean fraction of gold evidence sessions the agent actually cited (citations ∩ gold).")}
         ${statEl("resp acc",T.response_accuracy!=null?pct(T.response_accuracy):"–","judge","Mean LLM-judge score of the answer text vs the reference answer (live runs only; – when offline).")}
@@ -870,6 +871,7 @@ const Query=(function(){
       </div>
       <div style="margin-top:8px"><span class="mut" style="font-size:11px">gold (green=retrieved)</span><br>${gold}</div>
       <div style="margin-top:6px"><span class="mut" style="font-size:11px">citations</span><br>${cites}</div>
+      ${(q.context_episodes||[]).length?`<div style="margin-top:6px"><span class="mut" style="font-size:11px">context — what the reader actually saw (${q.context_episodes.length} episodes${(q.facts||[]).length?`, ${q.facts.length} facts`:""}${q.as_of?`, as-of ${esc(q.as_of.slice(0,10))}`:""})</span><br>${q.context_episodes.map(c=>`<span class="tag" style="border-color:${(q.gold||[]).some(g=>g.includes(c.replace(/^ep_/,'').split('#')[0]))?'#2ec27e':'var(--line)'}">${esc(c)}</span>`).join("")}</div>`:""}
       ${q.profile?`<div style="margin-top:10px"><span class="mut" style="font-size:11px">⏱ this query, by stage (judge.llm is eval-only)</span><div id="qd-prof"></div></div>`:""}
       <div style="margin-top:10px"><span class="mut" style="font-size:11px">tool-call trace</span>
         <div class="scroll" style="max-height:200px;margin-top:4px"><table class="tracetbl">
