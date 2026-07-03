@@ -836,6 +836,10 @@ Input.onShow();
 // =================== QUERY VIEW ===================
 const Query=(function(){
   const qs=QRY.queries, T=QRY.totals; let built=false, graph=null, sel=null;
+  // failure-triage bucket colors (rough severity gradient: red = broke earliest/deepest)
+  const TRIC={extract_miss:"#ff5d8f",seed_miss:"#f5a623",rank_structural:"#e05d5d",
+    rank_out:"#e08d4d",join_miss:"#b06ff0",truncated:"#4f8ef7",diluted:"#6fc3f0",
+    reader:"#e6cf5a",judge_suspect:"#8b949e",abstention:"#8b949e",unscored:"#8b949e"};
   function avgLat(){ const xs=qs.map(q=>q.seconds).filter(v=>v!=null);
     return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null; }
   function build(){
@@ -858,11 +862,19 @@ const Query=(function(){
       <div class="qlayout">
         <div>
           <div class="card panel chartbox"><h2>recall@k by question kind</h2><div id="q-kinds"></div></div>
+          <div class="card panel chartbox" id="card-triage" style="display:none"><h2>failure triage — earliest broken link</h2><div id="q-triage"></div>
+            <div class="mut" style="font-size:10px;margin-top:4px">every FAILED question is stamped with the first
+            pipeline stage that broke for it: extract_miss = gold session yielded no entities/facts ·
+            seed_miss = no seed lands near gold · rank_structural/rank_out = gold missing from / ranked out of the
+            PPR pool · join_miss = only part of multi-session gold reached the context · truncated = evidence cut
+            by the per-episode char cap · diluted = in context intact but the reader said "not in context" ·
+            reader = everything was in front of the model, it still got it wrong · judge_suspect = answer contains
+            the reference verbatim, grader disagreed.</div></div>
           <div class="card panel chartbox" id="card-qprof" style="display:none"><h2>⏱ Query time by stage</h2><div id="q-prof"></div>
             <div class="mut" style="font-size:10px;margin-top:4px">totals across all queries. judge.llm is eval-only
             (not paid in production); everything else is the live ask() path.</div></div>
           <div class="card scroll" style="max-height:62vh">
-            <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th class="num">$</th></tr></thead>
+            <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th title="failure triage — the earliest pipeline stage that broke for this question (blank = passed)">why</th><th class="num">$</th></tr></thead>
             <tbody id="q-list"></tbody></table>
           </div>
         </div>
@@ -894,6 +906,10 @@ const Query=(function(){
       </div>`;
     wireStatTips(host);
     barChart(document.getElementById("q-kinds"), kinds, {fmt:pct});
+    const fb=Object.entries(T.failure_buckets||{});
+    if(fb.length){ document.getElementById("card-triage").style.display="";
+      barChart(document.getElementById("q-triage"),
+        fb.map(([k,v])=>({k,v,c:TRIC[k]||"#8b949e"})), {fmt:v=>v}); }
     if(PROF){ const qp=profItems(PROF.query);
       if(qp.length){ document.getElementById("card-qprof").style.display="";
         barChart(document.getElementById("q-prof"),qp,{fmt:fmtS}); } }
@@ -909,9 +925,12 @@ const Query=(function(){
                      : '<span style="color:var(--bad)" title="answer judged incorrect">●</span>')
         : (q.hit ? '<span style="color:var(--ok)" title="gold retrieved · answer unjudged">◑</span>'
                  : '<span class="mut" title="gold missed">○</span>');
+      const tri=(q.triage&&q.triage!=="ok")
+        ?`<span title="${esc(q.triage_reason||"")}" style="color:${TRIC[q.triage]||"#8b949e"};font-size:10px">${esc(q.triage)}</span>`:"";
       tr.innerHTML=`<td>${esc(q.id||("q"+(i+1)))}</td><td class="mut">${esc(q.kind)}</td>
         <td class="num">${(q.recall_at_k*100).toFixed(0)}</td>
         <td>${okDot}</td>
+        <td>${tri}</td>
         <td class="num mut">${(q.cost_usd||0)?fmtUSD(q.cost_usd):"–"}</td>`;
       tr.onclick=()=>select(i); tb.appendChild(tr); });
     graph=makeGraph(document.getElementById("q-stage-simple"), tip);
@@ -976,6 +995,7 @@ const Query=(function(){
         ${statEl("touched",q.n_touched)}
       </div>
       ${verdict?`<div style="margin:4px 0 8px">${verdict}${j&&j.reason?` <span class="mut">${esc(j.reason)}</span>`:""}</div>`:""}
+      ${(q.triage&&q.triage!=="ok"&&q.triage!=="unscored")?`<div style="margin:4px 0 8px"><span class="verdict v-bad" style="color:${TRIC[q.triage]||"#8b949e"};border-color:${TRIC[q.triage]||"#8b949e"}">triage: ${esc(q.triage)}</span> <span class="mut">${esc(q.triage_reason||"")}</span></div>`:""}
       <div class="kv">
         <span class="mut">answer</span><span>${esc(q.answer||"")}</span>
         ${q.answer_expected?`<span class="mut">expected</span><span class="mut">${esc(q.answer_expected)}</span>`:""}
@@ -983,11 +1003,39 @@ const Query=(function(){
       <div style="margin-top:8px"><span class="mut" style="font-size:11px">gold (green=retrieved)</span><br>${gold}</div>
       <div style="margin-top:6px"><span class="mut" style="font-size:11px">citations</span><br>${cites}</div>
       ${(q.context_episodes||[]).length?`<div style="margin-top:6px"><span class="mut" style="font-size:11px">context — what the reader actually saw (${q.context_episodes.length} episodes${(q.facts||[]).length?`, ${q.facts.length} facts`:""}${q.as_of?`, as-of ${esc(q.as_of.slice(0,10))}`:""})</span><br>${q.context_episodes.map(c=>`<span class="tag" style="border-color:${(q.gold||[]).some(g=>g.includes(c.replace(/^ep_/,'').split('#')[0]))?'#2ec27e':'var(--line)'}">${esc(c)}</span>`).join("")}</div>`:""}
+      ${q.diag?diagHTML(q):""}
       ${q.profile?`<div style="margin-top:10px"><span class="mut" style="font-size:11px">⏱ this query, by stage (judge.llm is eval-only)</span><div id="qd-prof"></div></div>`:""}
       <div style="margin-top:10px"><span class="mut" style="font-size:11px">tool-call trace</span>
         <div class="scroll" style="max-height:200px;margin-top:4px"><table class="tracetbl">
         <thead><tr><th>#</th><th>tool</th><th>input</th><th>result</th></tr></thead><tbody>${trace}</tbody></table></div></div>`;
     if(q.profile) barChart(document.getElementById("qd-prof"), profItems(q.profile), {fmt:fmtS});
+    wireStatTips(document.getElementById("q-detail"));
+  }
+  function diagHTML(q){ const D=q.diag||{};
+    const gy=(D.gold_yield||[]).map(g=>`<tr><td class="mut">${esc(g.id)}</td>
+      <td class="num">${g.found?"✓":'<span style="color:var(--bad)">✗</span>'}</td>
+      <td class="num${g.entities?"":" mut"}">${g.entities}</td>
+      <td class="num${g.facts?"":" mut"}">${g.facts}</td>
+      <td class="num${g.dated_facts?"":" mut"}">${g.dated_facts}</td></tr>`).join("");
+    const cx=(D.context||[]).map(c=>`<tr${c.gold?' style="color:var(--ok)"':''}>
+      <td>${esc(c.id)}</td><td class="num">${c.gold?"gold":""}</td>
+      <td class="num">${fmtN(c.kept)}/${fmtN(c.chars)}${c.chars>c.kept?" ✂":""}</td>
+      <td class="num">${c.evidence_kept!=null?`${(c.evidence_kept*100).toFixed(0)}%/${(c.evidence_full*100).toFixed(0)}%`:""}</td></tr>`).join("");
+    const exp=v=>v==null?"–":Number(v).toExponential(1);
+    return `<div style="margin-top:10px"><span class="mut" style="font-size:11px">failure-attribution diagnostics</span>
+      <div class="statbar" style="grid-template-columns:repeat(5,1fr);margin:6px 0">
+        ${statEl("seed→gold",D.seed_gold_dist!=null?D.seed_gold_dist+" hop"+(D.seed_gold_dist===1?"":"s"):"∅","min hops","Minimum hop distance from any retrieval seed to a gold episode over the same graph projection PPR diffused on. ∅ = no seed reaches gold within 6 hops — a seeding failure, fix query-side matching.")}
+        ${statEl("gold pool rank",D.gold_pool_rank!=null?"#"+D.gold_pool_rank:"∅","of "+(D.pool_size||0),"Best gold rank in the raw PPR candidate pool BEFORE the lane rerank and context cut. ∅ = gold never surfaced in the pool at all.")}
+        ${statEl("gold score",exp(D.gold_pool_score),"top "+exp(D.pool_top_score),"Gold's raw PPR score vs the pool's top score. A thin gap = near miss (rerank/k can fix); orders of magnitude = structural miss (the graph doesn't connect question language to that episode).")}
+        ${statEl("gold in ctx",`${D.gold_in_context}/${D.n_gold}`,D.context_precision!=null?("ctx prec "+(D.context_precision*100).toFixed(0)+"%"):"","How many of this question's gold evidence sessions made it into the reader's context, and what fraction of the context is gold (low = the reader wades through noise).")}
+        ${statEl("evidence kept",D.evidence_kept!=null?(D.evidence_kept*100).toFixed(0)+"%":"–",D.evidence_full!=null?("full "+(D.evidence_full*100).toFixed(0)+"%"):"","Reference-answer tokens present in the gold episode text AFTER the per-episode char cap vs in the full text. A big gap = the cap physically cut the evidence before the reader saw it.")}
+      </div>
+      <div class="row wrap" style="gap:14px;align-items:flex-start">
+        <div><span class="mut" style="font-size:10px">gold extraction yield (what ingest pulled from each gold session)</span>
+          <table class="tracetbl"><thead><tr><th>session</th><th>in graph</th><th>ents</th><th>facts</th><th>dated</th></tr></thead><tbody>${gy}</tbody></table></div>
+        ${cx?`<div><span class="mut" style="font-size:10px">context episodes (kept/total chars · gold evidence kept%/full%)</span>
+          <table class="tracetbl"><thead><tr><th>episode</th><th></th><th>chars</th><th>evid</th></tr></thead><tbody>${cx}</tbody></table></div>`:""}
+      </div></div>`;
   }
   function pct(v){ return v==null?"–":(v*100).toFixed(0)+"%"; }
   return {onShow(){ if(!built){build();built=true;} }};

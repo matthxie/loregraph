@@ -51,6 +51,7 @@ class RagAnswer:
     context_episodes: list[str] = field(default_factory=list)  # episode ids in the context
     facts: list[str] = field(default_factory=list)             # rendered fact lines
     object_ids: list[str] = field(default_factory=list)        # PPR ranking (eval seam)
+    ppr_pool: list = field(default_factory=list)               # (ep_id, raw PPR score) pool
     seeds: list[str] = field(default_factory=list)
     touched: list[str] = field(default_factory=list)           # every node in the PPR subgraph
     usage: dict = field(default_factory=dict)                  # token/cost (empty offline)
@@ -316,6 +317,7 @@ class RagAnswerer:
         result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
                                          kind=kind)
         ans = self._backend.answer(result)
+        ans.ppr_pool = list(getattr(result, "ppr_pool", []) or [])
         ans.lane = getattr(result, "lane", "")            # surface the routed lane
         ans.rerank_active = self.retriever.rerank_active
         return ans

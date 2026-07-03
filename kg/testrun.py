@@ -347,6 +347,191 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Failure triage — pinpoint the EARLIEST broken pipeline link for each failed
+# question, from data already captured at answer time. Buckets (first match wins):
+#   judge_suspect — answer contains the reference verbatim but was judged wrong
+#   extract_miss  — extraction yielded no entities/facts from any gold session
+#   seed_miss     — no query seed lands within 2 hops of a gold episode
+#   rank_structural / rank_out — gold never entered the PPR pool / entered but
+#                   ranked below the context cut
+#   join_miss     — multi-gold question with only part of the gold in context
+#   truncated     — evidence present in the full gold episode, cut by the per-
+#                   episode char cap before the reader saw it
+#   diluted       — gold in context intact but the reader claimed not-in-context
+#   reader        — everything was in front of the model; it still answered wrong
+# --------------------------------------------------------------------------- #
+_WS = re.compile(r"\s+")
+_ABSTAIN = re.compile(
+    r"not (in|found in|present in|provided|mentioned)|does not (contain|mention|answer|"
+    r"provide|specify)|no (information|mention|context)|cannot (be )?(determin|answer|find)|"
+    r"context (does not|doesn'?t)", re.I)
+
+
+def _evidence_frac(expected, text: str) -> float | None:
+    """Fraction of the reference answer's content tokens present in `text` — a proxy
+    for 'is the evidence physically in this text'."""
+    e_toks = {t for t in _WORD.findall(str(expected or "").lower()) if len(t) > 1}
+    if not e_toks:
+        return None
+    t_set = set(_WORD.findall((text or "").lower()))
+    return round(sum(1 for t in e_toks if t in t_set) / len(e_toks), 3)
+
+
+def _flat_text(node) -> str:
+    """Whitespace-collapsed episode text, mirroring ContextBuilder._snippet so the
+    kept/total char split below measures exactly what the reader was shown."""
+    raw = node.raw_text or node.description or node.summary or node.name or ""
+    return _WS.sub(" ", raw).strip()
+
+
+def _gold_yields(store, gold_art: set[str]) -> list[dict]:
+    """Per gold session: was its episode ingested, and what did extraction pull out of
+    it (entities via the mention star, RELATED_TO facts, dated facts)? A gold session
+    with ~0 yield is invisible to entity seeding — an extraction failure, not retrieval."""
+    ep_of: dict[str, str] = {}
+    for n in store.nodes_of_type(NodeType.EPISODE):
+        a = _article(n.id)
+        if a in gold_art and a not in ep_of:
+            ep_of[a] = n.id
+    want = set(ep_of.values())
+    facts = {e: 0 for e in want}
+    dated = {e: 0 for e in want}
+    for _u, _v, d in store.all_edges():
+        if d.get("etype") != EdgeType.RELATED_TO.value or not d.get("valid", True):
+            continue
+        ep = d.get("episode_id")
+        if ep in want:
+            facts[ep] += 1
+            if d.get("valid_at"):
+                dated[ep] += 1
+    out = []
+    for art in sorted(gold_art):
+        ep = ep_of.get(art)
+        if not ep:
+            out.append({"id": art, "found": False, "entities": 0, "facts": 0,
+                        "dated_facts": 0})
+            continue
+        out.append({"id": art, "found": True,
+                    "entities": len(_episode_entities(store, ep)),
+                    "facts": facts[ep], "dated_facts": dated[ep]})
+    return out
+
+
+def _seed_gold_dist(store, cfg, seeds: list[str], gold_eps: list[str],
+                    as_of: str | None) -> int | None:
+    """Min hop distance from ANY seed to ANY gold episode over the same projection PPR
+    diffused on (cached, so ~free). None = not connected within 6 hops."""
+    if not seeds or not gold_eps:
+        return None
+    from .retrieval import PPRRetriever, projected_graph
+    try:
+        G = projected_graph(store, cfg, as_of=as_of)
+    except Exception:  # noqa: BLE001 — diagnostics never sink a run
+        return None
+    dist = PPRRetriever._seed_distances(G, [s for s in seeds if s in G], cutoff=6)
+    ds = [dist[g] for g in gold_eps if g in dist]
+    return min(ds) if ds else None
+
+
+def _diagnose(q: dict, ans, store, cfg: Config, kk: int, gold_art: set[str]) -> dict:
+    """Assemble the per-query failure-attribution evidence (triage label added later,
+    once the judge verdict is known)."""
+    expected = q.get("answer", "")
+    # -- retrieval lineage: where did gold land in the raw PPR pool?
+    pool = list(getattr(ans, "ppr_pool", []) or [])
+    gold_pool_rank = gold_pool_score = None
+    for i, (oid, sc) in enumerate(pool):
+        if _article(oid) in gold_art:
+            gold_pool_rank, gold_pool_score = i + 1, round(float(sc), 6)
+            break
+    pool_top = round(float(pool[0][1]), 6) if pool else None
+    pool_at_k = round(float(pool[kk - 1][1]), 6) if len(pool) >= kk else None
+    # -- context forensics: per-episode kept/total chars + evidence coverage
+    ctx = list(getattr(ans, "context_episodes", []) or [])
+    cap = cfg.rag_episode_chars
+    ctx_detail, ev_kept, ev_full = [], None, None
+    gold_eps_in_graph = [n.id for n in store.nodes_of_type(NodeType.EPISODE)
+                         if _article(n.id) in gold_art]
+    for pos, eid in enumerate(ctx):
+        n = store.get_node(eid)
+        flat = _flat_text(n) if n else ""
+        is_gold = _article(eid) in gold_art
+        d = {"id": eid, "gold": is_gold, "pos": pos,
+             "chars": len(flat), "kept": min(len(flat), cap)}
+        if is_gold:
+            kf = _evidence_frac(expected, flat[:cap])
+            ff = _evidence_frac(expected, flat)
+            d["evidence_kept"], d["evidence_full"] = kf, ff
+            if kf is not None:
+                ev_kept = kf if ev_kept is None else max(ev_kept, kf)
+            if ff is not None:
+                ev_full = ff if ev_full is None else max(ev_full, ff)
+        ctx_detail.append(d)
+    gold_in_ctx = sum(1 for d in ctx_detail if d["gold"])
+    return {
+        "gold_yield": _gold_yields(store, gold_art),
+        "seed_gold_dist": _seed_gold_dist(store, cfg, list(ans.seeds),
+                                          gold_eps_in_graph, getattr(ans, "as_of", None)),
+        "gold_pool_rank": gold_pool_rank, "gold_pool_score": gold_pool_score,
+        "pool_top_score": pool_top, "pool_score_at_k": pool_at_k,
+        "pool_size": len(pool),
+        "context": ctx_detail,
+        "gold_in_context": gold_in_ctx, "n_gold": len(gold_art),
+        "context_precision": (round(gold_in_ctx / len(ctx_detail), 3)
+                              if ctx_detail else None),
+        "evidence_kept": ev_kept, "evidence_full": ev_full,
+    }
+
+
+def _triage(rec: dict, diag: dict) -> tuple[str, str]:
+    """Stamp the earliest-broken-link bucket for this record. Returns (label, reason)."""
+    j = rec.get("judge") or {}
+    if "correct" in j:
+        failed = not j["correct"]
+    elif rec.get("response_contains") is not None:
+        failed = not rec["response_contains"]
+    else:
+        return "unscored", "no judge verdict and no reference answer to proxy against"
+    if not failed:
+        return "ok", ""
+    if rec.get("response_contains"):
+        return "judge_suspect", ("answer contains the reference string verbatim but "
+                                 "was judged incorrect")
+    n_gold = diag["n_gold"]
+    if rec.get("abstention") or n_gold == 0:
+        return "abstention", "abstention question (no gold evidence exists to retrieve)"
+    found = [g for g in diag["gold_yield"] if g["found"]]
+    if not found:
+        return "extract_miss", "no gold session's episode exists in the graph"
+    if all(g["entities"] == 0 and g["facts"] == 0 for g in found):
+        return "extract_miss", ("extraction produced no entities or facts from any "
+                                "gold session")
+    d = diag["seed_gold_dist"]
+    if d is None:
+        return "seed_miss", "no seed reaches any gold episode within 6 hops"
+    if d > 2:
+        return "seed_miss", f"nearest seed is {d} hops from the closest gold episode"
+    if diag["gold_pool_rank"] is None:
+        return "rank_structural", ("seeds were near gold but it never entered the "
+                                   "PPR candidate pool")
+    if diag["gold_in_context"] == 0:
+        return "rank_out", (f"gold ranked #{diag['gold_pool_rank']} in the pool but "
+                            "fell outside the context cut")
+    if n_gold >= 2 and diag["gold_in_context"] < n_gold:
+        return "join_miss", (f"only {diag['gold_in_context']}/{n_gold} gold sessions "
+                             "made it into the context")
+    ek, ef = diag["evidence_kept"], diag["evidence_full"]
+    if ek is not None and ef is not None and ef - ek >= 0.4:
+        return "truncated", (f"evidence tokens {ef:.0%} present in the full gold episode "
+                             f"but only {ek:.0%} survived the per-episode char cap")
+    if _ABSTAIN.search(rec.get("answer") or ""):
+        cp = diag["context_precision"]
+        return "diluted", ("reader claimed the answer is not in context though gold was "
+                           f"present intact (context precision {cp})")
+    return "reader", "gold evidence was in context intact; the reader still answered wrong"
+
+
 def _acc_site(sites: dict, site: str, llm_calls: int, tokens: int, cost: float) -> None:
     """Accumulate one call-site's spend into the profile's cost_by_site breakdown."""
     e = sites.setdefault(site, {"llm_calls": 0, "tokens": 0, "cost_usd": 0.0})
@@ -415,7 +600,8 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
     gold_ranks = [i + 1 for i, a in enumerate(ranked_art) if a in gold_art]
     proxy = _response_proxy(ans.answer, q.get("answer", ""))
     jres = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter) if jclient else None
-    return {
+    diag = _diagnose(q, ans, store, cfg, kk, gold_art)
+    rec = {
         "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
         "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
         "gold_marks": gold_marks,
@@ -444,6 +630,9 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
         "tokens": ans.usage.get("tokens", 0),
         "cost_usd": ans.usage.get("cost_usd", 0.0),
     }
+    rec["diag"] = diag
+    rec["triage"], rec["triage_reason"] = _triage(rec, diag)
+    return rec
 
 
 # --------------------------------------------------------------------------- #
@@ -850,6 +1039,15 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     return _write_run(run, out_dir, log)
 
 
+def _bucket_counts(qrecords: list[dict]) -> dict:
+    out: dict[str, int] = {}
+    for r in qrecords:
+        t = r.get("triage")
+        if t and t != "ok":
+            out[t] = out.get(t, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
 def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict:
     n = len(qrecords)
     if not n:
@@ -888,6 +1086,8 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
         "avg_steps": round(sum(r["steps"] for r in qrecords) / n, 2),
         "avg_touched": round(sum(r["n_touched"] for r in qrecords) / n, 1),
         "by_kind": by_kind,
+        # earliest-broken-link failure attribution (see _triage); "ok" not counted
+        "failure_buckets": _bucket_counts(qrecords),
         "llm_calls": sum(r["llm_calls"] for r in qrecords) + jt["llm_calls"],
         "input_tokens": sum(r["input_tokens"] for r in qrecords) + jt["input_tokens"],
         "output_tokens": sum(r["output_tokens"] for r in qrecords) + jt["output_tokens"],
@@ -958,4 +1158,7 @@ def summarize(run: dict) -> str:
         + f"  {qt['tokens']} tok  ${qt['cost_usd']:.4f}",
         f"  TOTAL  ${run['cost_usd']:.4f}  {run['tokens']} tokens",
     ]
+    fb = qt.get("failure_buckets") or {}
+    if fb:
+        lines.insert(3, "  TRIAGE " + "  ".join(f"{k}={v}" for k, v in fb.items()))
     return "\n".join(lines)

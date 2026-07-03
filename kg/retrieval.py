@@ -538,6 +538,10 @@ class HybridRetriever:
         res.objects = [(ep, float(len(ranked) - i)) for i, ep in enumerate(ranked)]
         res.lane = lane            # type: ignore[attr-defined]
         res.entity_ids = ent_ids   # type: ignore[attr-defined]
+        # Raw PPR pool (episode_id, real diffusion score) BEFORE lane trims / cross-encoder
+        # rerank — the failure-triage layer reads gold's rank + score margin off this to
+        # split "never retrievable" from "retrievable but ranked out".
+        res.ppr_pool = list(base.objects)  # type: ignore[attr-defined]
         return res
 
 
