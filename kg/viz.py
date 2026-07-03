@@ -235,7 +235,17 @@ def _focused_subgraph(store: GraphStore, keep: set[str], obj_set: list[str],
 _DRAWN = {NodeType.EPISODE, NodeType.ENTITY, NodeType.TAG}
 
 
-def rag_trace_payload(ans, store: GraphStore) -> dict:
+def _episode_snippet(store: GraphStore, oid: str, n: int) -> str:
+    """Same text + truncation the reader actually saw (mirrors rag.ContextBuilder._snippet),
+    so the dashboard tooltip shows the real context, not a guess at it."""
+    node = store.get_node(oid)
+    if node is None:
+        return ""
+    text = node.raw_text or node.description or node.summary or node.name or ""
+    return _WSP_.sub(" ", text).strip()[:n]
+
+
+def rag_trace_payload(ans, store: GraphStore, config=None) -> dict:
     """Map a RagAnswer (kg/rag.py) onto the dashboard's per-query subgraph schema
     {query, mode, nodes, edges, ranked, seeds, hops}. There is no per-hop LLM walk to
     replay, so the 'hops' are the retrieve-then-read layers PPR produced — seeds → the
@@ -243,7 +253,13 @@ def rag_trace_payload(ans, store: GraphStore) -> dict:
     ingest graph. The drawable subgraph is built the same way query_trace() builds it
     (via _focused_subgraph) so the Query tab's graph stage renders. Ids are filtered to
     the node types the graph draws so the animation never references a node that isn't on
-    screen (e.g. mention seeds)."""
+    screen (e.g. mention seeds).
+
+    Episode nodes are additionally annotated with what the reader actually did with them:
+    'context' (survived the rag_context_episodes truncation into the prompt), 'cited'
+    (the answer actually referenced it), and a text 'snippet' truncated to the same
+    rag_episode_chars budget the LLM saw — so the graph shows retrieval AND consumption,
+    not just retrieval."""
     def is_t(nid, *types) -> bool:
         n = store.get_node(nid)
         return n is not None and n.ntype in types
@@ -285,6 +301,18 @@ def rag_trace_payload(ans, store: GraphStore) -> dict:
     keep = set(obj_set) | set(hubs)
     _sub, nodes, edges = _focused_subgraph(
         store, keep, obj_set, seeds, [(oid, 0.0) for oid in episodes])
+
+    context_set = set(ans.context_episodes)
+    cited_set = set(ans.citations)
+    chars = config.rag_episode_chars if config is not None else 300
+    for entry in nodes:
+        if entry.get("type") != "episode":
+            continue
+        entry["snippet"] = _episode_snippet(store, entry["id"], chars)
+        if entry["id"] in context_set:
+            entry["roles"].append("context")
+        if entry["id"] in cited_set:
+            entry["roles"].append("cited")
 
     return {"query": ans.query, "mode": "rag", "nodes": nodes, "edges": edges,
             "ranked": ranked, "seeds": seeds, "hops": [h for h in hops if h]}

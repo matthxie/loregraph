@@ -143,7 +143,7 @@ _DIRECTED_ETYPES = {EdgeType.TAGGED_AS.value, _MENTIONS_ETYPE,
                     EdgeType.RELATED_TO.value, EdgeType.HYPERLINKS_TO.value}
 
 
-def _full_graph(store) -> dict:
+def _full_graph(store, cap_snippet: int | None = None) -> dict:
     """Obsidian-style graph payload for the Input view's force graph: EPISODE nodes are the
     *raw entries* (green), TAG/ENTITY nodes are *created* (blue), plus the edges between
     them. The immutable mention layer is COLLAPSED into a direct Episode→Entity 'MENTIONS'
@@ -153,7 +153,12 @@ def _full_graph(store) -> dict:
 
     Each node carries `appear` — the ingestion step at which it first shows up — so the
     dashboard can *grow* the graph in generation order, `deg`/`indeg` (the client sizes
-    nodes by in-degree), plus `meta` for the click-to-inspect panel."""
+    nodes by in-degree), plus `meta` for the click-to-inspect panel.
+
+    cap_snippet: if set, episode text in `meta.snippet` is truncated to this many chars.
+    The Input tab's one-per-run representative graph wants the full text (its click panel
+    scrolls); the Query tab's per-query "full graph" mode embeds one of these PER QUERY, so
+    it caps snippet text to keep run.json from ballooning to O(instances × corpus size)."""
     NT, ET = NodeType, EdgeType
     objs = sorted(store.nodes_of_type(NT.EPISODE), key=lambda n: (n.created_at or "", n.id))
     build_order = [n.id for n in objs]
@@ -207,11 +212,13 @@ def _full_graph(store) -> dict:
         if n.ntype == NT.EPISODE:
             ents = [store.get_node(e).name for e in _episode_entities(store, n.id)
                     if store.get_node(e)]
+            text = n.raw_text or n.description or ""
             return {"modality": n.modality.value if n.modality else "text",
                     "created_at": n.created_at, "source_ref": n.source_ref,
                     "n_tags": len(n.tags), "tags": list(n.tags)[:20], "entities": ents[:20],
-                    # full episode text (the click panel scrolls) — not truncated
-                    "snippet": (n.raw_text or n.description or "")}
+                    # full episode text by default (the click panel scrolls); capped
+                    # when embedding one of these per-query (see cap_snippet above)
+                    "snippet": text[:cap_snippet] if cap_snippet else text}
         if n.ntype == NT.ENTITY:
             return {"entity_type": n.entity_type.value if n.entity_type else "other",
                     "df": n.doc_frequency}
@@ -228,6 +235,9 @@ def _full_graph(store) -> dict:
 
     return {"nodes": nodes, "edges": edges, "build_order": build_order,
             "stats": store.stats(), "kind": "full"}
+
+
+_QUERY_GRAPH_SNIPPET_CAP = 300
 
 
 # --------------------------------------------------------------------------- #
@@ -430,7 +440,7 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
         "steps": ans.steps, "stopped": ans.stopped, "backend": ans.backend,
         "trace": ans.trace, "seeds": ans.seeds, "touched": ans.touched,
         "n_touched": len(ans.touched),
-        "subgraph": rag_trace_payload(ans, store),
+        "subgraph": rag_trace_payload(ans, store, cfg),
         "llm_calls": ans.usage.get("llm_calls", 0),
         "input_tokens": ans.usage.get("input_tokens", 0),
         "output_tokens": ans.usage.get("output_tokens", 0),
@@ -738,6 +748,10 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)
         rec["lane"] = getattr(ans, "lane", "")
+        # this instance's own graph is torn down before the next iteration, so the
+        # dashboard's "full graph" query mode needs its own copy per query — unlike
+        # shared-graph mode, there is no single persistent graph to point back at.
+        rec["graph"] = _full_graph(g.store, cap_snippet=_QUERY_GRAPH_SNIPPET_CAP)
         rec["seconds"] = round(ask_seconds, 3)             # production ask() wall time
         q_prof = prof.drain()                              # ask stages + eval-only judge.llm
         rec["profile"] = compact(q_prof)

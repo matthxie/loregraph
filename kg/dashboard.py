@@ -104,7 +104,7 @@ def serve(out_dir: str = "runs", port: int = 8050) -> None:
 _STYLE = r"""
 :root{ --bg:#0e1116; --panel:#161b22; --panel2:#1b2129; --line:#30363d; --txt:#e6edf3;
   --mut:#8b949e; --obj-text:#4f8ef7; --obj-image:#2ec27e; --tag:#f5a623; --entity:#b06ff0;
-  --rel:#b06ff0; --seed:#ffd24d; --result:#ff5d8f; --edge:#3a4250; --edge-hi:#ffae57;
+  --rel:#b06ff0; --seed:#ffd24d; --result:#ff5d8f; --cited:#2ec27e; --edge:#3a4250; --edge-hi:#ffae57;
   --ok:#2ec27e; --bad:#ff5d8f; --warn:#f5a623; --accent:#4f8ef7; }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
@@ -138,6 +138,8 @@ svg.hidelabels text.lbl{display:none}
 svg text.rank{fill:#1a0410;font-weight:700;font-size:11px;text-anchor:middle;dominant-baseline:central;pointer-events:none}
 svg .ringseed{fill:none;stroke:var(--seed);stroke-width:2.5}
 svg .ringres{fill:none;stroke:var(--result);stroke-width:2.5}
+svg .ringcite{fill:none;stroke:var(--cited);stroke-width:3}
+svg .ringtrunc{fill:none;stroke:var(--mut);stroke-width:1.6;stroke-dasharray:2,2}
 #tip{position:absolute;pointer-events:none;background:#0d1117ee;border:1px solid var(--line);
   border-radius:6px;padding:6px 9px;max-width:280px;font-size:12px;display:none;z-index:9}
 .stage{position:relative;overflow:hidden;background:#0b0e13;border-radius:10px}
@@ -201,7 +203,13 @@ function makeGraph(stage, tip){
     tip.style.display="block"; tip.style.left=(ev.clientX-r.left+12)+"px"; tip.style.top=(ev.clientY-r.top+12)+"px";
     let h=`<b>${esc(n.label||n.id)}</b><br><span class="mut">${n.type}${n.modality?(" · "+n.modality):""}</span>`;
     if(n.rank)h+=`<br>rank #${n.rank}${n.score!=null&&n.score!==""?(" · "+n.score):""}`;
+    const roles=n.roles||[];
+    if(roles.includes("cited"))h+=`<br><span style="color:var(--cited)">✓ cited in the answer</span>`;
+    else if(roles.includes("context"))h+=`<br><span class="mut">in the reader's context</span>`;
+    else if(roles.includes("result"))h+=`<br><span class="mut">retrieved, but cut before the reader (rag_context_episodes)</span>`;
     if(n.tags&&n.tags.length)h+=`<br><span class="mut">${n.tags.map(esc).join(", ")}</span>`;
+    if(n.snippet){ const short=n.snippet.length>220?n.snippet.slice(0,220)+"…":n.snippet;
+      h+=`<div style="margin-top:5px;white-space:normal;font-size:11px;color:#c9d1d9;line-height:1.4">${esc(short)}</div>`; }
     tip.innerHTML=h; }
   function hideTip(){ if(tip)tip.style.display="none"; }
   function focus(id){ const adj=new Set([id]);
@@ -233,7 +241,13 @@ function makeGraph(stage, tip){
       c.addEventListener("click",()=>focus(n.id)); gN.appendChild(c); elN[n.id]=c;
       const roles=n.roles||[];
       if(roles.includes("seed")||roles.includes("result")){const ring=document.createElementNS(NS,"circle");
-        ring.setAttribute("class",roles.includes("result")?"ringres":"ringseed");
+        // consumption > retrieval: an episode's ring shows what the READER did with it
+        // (cited > in-context > truncated-away) before falling back to plain seed/result.
+        const cls=roles.includes("cited")?"ringcite"
+          :roles.includes("context")?"ringres"
+          :roles.includes("result")?"ringtrunc"
+          :"ringseed";
+        ring.setAttribute("class",cls);
         ring.setAttribute("cx",x);ring.setAttribute("cy",y);ring.setAttribute("r",radius(n)+3.5);gR.appendChild(ring);}
       if(n.rank){const t=document.createElementNS(NS,"text");t.setAttribute("class","rank");
         t.setAttribute("x",x);t.setAttribute("y",y);t.textContent=n.rank;gT.appendChild(t);}
@@ -305,6 +319,8 @@ function makeForce(stage, tip, h){
   let tx=0,ty=0,scale=1, step=-1, revN=[],revE=[];
   let sel=null,hover=null,drag=null,pan=null,moved=0;
   let raf=null, running=false, autofit=true, alpha=1, alphaTarget=0;
+  let hiSet=null, hiRole={};   // optional highlight overlay (Query "full graph" mode)
+  const ROLE_COLOR={seed:"#ffd24d",cited:"#2ec27e",context:"#ff5d8f",touched:"#8b949e"};
   // Obsidian-style CONTINUOUS force sim (the d3-force model Obsidian's Center/Repel/Link/
   // Link-distance controls map to: many-body charge + link springs + weak center, velocity-
   // Verlet integration, alpha cooling). It IDLES at 0 CPU once settled (alpha<A_MIN & not
@@ -404,7 +420,7 @@ function makeForce(stage, tip, h){
     for(const e of revE){ const [x1,y1]=S(e.a.x,e.a.y); let [x2,y2]=S(e.b.x,e.b.y);
       const sem=e.etype==="RELATED_TO"||e.etype==="MENTIONS"||e.etype==="TAGGED_AS";
       const inc=F&&(e.a.id===sel.id||e.b.id===sel.id);
-      const dim=F&&!(F.has(e.a.id)&&F.has(e.b.id));
+      const dim=(F&&!(F.has(e.a.id)&&F.has(e.b.id)))||(hiSet&&!(hiSet.has(e.a.id)&&hiSet.has(e.b.id)));
       ctx.strokeStyle=inc?"rgba(176,111,240,0.92)":(dim?"rgba(120,130,150,0.04)":(sem?"rgba(150,160,180,0.42)":"rgba(90,100,120,0.07)"));
       ctx.lineWidth=inc?1.7:(sem?1.1:0.7); ctx.beginPath(); ctx.moveTo(x1,y1);
       if(e.directed){ const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,rb=e.b.rad*scale+5; x2-=dx/L*rb; y2-=dy/L*rb;
@@ -413,10 +429,18 @@ function makeForce(stage, tip, h){
           ctx.moveTo(x2,y2); ctx.lineTo(x2-ah*Math.cos(ang-0.5),y2-ah*Math.sin(ang-0.5));
           ctx.lineTo(x2-ah*Math.cos(ang+0.5),y2-ah*Math.sin(ang+0.5)); ctx.closePath(); ctx.fill(); }
       } else { ctx.lineTo(x2,y2); ctx.stroke(); } }
-    for(const n of revN){ const [x,y]=S(n.x,n.y), r=Math.max(2.5,n.rad*scale), dim=F&&!F.has(n.id);
+    for(const n of revN){ const [x,y]=S(n.x,n.y), r=Math.max(2.5,n.rad*scale),
+        dim=(F&&!F.has(n.id))||(hiSet&&!hiSet.has(n.id));
       ctx.beginPath(); ctx.arc(x,y,r,0,6.2832);
       ctx.fillStyle=n.raw?(dim?"rgba(46,194,126,0.16)":"#2ec27e"):(dim?"rgba(79,142,247,0.16)":"#4f8ef7"); ctx.fill();
       if(n===sel){ ctx.strokeStyle="#ffd24d"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.stroke(); } }
+    // query-highlight overlay: ring the nodes this query touched, colored by what the
+    // reader did with them (cited > in-context > seed > merely touched — see ROLE_COLOR)
+    if(hiSet){ for(const n of revN){ if(!hiSet.has(n.id))continue; const [x,y]=S(n.x,n.y), r=Math.max(2.5,n.rad*scale);
+      const role=hiRole[n.id]||"touched", col=ROLE_COLOR[role]||ROLE_COLOR.touched;
+      ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.strokeStyle=col; ctx.lineWidth=role==="cited"?3:2;
+      if(role==="touched") ctx.setLineDash([2,2]);
+      ctx.stroke(); ctx.setLineDash([]); } }
     // edge labels: ALL of a selected node's connections (focus), plus relations on zoom.
     // Multiple relationships between the SAME pair (e.g. "hosts" + "hosted by", or several
     // parallel rel_tags) are GROUPED by node-pair and STACKED vertically around the midpoint
@@ -452,7 +476,13 @@ function makeForce(stage, tip, h){
     else if(pan){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false; tx=pan.tx+(e.clientX-pan.x); ty=pan.ty+(e.clientY-pan.y); draw(); }
     else { const n=nodeAt(sx,sy); cv.style.cursor=n?"pointer":"grab"; if(n!==hover){ hover=n;
       if(n&&tip){ tip.style.display="block"; tip.style.left=(r.left+sx+14+window.scrollX)+"px"; tip.style.top=(r.top+sy+14+window.scrollY)+"px";
-        tip.innerHTML="<b>"+esc(n.label||n.id)+"</b><br><span class='mut'>"+n.type+(n.raw?" · raw entry":" · created")+" · "+(n.indeg||0)+" in / deg "+(n.deg||0)+"</span>"; }
+        let th="<b>"+esc(n.label||n.id)+"</b><br><span class='mut'>"+n.type+(n.raw?" · raw entry":" · created")+" · "+(n.indeg||0)+" in / deg "+(n.deg||0)+"</span>";
+        if(hiSet&&hiSet.has(n.id)){ const role=hiRole[n.id]||"touched",
+            txt={seed:"seed (retrieval started here)",cited:"cited in the answer",
+                 context:"in the reader's context",touched:"touched, not in the final context"}[role];
+          th+="<br><span style='color:"+ROLE_COLOR[role]+"'>"+txt+"</span>"; }
+        const snip=(n.meta&&n.meta.snippet)||""; if(snip)th+="<div style='margin-top:5px;white-space:normal;font-size:11px;color:#c9d1d9;line-height:1.4'>"+esc(snip.slice(0,220))+(snip.length>220?"…":"")+"</div>";
+        tip.innerHTML=th; }
       else if(tip) tip.style.display="none"; } } });
   window.addEventListener("mouseup",()=>{ if(tip)tip.style.display="none";
     if(drag){ const click=moved<4,n=drag.n; drag=null; cv.style.cursor="grab";
@@ -467,7 +497,9 @@ function makeForce(stage, tip, h){
   return { load, revealStep, draw, recenter(){tx=0;ty=0;scale=1;draw();},
            select(id){sel=byId[id]||null;draw();}, clearSel(){sel=null;draw();},
            count(){return {nodes:revN.length,edges:revE.length};},
-           screenOf(id){const n=byId[id];return n?S(n.x,n.y):null;} };
+           screenOf(id){const n=byId[id];return n?S(n.x,n.y):null;},
+           highlight(ids,roleOf){ hiSet=new Set(ids); hiRole=roleOf||{}; draw(); },
+           clearHighlight(){ hiSet=null; hiRole={}; draw(); } };
 }
 """
 
@@ -794,14 +826,24 @@ const Query=(function(){
           </div>
         </div>
         <div>
-          <div class="card stage hh" id="q-stage"></div>
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="mut" style="font-size:11px">query graph</span>
+            <div class="toggle"><button id="q-m-simple" class="on">Simplified</button><button id="q-m-full">Full graph</button></div>
+          </div>
+          <div class="card stage hh" id="q-stage" style="position:relative">
+            <div id="q-stage-simple" style="position:absolute;inset:0"></div>
+            <div id="q-stage-full" style="position:absolute;inset:0;display:none"></div>
+          </div>
           <div class="legend mut">
             <span><i class="dot" style="background:#4f8ef7"></i>episode</span>
             <span><i class="dot" style="background:#b06ff0"></i>entity</span>
             <span><i class="dot" style="background:#f5a623"></i>tag</span>
             <span><i class="dot" style="background:transparent;border:2px solid #ffd24d"></i>ring = seed (retrieval started here)</span>
-            <span><i class="dot" style="background:transparent;border:2px solid #ff5d8f"></i>ring = ranked result (number = rank)</span>
-            <span class="mut">click a node to highlight its connections · drag to pan · scroll to zoom · dbl-click to reset</span>
+            <span><i class="dot" style="background:transparent;border:2px solid #2ec27e"></i>ring = cited in the answer</span>
+            <span><i class="dot" style="background:transparent;border:2px solid #ff5d8f"></i>ring = in the reader's context (number = rank in Simplified)</span>
+            <span><i class="dot" style="background:transparent;border:2px dashed #8b949e"></i>ring = retrieved, cut before the reader</span>
+            <span class="mut">hover a node for its text · click to highlight connections · drag to pan · scroll/pinch to zoom in for labels · dbl-click to reset</span>
+            <span class="mut">Full graph = this query laid over the whole ingest graph (like the Input tab), untouched nodes faded · nodes aren't draggable</span>
           </div>
           <div class="card panel" id="q-detail" style="margin-top:12px"><span class="mut">Select a query to replay its traversal.</span></div>
         </div>
@@ -828,13 +870,38 @@ const Query=(function(){
         <td>${okDot}</td>
         <td class="num mut">${(q.cost_usd||0)?fmtUSD(q.cost_usd):"–"}</td>`;
       tr.onclick=()=>select(i); tb.appendChild(tr); });
-    graph=makeGraph(document.getElementById("q-stage"), tip);
+    graph=makeGraph(document.getElementById("q-stage-simple"), tip);
+    document.getElementById("q-m-simple").onclick=()=>setMode("simple");
+    document.getElementById("q-m-full").onclick=()=>setMode("full");
     if(qs.length)select(0);
+  }
+  let mode="simple", force=null, forceKey=null;
+  function setMode(m){ mode=m;
+    document.getElementById("q-m-simple").classList.toggle("on",m==="simple");
+    document.getElementById("q-m-full").classList.toggle("on",m==="full");
+    document.getElementById("q-stage-simple").style.display=m==="simple"?"":"none";
+    document.getElementById("q-stage-full").style.display=m==="full"?"":"none";
+    if(m==="full"&&sel!=null) drawFull(qs[sel]);
+  }
+  function drawFull(q){
+    if(!force) force=makeForce(document.getElementById("q-stage-full"), tip);
+    // per-instance eval: each question ingested its own fresh graph (q.graph), torn down
+    // right after — there's no single persistent graph to reuse, unlike shared-graph mode
+    // where every question ran against ING.graph and we only ever load it once.
+    const g=q.graph||ING.graph, key=q.graph?("q:"+(q.id||"")):"shared";
+    if(key!==forceKey){ force.load(g.nodes||[], g.edges||[]); forceKey=key; }
+    const roleOf={};
+    (q.touched||[]).forEach(id=>roleOf[id]="touched");
+    (q.seeds||[]).forEach(id=>roleOf[id]="seed");
+    (q.context_episodes||[]).forEach(id=>roleOf[id]="context");
+    (q.citations||[]).forEach(id=>roleOf[id]="cited");
+    force.highlight(Object.keys(roleOf), roleOf);
   }
   function select(i){ sel=i; const q=qs[i];
     document.querySelectorAll(".qrow").forEach(r=>r.classList.remove("sel"));
     const r=document.getElementById("qr-"+i); if(r)r.classList.add("sel");
     drawTrace(q); drawDetail(q);
+    if(mode==="full") drawFull(q);
   }
   function drawTrace(q){ const sg=q.subgraph||{nodes:[],edges:[],hops:[]};
     graph.reset(); graph.render(sg.nodes,sg.edges,{labels:true,zoomLabels:true});
