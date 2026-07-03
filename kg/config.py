@@ -121,7 +121,7 @@ class Config:
     rag_context_episodes: int = 8     # episodes whose text enters the context blob (== top_k,
                                        # so nothing recall@k=8 finds gets truncated before the
                                        # reader sees it; was 6 — see optimization.md baseline)
-    rag_episode_chars: int = 1200     # per-episode text budget in the context
+    rag_episode_chars: int = 20000    # per-episode text budget in the context
     rag_max_facts: int = 30           # currently-valid facts surfaced in the context
 
     # ---- communities (§ phase 3) --------------------------------------------
