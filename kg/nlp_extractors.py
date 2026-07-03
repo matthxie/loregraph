@@ -48,10 +48,32 @@ def _spacy():
     return _SPACY
 
 
+def _accel_device() -> str | None:
+    """Best available torch accelerator: CUDA (NVIDIA), else MPS (Apple), else None.
+    The encoder extractors are the ingest hot loop — on a GPU they run an order of
+    magnitude faster than CPU."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:  # noqa: BLE001 — torch missing/broken → CPU
+        pass
+    return None
+
+
 def _gliner(model: str):
     if model not in _GLINER:
         from gliner import GLiNER
-        _GLINER[model] = GLiNER.from_pretrained(model)
+        m = GLiNER.from_pretrained(model)
+        dev = _accel_device()
+        if dev:
+            try:
+                m = m.to(dev)
+            except Exception:  # noqa: BLE001 — fall back to CPU if the move fails
+                pass
+        _GLINER[model] = m
     return _GLINER[model]
 
 
@@ -72,12 +94,12 @@ def _gliner2(model: str):
     if model not in _GLINER2:
         from gliner2 import GLiNER2
         m = GLiNER2.from_pretrained(model)
-        try:
-            import torch
-            if torch.backends.mps.is_available():
-                m = m.to("mps")
-        except Exception:  # noqa: BLE001 — fall back to CPU if the move fails
-            pass
+        dev = _accel_device()
+        if dev:
+            try:
+                m = m.to(dev)
+            except Exception:  # noqa: BLE001 — fall back to CPU if the move fails
+                pass
         _GLINER2[model] = m
     return _GLINER2[model]
 
