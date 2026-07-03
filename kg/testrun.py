@@ -237,9 +237,6 @@ def _full_graph(store, cap_snippet: int | None = None) -> dict:
             "stats": store.stats(), "kind": "full"}
 
 
-_QUERY_GRAPH_SNIPPET_CAP = 300
-
-
 # --------------------------------------------------------------------------- #
 # Response-accuracy scoring (deterministic proxy + optional LLM judge)
 # --------------------------------------------------------------------------- #
@@ -751,7 +748,10 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         # this instance's own graph is torn down before the next iteration, so the
         # dashboard's "full graph" query mode needs its own copy per query — unlike
         # shared-graph mode, there is no single persistent graph to point back at.
-        rec["graph"] = _full_graph(g.store, cap_snippet=_QUERY_GRAPH_SNIPPET_CAP)
+        # Full (uncapped) episode text, to match the Input tab's click-to-inspect panel —
+        # this is the main driver of run.json size in per-instance mode (one copy of this
+        # instance's own haystack text per query, not the whole corpus, but still real).
+        rec["graph"] = _full_graph(g.store)
         rec["seconds"] = round(ask_seconds, 3)             # production ask() wall time
         q_prof = prof.drain()                              # ask stages + eval-only judge.llm
         rec["profile"] = compact(q_prof)

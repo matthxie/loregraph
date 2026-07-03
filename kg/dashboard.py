@@ -622,6 +622,28 @@ function wireStatTips(host){ host.querySelectorAll(".stat[data-tip]").forEach(s=
     tip.style.left=(r.left+window.scrollX)+"px"; tip.style.top=(r.bottom+window.scrollY+6)+"px";
     tip.innerHTML="<span style='display:inline-block;max-width:250px;white-space:normal;line-height:1.45'>"+esc(s.dataset.tip)+"</span>"; };
   s.onmouseleave=()=>{ tip.style.display="none"; }; }); }
+// click-to-inspect side panel for the force graph — shared by the Input tab's own-run
+// graph and the Query tab's "full graph" mode, since both draw the same _full_graph
+// node/meta shape (episode: tags/entities/full text; entity/tag: doc frequency/aliases).
+function showNodeDetail(panelId,n){ const d=document.getElementById(panelId); d.style.display="";
+  const m=n.meta||{}; let h=`<div class="row" style="justify-content:space-between;align-items:baseline">
+    <h2 style="margin:0">${esc(n.label||n.id)}</h2>
+    <span class="pill" style="background:${n.raw?'rgba(46,194,126,.15)':'rgba(79,142,247,.15)'}">${n.raw?'raw entry':'created'} · ${esc(n.type)}</span></div>`;
+  if(n.type==="episode"){
+    h+=`<div class="mut" style="font-size:11px;margin-top:2px">${esc(m.modality||"")}${m.created_at?(" · "+esc(m.created_at)):""}</div>`;
+    if((m.tags||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:8px">tags (${m.n_tags})</div><div>${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`;
+    if((m.entities||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${m.entities.map(t=>`<span class="tag" style="border-color:#4f8ef7">${esc(t)}</span>`).join("")}</div>`;
+    if(m.snippet) h+=`<div class="mut" style="margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap">${esc(m.snippet)}</div>`;
+  } else {
+    h+=`<div class="kv" style="margin-top:8px"><span class="mut">used by</span><span>${m.df||0} document(s)</span>`;
+    if(m.entity_type) h+=`<span class="mut">entity type</span><span>${esc(m.entity_type)}</span>`;
+    if((m.aliases||[]).length) h+=`<span class="mut">aliases</span><span>${m.aliases.map(esc).join(", ")}</span>`;
+    h+=`</div>`;
+  }
+  h+=`<div class="mut" style="margin-top:10px;font-size:11px">${n.indeg||0} incoming · degree ${n.deg||0} · click empty space to close</div>`;
+  d.innerHTML=h;
+}
+function hideNodeDetail(panelId){ document.getElementById(panelId).style.display="none"; }
 
 // =================== INPUT VIEW ===================
 const Input=(function(){
@@ -703,7 +725,7 @@ const Input=(function(){
       </div>`;
     wireStatTips(host);
     force=makeForce(document.getElementById("i-stage"), tip,
-      {onNode:showNodeDetail, onBackground:hideNodeDetail});
+      {onNode:n=>showNodeDetail("i-detail",n), onBackground:()=>hideNodeDetail("i-detail")});
     force.load(G.nodes,G.edges); window.__F=force;
     charts.cost=lineChart(document.getElementById("c-cost"),[{color:"#2ec27e",pts:costPts}],{h:110});
     charts.tok=lineChart(document.getElementById("c-tok"),[{color:"#4f8ef7",pts:tokPts}],{h:110});
@@ -744,25 +766,6 @@ const Input=(function(){
     for(const k in charts) chartCursor(charts[k], idx);
     renderDoc(steps[idx]);
   }
-  function showNodeDetail(n){ const d=document.getElementById("i-detail"); d.style.display="";
-    const m=n.meta||{}; let h=`<div class="row" style="justify-content:space-between;align-items:baseline">
-      <h2 style="margin:0">${esc(n.label||n.id)}</h2>
-      <span class="pill" style="background:${n.raw?'rgba(46,194,126,.15)':'rgba(79,142,247,.15)'}">${n.raw?'raw entry':'created'} · ${esc(n.type)}</span></div>`;
-    if(n.type==="episode"){
-      h+=`<div class="mut" style="font-size:11px;margin-top:2px">${esc(m.modality||"")}${m.created_at?(" · "+esc(m.created_at)):""}</div>`;
-      if((m.tags||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:8px">tags (${m.n_tags})</div><div>${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`;
-      if((m.entities||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${m.entities.map(t=>`<span class="tag" style="border-color:#4f8ef7">${esc(t)}</span>`).join("")}</div>`;
-      if(m.snippet) h+=`<div class="mut" style="margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap">${esc(m.snippet)}</div>`;
-    } else {
-      h+=`<div class="kv" style="margin-top:8px"><span class="mut">used by</span><span>${m.df||0} document(s)</span>`;
-      if(m.entity_type) h+=`<span class="mut">entity type</span><span>${esc(m.entity_type)}</span>`;
-      if((m.aliases||[]).length) h+=`<span class="mut">aliases</span><span>${m.aliases.map(esc).join(", ")}</span>`;
-      h+=`</div>`;
-    }
-    h+=`<div class="mut" style="margin-top:10px;font-size:11px">${n.indeg||0} incoming · degree ${n.deg||0} · click empty space to close</div>`;
-    d.innerHTML=h;
-  }
-  function hideNodeDetail(){ document.getElementById("i-detail").style.display="none"; }
   function renderDoc(s){ const f=s.footprint||{tags:[],entities:[],rel_tags:[]};
     document.getElementById("i-doc").innerHTML=`
       <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -832,7 +835,10 @@ const Query=(function(){
           </div>
           <div class="card stage hh" id="q-stage" style="position:relative">
             <div id="q-stage-simple" style="position:absolute;inset:0"></div>
-            <div id="q-stage-full" style="position:absolute;inset:0;display:none"></div>
+            <div id="q-stage-full" style="position:absolute;inset:0;display:none">
+              <div id="q-node-detail" class="panel" style="display:none;position:absolute;top:10px;right:10px;width:300px;
+                max-height:86%;overflow:auto;background:#161b22f2;border:1px solid var(--line);border-radius:10px;z-index:6"></div>
+            </div>
           </div>
           <div class="legend mut">
             <span><i class="dot" style="background:#4f8ef7"></i>episode</span>
@@ -843,7 +849,7 @@ const Query=(function(){
             <span><i class="dot" style="background:transparent;border:2px solid #ff5d8f"></i>ring = in the reader's context (number = rank in Simplified)</span>
             <span><i class="dot" style="background:transparent;border:2px dashed #8b949e"></i>ring = retrieved, cut before the reader</span>
             <span class="mut">hover a node for its text · click to highlight connections · drag to pan · scroll/pinch to zoom in for labels · dbl-click to reset</span>
-            <span class="mut">Full graph = this query laid over the whole ingest graph (like the Input tab), untouched nodes faded · nodes aren't draggable</span>
+            <span class="mut">Full graph = this query laid over the whole ingest graph (like the Input tab), untouched nodes faded · nodes aren't draggable · click a node for its full tags/entities/text, same as the Input tab</span>
           </div>
           <div class="card panel" id="q-detail" style="margin-top:12px"><span class="mut">Select a query to replay its traversal.</span></div>
         </div>
@@ -884,12 +890,13 @@ const Query=(function(){
     if(m==="full"&&sel!=null) drawFull(qs[sel]);
   }
   function drawFull(q){
-    if(!force) force=makeForce(document.getElementById("q-stage-full"), tip);
+    if(!force) force=makeForce(document.getElementById("q-stage-full"), tip,
+      {onNode:n=>showNodeDetail("q-node-detail",n), onBackground:()=>hideNodeDetail("q-node-detail")});
     // per-instance eval: each question ingested its own fresh graph (q.graph), torn down
     // right after — there's no single persistent graph to reuse, unlike shared-graph mode
     // where every question ran against ING.graph and we only ever load it once.
     const g=q.graph||ING.graph, key=q.graph?("q:"+(q.id||"")):"shared";
-    if(key!==forceKey){ force.load(g.nodes||[], g.edges||[]); forceKey=key; }
+    if(key!==forceKey){ force.load(g.nodes||[], g.edges||[]); forceKey=key; hideNodeDetail("q-node-detail"); }
     const roleOf={};
     (q.touched||[]).forEach(id=>roleOf[id]="touched");
     (q.seeds||[]).forEach(id=>roleOf[id]="seed");
