@@ -414,7 +414,7 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
                  if topk_list else 0.0)
     gold_ranks = [i + 1 for i, a in enumerate(ranked_art) if a in gold_art]
     proxy = _response_proxy(ans.answer, q.get("answer", ""))
-    jres = _judge(jclient, cfg.l3_model, q, ans.answer, judge_meter) if jclient else None
+    jres = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter) if jclient else None
     return {
         "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
         "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
@@ -563,7 +563,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     judge_meter = UsageMeter()
     jclient = judge_client
     if judge and jclient is None and agent_client is None:
-        jclient = _build_judge_client(cfg.l3_model)
+        jclient = _build_judge_client(cfg.judge_model)
     qrecords: list[dict] = []
     for q in questions:
         t_ask = time.time()
@@ -598,7 +598,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         "git": _git_info(),
         "backends": backends,
         "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
-                   "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
+                   "l3_judge": cfg.judge_model, "embedder": cfg.embed_model},
         "dataset": {"input": f"longmemeval:{tier}", "n_input": len(items),
                     "queries": os.path.basename(questions_path), "n_queries": len(questions)},
         "config": {"k": kk, "agent_backend": cfg.rag_backend, "mode": "shared",
@@ -673,7 +673,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     judge_meter = UsageMeter()
     jclient = judge_client
     if judge and jclient is None and agent_client is None:
-        jclient = _build_judge_client(cfg.l3_model)
+        jclient = _build_judge_client(cfg.judge_model)
 
     qrecords: list[dict] = []
     steps: list[dict] = []
@@ -828,7 +828,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "git": _git_info(),
         "backends": backends,
         "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
-                   "l3_judge": cfg.l3_model, "embedder": cfg.embed_model},
+                   "l3_judge": cfg.judge_model, "embedder": cfg.embed_model},
         "dataset": {"input": f"longmemeval:{tier} (per-instance)", "n_input": total_sessions,
                     "queries": os.path.basename(_tier_questions_path(tier)),
                     "n_queries": len(instances)},

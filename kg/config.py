@@ -69,6 +69,10 @@ class Config:
     l3_model: str = "gpt-4o-mini"
     rel_gray_floor: float = 0.90
 
+    # ---- LLM-as-judge grading model (testrun/ablate/guard_eval scoring only —
+    # never used for extraction/canon/RAG, so bumping this doesn't touch prod cost) ----
+    judge_model: str = "gpt-4o"
+
     # ---- derived edges (§2 / §6.5) ------------------------------------------
     episode_knn_k: int = 6            # SIMILAR_TO neighbours per episode
     episode_knn_floor: float = 0.55   # min cosine for an episode↔episode SIMILAR_TO edge
