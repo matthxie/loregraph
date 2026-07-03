@@ -445,19 +445,18 @@ function makeForce(stage, tip, h){
 
   cv.addEventListener("mousedown",e=>{ const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
     moved=0; const n=nodeAt(sx,sy);
-    if(n){ const [wx,wy]=Wld(sx,sy); n.fx=wx; n.fy=wy; drag={n}; }   // pin (reheat only once it actually moves)
+    if(n){ drag={n}; }   // nodes are click-to-select only, not draggable — no pin, no reheat
     else { pan={x:e.clientX,y:e.clientY,tx,ty}; } cv.style.cursor="grabbing"; });
   window.addEventListener("mousemove",e=>{ const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
-    if(drag){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false;
-      const [wx,wy]=Wld(sx,sy); drag.n.fx=wx; drag.n.fy=wy; reheat(0.3); }   // pinned node tracks cursor; sim hot ⇒ neighbours follow
+    if(drag){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); }
     else if(pan){ moved+=Math.abs(e.movementX)+Math.abs(e.movementY); autofit=false; tx=pan.tx+(e.clientX-pan.x); ty=pan.ty+(e.clientY-pan.y); draw(); }
     else { const n=nodeAt(sx,sy); cv.style.cursor=n?"pointer":"grab"; if(n!==hover){ hover=n;
       if(n&&tip){ tip.style.display="block"; tip.style.left=(r.left+sx+14+window.scrollX)+"px"; tip.style.top=(r.top+sy+14+window.scrollY)+"px";
         tip.innerHTML="<b>"+esc(n.label||n.id)+"</b><br><span class='mut'>"+n.type+(n.raw?" · raw entry":" · created")+" · "+(n.indeg||0)+" in / deg "+(n.deg||0)+"</span>"; }
       else if(tip) tip.style.display="none"; } } });
   window.addEventListener("mouseup",()=>{ if(tip)tip.style.display="none";
-    if(drag){ const click=moved<4,n=drag.n; n.fx=null; n.fy=null; drag=null; cv.style.cursor="grab";   // release pin ⇒ rejoins the sim
-      if(click){ sel=n; if(h.onNode)h.onNode(n); draw(); } else { reheat(0); } }   // click: just select; drag-end: cool & re-settle
+    if(drag){ const click=moved<4,n=drag.n; drag=null; cv.style.cursor="grab";
+      if(click){ sel=n; if(h.onNode)h.onNode(n); draw(); } }   // click only selects; nodes never move
     else if(pan){ const click=moved<4; pan=null; cv.style.cursor="grab"; if(click){ sel=null; if(h.onBackground)h.onBackground(); draw(); } } });
   cv.addEventListener("wheel",e=>{ e.preventDefault(); autofit=false; const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
     const dy=Math.max(-40,Math.min(40,e.deltaY||0)); const [wx,wy]=Wld(sx,sy);
@@ -648,7 +647,7 @@ const Input=(function(){
             <span><i class="dot" style="background:#2ec27e"></i>raw entry (document / image)</span>
             <span><i class="dot" style="background:#4f8ef7"></i>created (entity / tag)</span>
             <span style="color:#b06ff0">→ relationship (directed, labeled)</span>
-            <span class="mut">node size = incoming links · click a node to label its connections · drag to reposition · scroll to zoom · dbl-click / tap empty to reset · Space play/pause · A / D step</span>
+            <span class="mut">node size = incoming links · click a node to label its connections · drag empty space to pan · scroll to zoom · dbl-click / tap empty to reset · Space play/pause · A / D step</span>
           </div>
           <div class="card panel" id="i-doc" style="margin-top:12px"></div>
         </div>
@@ -838,7 +837,7 @@ const Query=(function(){
     drawTrace(q); drawDetail(q);
   }
   function drawTrace(q){ const sg=q.subgraph||{nodes:[],edges:[],hops:[]};
-    graph.reset(); graph.render(sg.nodes,sg.edges,{labels:true});
+    graph.reset(); graph.render(sg.nodes,sg.edges,{labels:true,zoomLabels:true});
     if(sg.hops&&sg.hops.length){ graph.dimAll(); let h=0; const shown=new Set();
       (function step(){ if(h>=sg.hops.length)return; sg.hops[h].forEach(id=>shown.add(id));
         graph.undim(shown); h++; setTimeout(step,420); })(); }
