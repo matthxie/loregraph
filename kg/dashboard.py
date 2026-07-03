@@ -795,6 +795,14 @@ const Query=(function(){
         </div>
         <div>
           <div class="card stage hh" id="q-stage"></div>
+          <div class="legend mut">
+            <span><i class="dot" style="background:#4f8ef7"></i>episode</span>
+            <span><i class="dot" style="background:#b06ff0"></i>entity</span>
+            <span><i class="dot" style="background:#f5a623"></i>tag</span>
+            <span><i class="dot" style="background:transparent;border:2px solid #ffd24d"></i>ring = seed (retrieval started here)</span>
+            <span><i class="dot" style="background:transparent;border:2px solid #ff5d8f"></i>ring = ranked result (number = rank)</span>
+            <span class="mut">click a node to highlight its connections · drag to pan · scroll to zoom · dbl-click to reset</span>
+          </div>
           <div class="card panel" id="q-detail" style="margin-top:12px"><span class="mut">Select a query to replay its traversal.</span></div>
         </div>
       </div>`;

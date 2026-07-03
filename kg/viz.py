@@ -14,6 +14,7 @@ stdlib server (kg.serve) reuses the same page but adds a live /api/query box.
 from __future__ import annotations
 
 import json
+import re
 
 import networkx as nx
 
@@ -28,11 +29,11 @@ _OBJ_EDGES = {EdgeType.SHARED_TAG.value, EdgeType.SHARED_ENTITY.value,
 # --------------------------------------------------------------------------- #
 # layout helpers
 # --------------------------------------------------------------------------- #
-def _layout(graph: nx.Graph, seed: int = 42) -> dict:
+def _layout(graph: nx.Graph, seed: int = 42, k_scale: float = 1.2) -> dict:
     if graph.number_of_nodes() == 0:
         return {}
     pos = nx.spring_layout(graph, seed=seed, weight="weight",
-                           k=1.2 / (graph.number_of_nodes() ** 0.5 or 1), iterations=120)
+                           k=k_scale / (graph.number_of_nodes() ** 0.5 or 1), iterations=120)
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     minx, maxx = min(xs), max(xs)
@@ -44,12 +45,31 @@ def _layout(graph: nx.Graph, seed: int = 42) -> dict:
             for n, p in pos.items()}
 
 
+# titles that are really just ids (hex/underscore session hashes) — not human-readable
+_IDLIKE = re.compile(r"^[0-9a-fA-F_\-]{6,}$")
+_CHAT_HEADER = re.compile(r"\[chat session[^\]]*\]", re.I)
+_ROLE_PREFIX = re.compile(r"(?im)^\s*(user|assistant|human|ai)\s*:\s*")
+_WSP_ = re.compile(r"\s+")
+
+
+def _ep_label(n) -> str:
+    """Human-readable episode label: the real title when there is one, else the first
+    words of the content (untitled corpora like LongMemEval name episodes by session
+    hash, which reads as noise on the graph)."""
+    name = (n.name or "").strip()
+    if name and not _IDLIKE.fullmatch(name):
+        return name[:60]
+    text = n.raw_text or n.description or ""
+    text = _ROLE_PREFIX.sub("", _CHAT_HEADER.sub(" ", text))
+    text = _WSP_.sub(" ", text).strip()
+    return (text[:57] + "…") if len(text) > 57 else (text or name or n.id)
+
+
 def _obj_meta(store: GraphStore, oid: str) -> dict:
     n = store.get_node(oid)
     modality = (n.modality.value if n and n.modality else "text")
-    label = (n.name or oid)
-    return {"id": oid, "label": label[:60], "type": "episode", "modality": modality,
-            "tags": (n.tags[:8] if n else [])}
+    return {"id": oid, "label": (_ep_label(n) if n else oid), "type": "episode",
+            "modality": modality, "tags": (n.tags[:8] if n else [])}
 
 
 # --------------------------------------------------------------------------- #
@@ -170,7 +190,9 @@ def _focused_subgraph(store: GraphStore, keep: set[str], obj_set: list[str],
     for (src, dst), names in rel_by_pair.items():
         sub.add_edge(src, dst, etype="RELATED_TO", weight=1.0,
                      directed=True, dsrc=src, dtgt=dst, rel=", ".join(names))
-    pos = _layout(sub, seed=7)
+    # wider repulsion than the full ingest graph: these focused views are small
+    # (dozens of nodes) and hub-heavy, so the default spacing reads as one clump
+    pos = _layout(sub, seed=7, k_scale=2.2)
 
     rank_of = {oid: i + 1 for i, (oid, _) in enumerate(ranked)}
     score_of = {oid: sc for oid, sc in ranked}
@@ -228,10 +250,25 @@ def rag_trace_payload(ans, store: GraphStore) -> dict:
 
     seeds = [s for s in ans.seeds if is_t(s, *_DRAWN)]
     episodes = [o for o in ans.object_ids if is_t(o, NodeType.EPISODE)]
-    anchors = [t for t in ans.touched if is_t(t, NodeType.ENTITY, NodeType.TAG)]
+    seed_eps = [s for s in seeds if is_t(s, NodeType.EPISODE)]
+    seed_hubs = [s for s in seeds if is_t(s, NodeType.ENTITY, NodeType.TAG)]
+    obj_set = list(dict.fromkeys(seed_eps + episodes))
+
+    # Hubs worth drawing: entity/tag anchors that CONNECT the drawn episodes (>=2 hits),
+    # ranked by how many they connect, capped — same pruning as query_trace. Without it
+    # every one-off seed/touched tag lands on screen and reads as noise.
+    anchor_set = {t for t in ans.touched if is_t(t, NodeType.ENTITY, NodeType.TAG)}
+    hub_hits: dict[str, int] = {}
+    for oid in obj_set:
+        for nbr, _d in store.neighbors(oid):
+            if nbr in anchor_set:
+                hub_hits[nbr] = hub_hits.get(nbr, 0) + 1
+    hubs = [h for h, c in sorted(hub_hits.items(), key=lambda kv: -kv[1]) if c >= 2]
+    hubs = list(dict.fromkeys(seed_hubs + hubs))[:28]
+
     seen = set(seeds)
     hops = [list(dict.fromkeys(seeds))]
-    layer2 = [a for a in anchors if a not in seen]
+    layer2 = [h for h in hubs if h not in seen]
     if layer2:
         hops.append(layer2)
         seen |= set(layer2)
@@ -242,13 +279,10 @@ def rag_trace_payload(ans, store: GraphStore) -> dict:
     for i, oid in enumerate(episodes):
         n = store.get_node(oid)
         ranked.append({"id": oid, "rank": i + 1, "score": "",
-                       "label": (n.name or oid) if n else oid,
+                       "label": _ep_label(n) if n else oid,
                        "modality": (n.modality.value if n and n.modality else "text")})
 
-    seed_eps = [s for s in seeds if is_t(s, NodeType.EPISODE)]
-    seed_hubs = [s for s in seeds if is_t(s, NodeType.ENTITY, NodeType.TAG)]
-    obj_set = list(dict.fromkeys(seed_eps + episodes))
-    keep = set(obj_set) | set(anchors) | set(seed_hubs)
+    keep = set(obj_set) | set(hubs)
     _sub, nodes, edges = _focused_subgraph(
         store, keep, obj_set, seeds, [(oid, 0.0) for oid in episodes])
 
