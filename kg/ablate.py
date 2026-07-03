@@ -43,7 +43,7 @@ def _system_config(system: str, *, k: int, model: str | None,
 def run_system(system: str, instances, *, k: int, judge: bool, model: str | None,
                ctx_episodes: int | None, store_path: str, log=print) -> dict:
     cfg = _system_config(system, k=k, model=model, ctx_episodes=ctx_episodes)
-    jclient = _build_judge_client(cfg.l3_model) if judge else None
+    jclient = _build_judge_client(cfg.judge_model) if judge else None
     judge_meter = UsageMeter()
 
     qrecords: list[dict] = []

@@ -88,7 +88,7 @@ def run(*, tier: str = "small", deepest: int = 6, k: int = 3, ctx_episodes: int 
         cfg = replace(cfg, llm_model=model, rag_model=model, l3_model=model)
 
     modes = ("none", "exclude", "cap", "seed")          # all guard strategies the task proposed
-    jclient = _build_judge_client(cfg.l3_model) if judge else None
+    jclient = _build_judge_client(cfg.judge_model) if judge else None
     judge_meter = UsageMeter()
     rows = []
     ingest_cost = 0.0
@@ -119,7 +119,7 @@ def run(*, tier: str = "small", deepest: int = 6, k: int = 3, ctx_episodes: int 
             for mode in modes:
                 g.config = replace(g.config, self_guard=mode)
                 ans = g.ask(q["query"], k=k)
-                jr = _judge(jclient, cfg.l3_model, q, ans.answer, judge_meter)
+                jr = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter)
                 rec_row["accuracy"][mode] = (jr or {}).get("score")
         rows.append(rec_row)
         rstr = " ".join(f"{m}={rec_row['recall'][m]}" for m in modes)
