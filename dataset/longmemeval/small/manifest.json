@@ -18,7 +18,7 @@
   "session_cap": null,
   "selection": "deterministic stratified round-robin over question_type (RNG-free); tiers nest as prefixes of one global order",
   "ordering": "sessions emitted chronologically (sorted by timestamp)",
-  "built_at": "2026-06-25T02:44:25+00:00",
+  "built_at": "2026-07-03T05:02:07+00:00",
   "question_ids": [
     "00ca467f",
     "08f4fc43",
