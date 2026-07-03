@@ -22,6 +22,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from .backoff import call_with_backoff
 from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
@@ -239,7 +240,7 @@ class OpenAIAnswerer:
                          seeds=result.seeds, touched=sorted(result.subgraph))
         try:
             with prof_span("query.llm_answer"):
-                msg = self.client.chat.completions.create(
+                msg = call_with_backoff(lambda: self.client.chat.completions.create(
                     model=self.config.rag_model,
                     max_tokens=self.config.rag_max_tokens,
                     temperature=0,
@@ -249,7 +250,7 @@ class OpenAIAnswerer:
                     ],
                     tools=[_ANSWER_TOOL],
                     tool_choice={"type": "function", "function": {"name": "submit_answer"}},
-                )
+                ))
             self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
