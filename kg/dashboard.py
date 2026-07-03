@@ -153,6 +153,11 @@ td{padding:5px 8px;border-bottom:1px solid #1d232b}
 .tag{display:inline-block;background:#0d1117;border:1px solid var(--line);border-radius:5px;
   padding:1px 6px;margin:2px 3px 0 0;font-size:11px}
 .scroll{overflow:auto}
+input.find{width:100%;padding:5px 8px;font:inherit;font-size:12px;color:var(--txt);
+  background:#0d1117;border:1px solid var(--line);border-radius:6px}
+input.find:focus{outline:1px solid var(--accent)}
+mark{background:#f5a623;color:#0b0e13;border-radius:2px;padding:0 1px}
+mark.cur{background:#ff8f3d}
 """
 
 # Shared JS: a pan/zoom graph widget + a tiny SVG line/bar chart kit.
@@ -633,7 +638,12 @@ function showNodeDetail(panelId,n){ const d=document.getElementById(panelId); d.
     h+=`<div class="mut" style="font-size:11px;margin-top:2px">${esc(m.modality||"")}${m.created_at?(" · "+esc(m.created_at)):""}</div>`;
     if((m.tags||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:8px">tags (${m.n_tags})</div><div>${m.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>`;
     if((m.entities||[]).length) h+=`<div class="mut" style="font-size:11px;margin-top:6px">entities</div><div>${m.entities.map(t=>`<span class="tag" style="border-color:#4f8ef7">${esc(t)}</span>`).join("")}</div>`;
-    if(m.snippet) h+=`<div class="mut" style="margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap">${esc(m.snippet)}</div>`;
+    if(m.snippet){
+      h+=`<div class="row" style="gap:6px;margin-top:10px;align-items:center">
+        <input class="find" id="${panelId}-find" placeholder="find in text… (Enter = next, Shift+Enter = prev)"/>
+        <span class="mut" id="${panelId}-findn" style="font-size:11px;white-space:nowrap;min-width:44px;text-align:right"></span></div>
+      <div style="margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap" id="${panelId}-snip"></div>`;
+    }
   } else {
     h+=`<div class="kv" style="margin-top:8px"><span class="mut">used by</span><span>${m.df||0} document(s)</span>`;
     if(m.entity_type) h+=`<span class="mut">entity type</span><span>${esc(m.entity_type)}</span>`;
@@ -642,8 +652,36 @@ function showNodeDetail(panelId,n){ const d=document.getElementById(panelId); d.
   }
   h+=`<div class="mut" style="margin-top:10px;font-size:11px">${n.indeg||0} incoming · degree ${n.deg||0} · click empty space to close</div>`;
   d.innerHTML=h;
+  if(n.type==="episode"&&m.snippet) wireFind(panelId,m.snippet);
 }
 function hideNodeDetail(panelId){ document.getElementById(panelId).style.display="none"; }
+// Ctrl+F-style word search over the full document text in the detail panel: highlights
+// every occurrence live as you type, Enter/Shift+Enter cycles the current match into view.
+function wireFind(panelId,text){
+  const inp=document.getElementById(panelId+"-find"), out=document.getElementById(panelId+"-snip"),
+        cnt=document.getElementById(panelId+"-findn");
+  if(!inp||!out)return;
+  let matches=[], cur=0;
+  function esc_re(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }
+  function render(){
+    const q=inp.value;
+    if(!q){ out.textContent=text; cnt.textContent=""; matches=[]; return; }
+    const re=new RegExp(esc_re(q),"gi"); matches=[]; let mm;
+    while((mm=re.exec(text))){ matches.push(mm.index); if(mm[0]==="")re.lastIndex++; }
+    if(!matches.length){ out.textContent=text; cnt.textContent="0 matches"; return; }
+    if(cur<0)cur=matches.length-1; if(cur>=matches.length)cur=0;
+    let html="", last=0;
+    matches.forEach((idx,i)=>{ html+=esc(text.slice(last,idx));
+      html+=`<mark${i===cur?' class="cur"':""}>${esc(text.slice(idx,idx+q.length))}</mark>`;
+      last=idx+q.length; });
+    html+=esc(text.slice(last));
+    out.innerHTML=html; cnt.textContent=(cur+1)+" / "+matches.length;
+    const el=out.querySelector("mark.cur"); if(el)el.scrollIntoView({block:"center"}); }
+  out.textContent=text;
+  inp.oninput=()=>{ cur=0; render(); };
+  inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault();
+    if(matches.length){ cur=e.shiftKey?cur-1:cur+1; render(); } } };
+}
 
 // =================== INPUT VIEW ===================
 const Input=(function(){
