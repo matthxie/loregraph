@@ -140,7 +140,8 @@ def _rel_pair_stats(store) -> dict:
 # existing edge styling/legend applies unchanged.
 _MENTIONS_ETYPE = "MENTIONS"
 _DIRECTED_ETYPES = {EdgeType.TAGGED_AS.value, _MENTIONS_ETYPE,
-                    EdgeType.RELATED_TO.value, EdgeType.HYPERLINKS_TO.value}
+                    EdgeType.RELATED_TO.value, EdgeType.HYPERLINKS_TO.value,
+                    EdgeType.NEXT.value}
 
 
 def _full_graph(store, cap_snippet: int | None = None) -> dict:
@@ -389,12 +390,12 @@ def _gold_yields(store, gold_art: set[str]) -> list[dict]:
     """Per gold session: was its episode ingested, and what did extraction pull out of
     it (entities via the mention star, RELATED_TO facts, dated facts)? A gold session
     with ~0 yield is invisible to entity seeding — an extraction failure, not retrieval."""
-    ep_of: dict[str, str] = {}
+    ep_of: dict[str, list[str]] = {}   # article → ALL its episodes (chunking = several)
     for n in store.nodes_of_type(NodeType.EPISODE):
         a = _article(n.id)
-        if a in gold_art and a not in ep_of:
-            ep_of[a] = n.id
-    want = set(ep_of.values())
+        if a in gold_art:
+            ep_of.setdefault(a, []).append(n.id)
+    want = {e for eps in ep_of.values() for e in eps}
     facts = {e: 0 for e in want}
     dated = {e: 0 for e in want}
     for _u, _v, d in store.all_edges():
@@ -407,14 +408,15 @@ def _gold_yields(store, gold_art: set[str]) -> list[dict]:
                 dated[ep] += 1
     out = []
     for art in sorted(gold_art):
-        ep = ep_of.get(art)
-        if not ep:
+        eps = ep_of.get(art) or []
+        if not eps:
             out.append({"id": art, "found": False, "entities": 0, "facts": 0,
                         "dated_facts": 0})
             continue
-        out.append({"id": art, "found": True,
-                    "entities": len(_episode_entities(store, ep)),
-                    "facts": facts[ep], "dated_facts": dated[ep]})
+        ents = {e for ep in eps for e in _episode_entities(store, ep)}
+        out.append({"id": art, "found": True, "entities": len(ents),
+                    "facts": sum(facts[ep] for ep in eps),
+                    "dated_facts": sum(dated[ep] for ep in eps)})
     return out
 
 

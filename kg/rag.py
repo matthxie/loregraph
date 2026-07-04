@@ -152,9 +152,29 @@ class ContextBuilder:
                         return out
         return out
 
+    def _select_episodes(self, ranked: list[str]) -> list[str]:
+        """Top-n context episodes, with at most `rag_chunks_per_source` chunks of any
+        one source (chunk ids are `ep_<source>#cNNN`) — otherwise a single chunked
+        session can monopolize every slot and crowd out the other evidence."""
+        n = self.config.rag_context_episodes
+        cap = int(getattr(self.config, "rag_chunks_per_source", 0))
+        if not cap:
+            return ranked[:n]
+        out: list[str] = []
+        per: dict[str, int] = {}
+        for eid in ranked:
+            base = eid.split("#", 1)[0]
+            if per.get(base, 0) >= cap:
+                continue
+            per[base] = per.get(base, 0) + 1
+            out.append(eid)
+            if len(out) >= n:
+                break
+        return out
+
     def build(self, result: RetrievalResult) -> tuple[list[str], list[FactLine], str]:
         """Return (episode_ids, fact_lines, context_blob)."""
-        ep_ids = result.object_ids[: self.config.rag_context_episodes]
+        ep_ids = self._select_episodes(result.object_ids)
         ents = self.relevant_entities(result, ep_ids)
         facts = self.facts_for(ents, result.as_of)
 

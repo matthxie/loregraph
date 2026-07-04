@@ -22,12 +22,13 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 from .canonicalize import Canonicalizer
+from .chunkers import chunk_text
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
 from .extractors import Extraction, Extractor, extract_text_sectioned
 from .models import (Edge, EdgeType, EntityType, Modality, NodeType, Provenance,
-                     episode_node, mention_node)
+                     episode_node, mention_node, source_node)
 from .profiler import span as prof_span
 from .store import GraphStore, now_iso
 from .temporal import apply_fact
@@ -77,6 +78,10 @@ class Ingestor:
     def ingest(self, items: list[CorpusItem]) -> IngestReport:
         t0 = time.time()
         report = IngestReport(extractor=self.extractor.name, embedder=self.embedder.name)
+
+        # 0. optional natural-boundary chunking: one big text entry → several small
+        #    chunk episodes + an un-rankable SOURCE parent (edges wired in step 4b)
+        items, parents = self._expand_chunks(items)
 
         # 1. intake + cache decisions. Episodes are APPEND-ONLY: identical content is
         #    skipped; changed content under a known id appends a new immutable episode
@@ -155,6 +160,11 @@ class Ingestor:
                 if flush_every and self.store.path and (i + 1) % flush_every == 0:
                     self.store.flush()
 
+        # 4b. parent SOURCE nodes + PART_OF / NEXT structure edges for chunked entries
+        if parents:
+            with prof_span("ingest.write_parents"):
+                self._write_parents(parents)
+
         # 5. derive Episode↔Episode edges for the NEW episodes only (incremental)
         with prof_span("ingest.derive_edges"):
             self._derive_episode_edges(new_eps)
@@ -163,6 +173,61 @@ class Ingestor:
 
         report.seconds = time.time() - t0
         return report
+
+    # ------------------------------------------------------------------ chunking
+    def _expand_chunks(self, items: list[CorpusItem]) \
+            -> tuple[list[CorpusItem], list[tuple[str, CorpusItem, list[str]]]]:
+        """With config.chunking on, replace each big text entry by its natural-boundary
+        chunks (kg/chunkers.py). Chunk ids are `<source_id>#cNNN` — deterministic, and
+        the `#` suffix collapses in eval's session-level matching. Returns the expanded
+        item list plus (source_node_id, original item, [chunk episode ids]) per parent."""
+        if getattr(self.config, "chunking", "none") == "none":
+            return items, []
+        out: list[CorpusItem] = []
+        parents: list[tuple[str, CorpusItem, list[str]]] = []
+        for item in items:
+            if item.modality != "text" or not item.text:
+                out.append(item)
+                continue
+            chunks = chunk_text(item.text,
+                                target=int(self.config.chunk_target_chars),
+                                max_chars=int(self.config.chunk_max_chars))
+            if not chunks:
+                out.append(item)
+                continue
+            kids: list[str] = []
+            for c in chunks:
+                cid = f"{item.id}#c{c.ordinal:03d}"
+                out.append(CorpusItem(id=cid, modality="text",
+                                      source_ref=item.source_ref, title=item.title,
+                                      text=c.text, created_at=item.created_at))
+                kids.append(f"ep_{cid}")
+            parents.append((f"src_{item.id}", item, kids))
+        return out, parents
+
+    def _write_parents(self, parents: list[tuple[str, CorpusItem, list[str]]]) -> None:
+        """One SOURCE node per chunked entry (full original text, provenance) +
+        PART_OF (chunk→parent, low weight) and NEXT (chunk→next sibling) edges."""
+        pw = float(getattr(self.config, "part_of_weight", 0.3))
+        nw = float(getattr(self.config, "next_weight", 0.5))
+        for src_id, item, kids in parents:
+            present = [k for k in kids if self.store.has_node(k)]
+            if not present:
+                continue                      # every chunk skipped/failed → no parent
+            if not self.store.has_node(src_id):
+                ts = item.created_at or now_iso()
+                self.store.add_node(source_node(
+                    src_id, source_ref=item.source_ref or "", raw_text=item.text,
+                    content_hash=_sha256("source", item.text or ""), ts=ts,
+                    title=item.title, ingested_at=now_iso()))
+            for k in present:
+                self.store.add_edge(Edge(src=k, dst=src_id, etype=EdgeType.PART_OF,
+                                         provenance=Provenance.DERIVED,
+                                         confidence=1.0, weight=pw))
+            for a, b in zip(present, present[1:]):
+                self.store.add_edge(Edge(src=a, dst=b, etype=EdgeType.NEXT,
+                                         provenance=Provenance.DERIVED,
+                                         confidence=1.0, weight=nw))
 
     # ----------------------------------------------------------------- extract
     def _extract_all(self, items: list[CorpusItem]) -> tuple[list[Extraction], list[str]]:

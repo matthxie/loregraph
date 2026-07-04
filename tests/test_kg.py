@@ -801,3 +801,70 @@ def test_shared_edges_flag_disables_shared_derivation():
     etypes = {d["etype"] for _u, _v, d in g.store.g.edges(data=True)}
     assert "SHARED_TAG" not in etypes and "SHARED_ENTITY" not in etypes
     assert "SIMILAR_TO" in etypes    # kNN edges are governed separately
+
+
+# --------------------------------------------------------------------------- #
+# Natural-boundary chunking (kg/chunkers.py + ingest step 0/4b)
+# --------------------------------------------------------------------------- #
+def _chat_session_text(n_turns: int = 14, pad: int = 420) -> str:
+    lines = ["[chat session — 2023/05/01 (Mon) 10:00]"]
+    filler = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do "
+    for i in range(n_turns):
+        who = "User" if i % 2 == 0 else "Assistant"
+        lines.append(f"{who}: turn {i} " + filler * (pad // len(filler) + 1))
+    return "\n".join(lines)
+
+
+def test_chunked_ingest_structure_and_idempotency():
+    c = cfg()
+    c.chunking = "turns"
+    g = KnowledgeGraph.open(tmp_store(), c)
+    g.extractor = ScriptedExtractor({})
+    text = _chat_session_text()
+    item = CorpusItem(id="s1", modality="text", source_ref="u/s1", title="session 1",
+                      text=text, created_at="2023-05-01T10:00:00+00:00")
+    rep = g.ingest([item])
+    eps = [n for n in g.store.nodes.values() if n.ntype == NodeType.EPISODE]
+    assert rep.ingested == len(eps) >= 2
+    assert all(e.id.startswith("ep_s1#c") for e in eps)
+    # every chunk keeps the session header (the temporal anchor)
+    assert all((e.raw_text or "").startswith("[chat session") for e in eps)
+    # ONE un-rankable SOURCE parent holding the full original text
+    srcs = [n for n in g.store.nodes.values() if n.ntype == NodeType.SOURCE]
+    assert len(srcs) == 1 and srcs[0].id == "src_s1" and srcs[0].raw_text == text
+    # PART_OF chunk→parent for every chunk; NEXT chain between consecutive siblings
+    part = [(u, v) for u, v, d in g.store.all_edges()
+            if d["etype"] == EdgeType.PART_OF.value]
+    nxt = [(u, v) for u, v, d in g.store.all_edges()
+           if d["etype"] == EdgeType.NEXT.value]
+    assert len(part) == len(eps) and all(v == "src_s1" for _u, v in part)
+    assert len(nxt) == len(eps) - 1
+    # retrieval ranks chunk EPISODEs only — the SOURCE parent never surfaces
+    res = g.query("lorem ipsum turn")
+    assert res.object_ids and all(oid.startswith("ep_s1#c") for oid in res.object_ids)
+    # re-ingest is idempotent: every chunk hash-skips, nothing is duplicated
+    rep2 = g.ingest([item])
+    assert rep2.ingested == 0 and rep2.skipped == len(eps)
+    assert len([n for n in g.store.nodes.values() if n.ntype == NodeType.SOURCE]) == 1
+
+
+def test_chunking_off_is_unchanged():
+    c = cfg()
+    assert c.chunking == "none"
+    g = KnowledgeGraph.open(tmp_store(), c)
+    g.extractor = ScriptedExtractor({})
+    g.ingest([CorpusItem(id="s1", modality="text", source_ref="u/s1",
+                         text=_chat_session_text())])
+    assert [n.id for n in g.store.nodes.values() if n.ntype == NodeType.EPISODE] == ["ep_s1"]
+    assert not [n for n in g.store.nodes.values() if n.ntype == NodeType.SOURCE]
+
+
+def test_context_builder_caps_chunks_per_source():
+    from kg.rag import ContextBuilder
+    c = cfg()
+    c.rag_context_episodes = 4
+    c.rag_chunks_per_source = 2
+    cb = ContextBuilder.__new__(ContextBuilder)
+    cb.config = c
+    ranked = ["ep_a#c000", "ep_a#c001", "ep_a#c002", "ep_b#c000", "ep_a#c003", "ep_c"]
+    assert cb._select_episodes(ranked) == ["ep_a#c000", "ep_a#c001", "ep_b#c000", "ep_c"]

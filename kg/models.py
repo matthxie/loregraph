@@ -40,6 +40,8 @@ SELF_ENTITY_ID = "entity_self"
 # --------------------------------------------------------------------------- #
 class NodeType(str, Enum):
     EPISODE = "episode"     # immutable ingested entry (the document/note/image unit)
+    SOURCE = "source"       # immutable parent of chunked episodes (full original text;
+                            # provenance only — never embedded, ranked, or BM25-indexed)
     MENTION = "mention"     # immutable per-episode occurrence of an entity
     ENTITY = "entity"       # lean canonical identity anchor
     TAG = "tag"             # canonical topical-tag vocabulary
@@ -83,6 +85,9 @@ class EdgeType(str, Enum):
     SHARED_ENTITY = "SHARED_ENTITY"  # Episode ↔ Episode (share a resolved entity)
     IN_COMMUNITY = "IN_COMMUNITY"  # node → CommunityNode
     HYPERLINKS_TO = "HYPERLINKS_TO"  # optional deterministic enrichment
+    PART_OF = "PART_OF"            # chunk Episode → parent Source (low traversal weight —
+                                   # the parent must not become a sibling super-hub)
+    NEXT = "NEXT"                  # chunk Episode → next sibling (sequence within a source)
 
 
 class Provenance(str, Enum):
@@ -198,6 +203,18 @@ def episode_node(node_id: str, *, modality: Modality, source_ref: str,
         content_hash=content_hash, created_at=ts, last_modified=ts,
         ingested_at=ingested_at or ts,
     )
+
+
+def source_node(node_id: str, *, source_ref: str, raw_text: str | None,
+                content_hash: str, ts: str, title: str = "",
+                ingested_at: str = "") -> Node:
+    """Parent of chunked episodes: keeps the full original text + provenance in ONE
+    place. Deliberately NOT embedded / BM25-indexed / PPR-rankable (only NodeType.EPISODE
+    is) so it can't outcompete its own chunks in retrieval."""
+    return Node(id=node_id, ntype=NodeType.SOURCE, name=title or source_ref,
+                modality=Modality.TEXT, source_ref=source_ref, raw_text=raw_text,
+                content_hash=content_hash, created_at=ts, last_modified=ts,
+                ingested_at=ingested_at or ts)
 
 
 def mention_node(node_id: str, *, surface: str, etype: EntityType, episode_id: str,
