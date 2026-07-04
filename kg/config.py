@@ -86,6 +86,20 @@ class Config:
     shared_edges: bool = True
     shared_hub_cap: int = 256
 
+    # ---- episode chunking (natural boundaries; kg/chunkers.py) ---------------
+    # "turns" splits each text entry along its natural structure (chat turns, else
+    # paragraphs; oversized units fall back to sentence packing) into several small
+    # episodes, keeps the full original on an un-rankable SOURCE parent, and links
+    # chunk→parent (PART_OF) + chunk→next-sibling (NEXT). Retrieval then ranks
+    # statement-grained chunks instead of whole multi-thousand-char blobs. "none" =
+    # legacy one-episode-per-entry (byte-for-byte unchanged).
+    chunking: str = "none"            # "none" | "turns"
+    chunk_target_chars: int = 2200    # greedy-pack natural units up to ~this per chunk
+    chunk_max_chars: int = 4400      # entries at/below this stay unchunked; also the
+                                      # hard ceiling one packed unit may reach
+    part_of_weight: float = 0.3       # PART_OF traversal weight (parent must not
+    next_weight: float = 0.5          # become a sibling super-hub); NEXT = sequence
+
     # ---- write-through flush cadence ----------------------------------------
     # The ingest loop checkpoints the store to SQLite every N episodes (and always at the
     # end), so a crash mid-ingest loses at most one window. 0 disables mid-loop flushes.
@@ -123,6 +137,9 @@ class Config:
                                        # reader sees it; was 6 — see optimization.md baseline)
     rag_episode_chars: int = 20000    # per-episode text budget in the context
     rag_max_facts: int = 30           # currently-valid facts surfaced in the context
+    # With chunking on, ranks 1..n can all be chunks of ONE source; cap how many context
+    # slots a single source may occupy so the reader still sees other sessions. 0 = off.
+    rag_chunks_per_source: int = 4
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids
