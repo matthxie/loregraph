@@ -614,6 +614,34 @@ def test_retrievers_run_and_find_relevant():
         assert {"ep_a", "ep_b"} & set(res.object_ids), f"{mode} missed the target"
 
 
+def test_rerank_keeps_ppr_top_episodes():
+    """The cross-encoder must not demote the raw PPR pool's top episodes out of the final
+    top-k (config.rerank_keep_ppr_top). A stub reranker that drops the PPR #1 entirely
+    still yields it in the final ids, spliced in over the reranked tail."""
+    from kg.retrieval import HybridRetriever
+
+    g = scripted_graph()
+    g.ingest(sample_items())
+    retr = HybridRetriever(g.store, g.embedder, g.canon, g.config)
+
+    class _DemotingReranker:
+        available = True
+        def rerank(self, query, items, k):
+            ids = [i for i, _ in items]
+            return ids[1:][:k]          # drop the PPR top-1 completely, keep the rest
+
+    retr._reranker = _DemotingReranker()
+    # kind forces the STATE lane, which is in the default rerank_lanes
+    res = retr.retrieve("cryptography codebreaking at Bletchley", k=2,
+                        kind="knowledge-update")
+    final_ids = [ep for ep, _ in res.objects]
+    ppr_top1 = res.ppr_pool[0][0]
+    assert ppr_top1 in final_ids, "PPR #1 was demoted out of the final top-k"
+    assert len(final_ids) <= 2
+    # the reranker's surviving relative order is preserved ahead of the splice
+    assert final_ids[0] != ppr_top1
+
+
 def test_empty_and_blank_query_do_not_crash():
     g = scripted_graph()
     g.ingest(sample_items())

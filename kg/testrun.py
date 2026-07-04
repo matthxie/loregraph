@@ -33,6 +33,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 from .backoff import call_with_backoff
@@ -321,8 +322,12 @@ _JUDGE_TOOL = {
 
 
 def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict | None:
+    # NFKC-normalize both sides so mojibake/width variants in currency symbols and
+    # digits (e.g. "￥17,000" vs "¥17,000") don't read as factual mismatches.
+    answer = unicodedata.normalize("NFKC", str(answer or ""))
+    reference = unicodedata.normalize("NFKC", str(q.get("answer", "") or ""))
     prompt = (f"Question: {q['query']}\n"
-              f"Reference answer: {q.get('answer', '')}\n"
+              f"Reference answer: {reference}\n"
               f"Rationale: {q.get('rationale', '')}\n\n"
               f"Model answer:\n{answer[:1500]}\n\n"
               "Grade the model answer.")

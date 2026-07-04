@@ -122,6 +122,10 @@ class Config:
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_pool: int = 32             # candidates fed to the cross-encoder
     rerank_lanes: tuple = ("state", "multihop")   # lanes that get reranked
+    # PPR guarantee under the cross-encoder: the top-N episodes of the RAW PPR pool are
+    # always kept in the final top-k even if the reranker pushes them below k (the CE can
+    # demote a gold the graph ranked #1 completely out of the context). 0 disables.
+    rerank_keep_ppr_top: int = 3
     fact_lane_augment: bool = True    # surface fact-bearing episodes on state/evolution lanes
 
     # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----

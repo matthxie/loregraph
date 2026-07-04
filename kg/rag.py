@@ -68,7 +68,15 @@ _RAG_SYS = (
     "currently valid (or valid at the requested point in time); a relationship NOT listed "
     "is not currently true even if an episode once stated it (the graph tracks when facts "
     "end). Prefer the FACTS for state questions (who/where/what is X now). Cite the episode "
-    "ids (e.g. ep_3) you relied on. If the context does not answer the question, say so."
+    "ids (e.g. ep_3) you relied on. If the context does not answer the question, say so.\n"
+    "For questions asking how many, how long, or how many days between: first list every "
+    "matching event from the context with its date, then derive the number from that list — "
+    "never state a count without enumerating the events behind it. For date arithmetic, "
+    "compute the day difference step by step (months and remaining days) before answering.\n"
+    "Verify the exact subject of the question appears in the context. If the context only "
+    "contains a similar but different item (e.g. asked about vintage films but the context "
+    "only has vintage cameras), say you don't have that information instead of substituting "
+    "the similar item."
 )
 
 _ANSWER_TOOL = {

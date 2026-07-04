@@ -529,6 +529,15 @@ class HybridRetriever:
             with prof_span("query.cross_encoder"):
                 ranked = self._reranker.rerank(
                     query, [(ep, self._snippet(ep)) for ep in cand_ids], k)
+            # PPR guarantee: the raw PPR pool's top-N must survive the cross-encoder —
+            # the CE can demote an episode the graph ranked #1 out of the top-k entirely.
+            # Trim the reranked tail to make room; the reranker's relative order is kept.
+            keep_n = int(getattr(self.config, "rerank_keep_ppr_top", 0))
+            if keep_n > 0:
+                missing = [ep for ep in base.object_ids[:keep_n]
+                           if ep in cand_ids and ep not in ranked]
+                if missing:
+                    ranked = ranked[: max(k - len(missing), 0)] + missing
         else:
             ranked = cand_ids[:k]
 
