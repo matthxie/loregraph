@@ -1,0 +1,431 @@
+{
+ "id": "00ca467f__answer_39900a0a_2",
+ "chars": 18891,
+ "seconds": 285.34,
+ "entities": [
+  {
+   "name": "User",
+   "type": "person"
+  },
+  {
+   "name": "Dr. Johnson",
+   "type": "person"
+  },
+  {
+   "name": "primary care physician",
+   "type": "org"
+  },
+  {
+   "name": "EMG test",
+   "type": "work"
+  },
+  {
+   "name": "acid reflux",
+   "type": "concept"
+  },
+  {
+   "name": "heartburn",
+   "type": "concept"
+  },
+  {
+   "name": "April 1st",
+   "type": "date"
+  },
+  {
+   "name": "carpal tunnel syndrome",
+   "type": "concept"
+  },
+  {
+   "name": "diabetes",
+   "type": "concept"
+  },
+  {
+   "name": "shingles",
+   "type": "concept"
+  },
+  {
+   "name": "Lyme disease",
+   "type": "concept"
+  },
+  {
+   "name": "Dr. Thompson",
+   "type": "person"
+  },
+  {
+   "name": "ACL",
+   "type": "concept"
+  },
+  {
+   "name": "MRI",
+   "type": "work"
+  },
+  {
+   "name": "CT scans",
+   "type": "work"
+  },
+  {
+   "name": "physical therapy",
+   "type": "concept"
+  },
+  {
+   "name": "muscle atrophy",
+   "type": "concept"
+  },
+  {
+   "name": "nerve conduction velocity",
+   "type": "concept"
+  },
+  {
+   "name": "nerve amplitude",
+   "type": "concept"
+  },
+  {
+   "name": "muscle activity",
+   "type": "concept"
+  },
+  {
+   "name": "healthcare provider",
+   "type": "org"
+  },
+  {
+   "name": "orthopedic surgeon",
+   "type": "concept"
+  },
+  {
+   "name": "physical therapist",
+   "type": "person"
+  }
+ ],
+ "tags": [
+  "health",
+  "symptoms",
+  "cough",
+  "numbness",
+  "acid reflux",
+  "heartburn",
+  "diet",
+  "medical advice",
+  "neurology",
+  "primary care",
+  "medical symptoms",
+  "neurological symptoms",
+  "diet changes",
+  "treatment options",
+  "healthcare providers",
+  "nerve compression",
+  "nerve damage",
+  "EMG test",
+  "healthcare",
+  "electromyography",
+  "muscle disorders",
+  "diagnostic procedure",
+  "healthcare provider",
+  "patient preparation",
+  "compression",
+  "physical therapy",
+  "rehabilitation",
+  "muscle strength",
+  "pain management",
+  "exercise",
+  "manual therapy",
+  "recovery",
+  "motivation",
+  "team effort",
+  "communication",
+  "consistency",
+  "patience"
+ ],
+ "relations": [
+  {
+   "source": "User",
+   "target": "Dr. Johnson",
+   "labels": [
+    "scheduled",
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "primary care physician",
+   "labels": [
+    "consulted",
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "EMG test",
+   "labels": [
+    "scheduled",
+    "has"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "acid reflux",
+   "labels": [
+    "experiencing"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "heartburn",
+   "labels": [
+    "experiencing"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Dr. Johnson",
+   "target": "EMG test",
+   "labels": [
+    "scheduled_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "April 1st",
+   "target": "EMG test",
+   "labels": [
+    "date_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "carpal tunnel syndrome",
+   "target": "median nerve",
+   "labels": [
+    "compresses"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "diabetes",
+   "target": "nerves",
+   "labels": [
+    "damages"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "shingles",
+   "target": "nerves",
+   "labels": [
+    "damages"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Lyme disease",
+   "target": "nerves",
+   "labels": [
+    "damages"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Dr. Thompson",
+   "target": "physical therapy",
+   "labels": [
+    "cleared_to_start"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapy",
+   "target": "ACL",
+   "labels": [
+    "aims_to_strengthen"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "EMG test",
+   "target": "nerve damage",
+   "labels": [
+    "helps_diagnose"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "EMG test",
+   "target": "compression",
+   "labels": [
+    "helps_diagnose"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "MRI",
+   "target": "nerve damage",
+   "labels": [
+    "further_testing_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CT scans",
+   "target": "nerve damage",
+   "labels": [
+    "further_testing_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "EMG test",
+   "target": "nerve compression",
+   "labels": [
+    "helps_diagnose"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "healthcare provider",
+   "target": "further testing",
+   "labels": [
+    "recommends"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapy",
+   "target": "nerve damage",
+   "labels": [
+    "treats"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapy",
+   "target": "nerve compression",
+   "labels": [
+    "treats"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapy",
+   "target": "orthopedic surgeon",
+   "labels": [
+    "team_effort"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapy",
+   "target": "physical therapist",
+   "labels": [
+    "involves"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "physical therapist",
+   "target": "orthopedic surgeon",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

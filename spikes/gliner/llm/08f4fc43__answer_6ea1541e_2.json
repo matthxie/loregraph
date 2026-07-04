@@ -1,0 +1,419 @@
+{
+ "id": "08f4fc43__answer_6ea1541e_2",
+ "chars": 13974,
+ "seconds": 231.67,
+ "entities": [
+  {
+   "name": "Ash Wednesday",
+   "type": "event"
+  },
+  {
+   "name": "Catholic Charities",
+   "type": "org"
+  },
+  {
+   "name": "The Salvation Army",
+   "type": "org"
+  },
+  {
+   "name": "Feeding America",
+   "type": "org"
+  },
+  {
+   "name": "National Coalition for the Homeless",
+   "type": "org"
+  },
+  {
+   "name": "Society of St. Vincent de Paul",
+   "type": "org"
+  },
+  {
+   "name": "soup kitchen",
+   "type": "other"
+  },
+  {
+   "name": "Bible study group",
+   "type": "org"
+  },
+  {
+   "name": "local organization",
+   "type": "org"
+  },
+  {
+   "name": "Charity Navigator",
+   "type": "org"
+  },
+  {
+   "name": "GuideStar",
+   "type": "org"
+  },
+  {
+   "name": "Better Business Bureau's Wise Giving Alliance",
+   "type": "org"
+  },
+  {
+   "name": "Book of Psalms",
+   "type": "work"
+  },
+  {
+   "name": "Psalm 146",
+   "type": "work"
+  },
+  {
+   "name": "Psalm 68:5-6",
+   "type": "work"
+  },
+  {
+   "name": "Psalm 72:12-14",
+   "type": "work"
+  },
+  {
+   "name": "Psalm 112:4-5",
+   "type": "work"
+  },
+  {
+   "name": "Psalm 103",
+   "type": "work"
+  }
+ ],
+ "tags": [
+  "volunteering",
+  "community service",
+  "homelessness",
+  "food insecurity",
+  "Lenten season",
+  "charity",
+  "service",
+  "community",
+  "faith",
+  "support",
+  "food drive",
+  "fundraising",
+  "spirituality",
+  "prayer",
+  "hope",
+  "encouragement",
+  "compassion",
+  "mercy"
+ ],
+ "relations": [
+  {
+   "source": "soup kitchen",
+   "target": "Catholic Charities",
+   "labels": [
+    "supported_by",
+    "partner_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "The Salvation Army",
+   "labels": [
+    "supported_by",
+    "partner_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "Feeding America",
+   "labels": [
+    "supported_by",
+    "partner_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "National Coalition for the Homeless",
+   "labels": [
+    "supported_by",
+    "partner_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "Society of St. Vincent de Paul",
+   "labels": [
+    "supported_by",
+    "partner_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Ash Wednesday",
+   "target": "community service",
+   "labels": [
+    "inspired"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "local organization",
+   "labels": [
+    "supports"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "soup kitchen",
+   "labels": [
+    "supports"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "local organization",
+   "labels": [
+    "helps"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "Ash Wednesday",
+   "labels": [
+    "reflects_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "Book of Psalms",
+   "labels": [
+    "studies"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "local organization",
+   "target": "soup kitchen",
+   "labels": [
+    "supports"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "homelessness",
+   "labels": [
+    "addresses",
+    "serves"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "Charity Navigator",
+   "labels": [
+    "researches"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "GuideStar",
+   "labels": [
+    "researches"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bible study group",
+   "target": "Better Business Bureau's Wise Giving Alliance",
+   "labels": [
+    "researches"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Ash Wednesday",
+   "target": "Bible study group",
+   "labels": [
+    "influences"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Book of Psalms",
+   "target": "Bible study group",
+   "labels": [
+    "influences"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 146",
+   "target": "Book of Psalms",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "soup kitchen",
+   "target": "food drive",
+   "labels": [
+    "beneficiary_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 146",
+   "target": "soup kitchen",
+   "labels": [
+    "included_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 146",
+   "target": "food drive",
+   "labels": [
+    "guides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 68:5-6",
+   "target": "food drive",
+   "labels": [
+    "guides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 72:12-14",
+   "target": "food drive",
+   "labels": [
+    "guides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 112:4-5",
+   "target": "food drive",
+   "labels": [
+    "guides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Psalm 103",
+   "target": "food drive",
+   "labels": [
+    "guides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

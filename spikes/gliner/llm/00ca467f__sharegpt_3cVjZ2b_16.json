@@ -1,0 +1,401 @@
+{
+ "id": "00ca467f__sharegpt_3cVjZ2b_16",
+ "chars": 13963,
+ "seconds": 236.83,
+ "entities": [
+  {
+   "name": "wudhu",
+   "type": "concept"
+  },
+  {
+   "name": "Bismillahir Rahm\u00e2nir Raheem",
+   "type": "concept"
+  },
+  {
+   "name": "Shariah",
+   "type": "concept"
+  },
+  {
+   "name": "thaw\u00e2b",
+   "type": "concept"
+  },
+  {
+   "name": "Sunnats",
+   "type": "concept"
+  },
+  {
+   "name": "fardh",
+   "type": "concept"
+  },
+  {
+   "name": "mustahab",
+   "type": "concept"
+  },
+  {
+   "name": "Islam",
+   "type": "concept"
+  },
+  {
+   "name": "misw\u00e2k",
+   "type": "concept"
+  },
+  {
+   "name": "khil\u00e2l",
+   "type": "concept"
+  },
+  {
+   "name": "Surah al-Qadr",
+   "type": "work"
+  },
+  {
+   "name": "Allah",
+   "type": "other"
+  },
+  {
+   "name": "sal\u00e2t",
+   "type": "concept"
+  },
+  {
+   "name": "Tahiyyatul wudhu",
+   "type": "work"
+  },
+  {
+   "name": "qiblah",
+   "type": "concept"
+  },
+  {
+   "name": "sunnah",
+   "type": "concept"
+  },
+  {
+   "name": "janaza sal\u00e2t",
+   "type": "work"
+  },
+  {
+   "name": "sajdah til\u00e2wat",
+   "type": "work"
+  },
+  {
+   "name": "piles",
+   "type": "concept"
+  },
+  {
+   "name": "semen",
+   "type": "concept"
+  },
+  {
+   "name": "masah",
+   "type": "concept"
+  }
+ ],
+ "tags": [
+  "ablution",
+  "islam",
+  "wudhu",
+  "rituals",
+  "religion",
+  "compulsory",
+  "reward",
+  "acts",
+  "sal\u00e2t",
+  "purification",
+  "purity",
+  "islamic_practices",
+  "spirituality",
+  "hadith",
+  "ablution_steps",
+  "religious_observances",
+  "spiritual_cleanliness"
+ ],
+ "relations": [
+  {
+   "source": "Bismillahir Rahm\u00e2nir Raheem",
+   "target": "wudhu",
+   "labels": [
+    "recited_before"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "fardh",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "Sunnats",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "mustahab",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Shariah",
+   "target": "Sunnats",
+   "labels": [
+    "emphasizes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "thaw\u00e2b",
+   "labels": [
+    "entails"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "Bismillahir Rahm\u00e2nir Raheem",
+   "labels": [
+    "commences_with",
+    "recited_before"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "Shariah",
+   "labels": [
+    "emphasised_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Surah al-Qadr",
+   "target": "wudhu",
+   "labels": [
+    "recited_after"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Allah",
+   "target": "sal\u00e2t",
+   "labels": [
+    "included_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "sal\u00e2t",
+   "labels": [
+    "performed_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Khil\u00e2l",
+   "target": "wudhu",
+   "labels": [
+    "performed_after"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "Tahiyyatul wudhu",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Allah",
+   "target": "wudhu",
+   "labels": [
+    "invoked_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "qiblah",
+   "labels": [
+    "faced"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "sunnah",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "janaza sal\u00e2t",
+   "target": "wudhu",
+   "labels": [
+    "does_not_break"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "sajdah til\u00e2wat",
+   "target": "wudhu",
+   "labels": [
+    "does_not_break"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "piles",
+   "labels": [
+    "breaks"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "wudhu",
+   "target": "semen",
+   "labels": [
+    "breaks"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "sal\u00e2t",
+   "target": "wudhu",
+   "labels": [
+    "does_not_break"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "masah",
+   "target": "head",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "khil\u00e2l",
+   "target": "fingers",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "khil\u00e2l",
+   "target": "toes",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

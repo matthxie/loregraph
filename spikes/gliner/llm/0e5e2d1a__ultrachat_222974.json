@@ -1,0 +1,270 @@
+{
+ "id": "0e5e2d1a__ultrachat_222974",
+ "chars": 9948,
+ "seconds": 121.01,
+ "entities": [
+  {
+   "name": "Singer",
+   "type": "person"
+  },
+  {
+   "name": "London",
+   "type": "place"
+  },
+  {
+   "name": "Facebook",
+   "type": "org"
+  },
+  {
+   "name": "Twitter",
+   "type": "org"
+  },
+  {
+   "name": "Instagram",
+   "type": "org"
+  },
+  {
+   "name": "YouTube",
+   "type": "org"
+  },
+  {
+   "name": "social media",
+   "type": "concept"
+  },
+  {
+   "name": "business conferences",
+   "type": "event"
+  },
+  {
+   "name": "trade shows",
+   "type": "event"
+  },
+  {
+   "name": "street teams",
+   "type": "concept"
+  },
+  {
+   "name": "music events",
+   "type": "concept"
+  },
+  {
+   "name": "fans",
+   "type": "other"
+  },
+  {
+   "name": "promotional materials",
+   "type": "concept"
+  },
+  {
+   "name": "musicians",
+   "type": "other"
+  },
+  {
+   "name": "social media ads",
+   "type": "work"
+  },
+  {
+   "name": "ticket sales",
+   "type": "concept"
+  },
+  {
+   "name": "backstage passes",
+   "type": "other"
+  },
+  {
+   "name": "exclusive merchandise",
+   "type": "other"
+  }
+ ],
+ "tags": [
+  "social media",
+  "live music",
+  "event promotion",
+  "audience engagement",
+  "marketing strategies",
+  "event marketing",
+  "audience participation",
+  "influencer collaboration",
+  "user-generated content",
+  "event visibility",
+  "music promotion",
+  "street teams",
+  "social media marketing",
+  "fan engagement",
+  "advertising",
+  "community building",
+  "volunteer management",
+  "music marketing",
+  "fan loyalty"
+ ],
+ "relations": [
+  {
+   "source": "Singer",
+   "target": "social media",
+   "labels": [
+    "utilized"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Singer",
+   "target": "live music events",
+   "labels": [
+    "promoted"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "live music events",
+   "target": "London",
+   "labels": [
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "business conferences",
+   "target": "social media",
+   "labels": [
+    "promoted_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "trade shows",
+   "target": "social media",
+   "labels": [
+    "promoted_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "social media",
+   "target": "live music events",
+   "labels": [
+    "promotes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "social media",
+   "target": "business conferences",
+   "labels": [
+    "applicable_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "social media",
+   "target": "trade shows",
+   "labels": [
+    "applicable_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "street teams",
+   "target": "music events",
+   "labels": [
+    "promotes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "street teams",
+   "target": "fans",
+   "labels": [
+    "consist_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "street teams",
+   "target": "promotional materials",
+   "labels": [
+    "provides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "fans",
+   "target": "music events",
+   "labels": [
+    "attend"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "social media",
+   "target": "music events",
+   "labels": [
+    "drives_traffic_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "street teams",
+   "target": "ticket sales",
+   "labels": [
+    "increases"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

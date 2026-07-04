@@ -1,0 +1,786 @@
+{
+ "id": "01493427__answer_a7b44747_1",
+ "chars": 14826,
+ "seconds": 280.79,
+ "entities": [
+  {
+   "name": "vintage camera equipment",
+   "type": "concept"
+  },
+  {
+   "name": "postcards",
+   "type": "concept"
+  },
+  {
+   "name": "Google Sheets",
+   "type": "work"
+  },
+  {
+   "name": "Microsoft Excel",
+   "type": "work"
+  },
+  {
+   "name": "LibreOffice Calc",
+   "type": "work"
+  },
+  {
+   "name": "Adobe Lightroom",
+   "type": "work"
+  },
+  {
+   "name": "Photoshop",
+   "type": "work"
+  },
+  {
+   "name": "Skylum Luminar",
+   "type": "work"
+  },
+  {
+   "name": "Collectionaire",
+   "type": "work"
+  },
+  {
+   "name": "Collectify",
+   "type": "work"
+  },
+  {
+   "name": "ArtBinder",
+   "type": "work"
+  },
+  {
+   "name": "eBay",
+   "type": "org"
+  },
+  {
+   "name": "Etsy",
+   "type": "org"
+  },
+  {
+   "name": "International Council of Museums",
+   "type": "org"
+  },
+  {
+   "name": "American Institute for Conservation of Historic and Artistic Works",
+   "type": "org"
+  },
+  {
+   "name": "Photography Stack Exchange",
+   "type": "org"
+  },
+  {
+   "name": "Fred Miranda",
+   "type": "org"
+  },
+  {
+   "name": "Photo.net",
+   "type": "org"
+  },
+  {
+   "name": "Rangefinder Forum",
+   "type": "org"
+  },
+  {
+   "name": "Vintage Camera Collectors",
+   "type": "org"
+  },
+  {
+   "name": "Camera Collectors",
+   "type": "org"
+  },
+  {
+   "name": "Photography Collectors",
+   "type": "org"
+  },
+  {
+   "name": "#VintageCameraCollectors",
+   "type": "other"
+  },
+  {
+   "name": "#CameraCollectors",
+   "type": "other"
+  },
+  {
+   "name": "#FilmPhotography",
+   "type": "other"
+  },
+  {
+   "name": "r/VintageCameras",
+   "type": "org"
+  },
+  {
+   "name": "r/CameraCollectors",
+   "type": "org"
+  },
+  {
+   "name": "r/Photography",
+   "type": "org"
+  },
+  {
+   "name": "Leica Collectors",
+   "type": "org"
+  },
+  {
+   "name": "Nikon Historical Society",
+   "type": "org"
+  },
+  {
+   "name": "The Darkroom",
+   "type": "org"
+  },
+  {
+   "name": "Paris",
+   "type": "place"
+  },
+  {
+   "name": "Colourpicture Publishers",
+   "type": "org"
+  },
+  {
+   "name": "Local Antique Shop",
+   "type": "org"
+  },
+  {
+   "name": "1920s Paris Postcard",
+   "type": "work"
+  },
+  {
+   "name": "Vintage Beach Scene",
+   "type": "work"
+  },
+  {
+   "name": "Eiffel Tower at Night",
+   "type": "work"
+  },
+  {
+   "name": "Unknown",
+   "type": "org"
+  }
+ ],
+ "tags": [
+  "display",
+  "organization",
+  "cataloging",
+  "collectibles",
+  "vintage",
+  "display cases",
+  "shelves",
+  "organization tips",
+  "cataloging tips",
+  "collecting",
+  "photography",
+  "postcards",
+  "online communities",
+  "resources",
+  "forums",
+  "social media",
+  "antiques",
+  "history",
+  "postcard",
+  "postcard collection",
+  "image description",
+  "postal history",
+  "provenance"
+ ],
+ "relations": [
+  {
+   "source": "Google Sheets",
+   "target": "vintage camera equipment",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Microsoft Excel",
+   "target": "vintage camera equipment",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Google Sheets",
+   "target": "postcards",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Microsoft Excel",
+   "target": "postcards",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "vintage camera equipment",
+   "target": "Google Sheets",
+   "labels": [
+    "documented_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "postcards",
+   "target": "Microsoft Excel",
+   "labels": [
+    "documented_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Google Sheets",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Microsoft Excel",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "LibreOffice Calc",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Adobe Lightroom",
+   "target": "editing",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Photoshop",
+   "target": "editing",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Skylum Luminar",
+   "target": "editing",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Collectionaire",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Collectify",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "ArtBinder",
+   "target": "cataloging",
+   "labels": [
+    "used_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "eBay",
+   "target": "item values",
+   "labels": [
+    "provides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Etsy",
+   "target": "item values",
+   "labels": [
+    "provides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "International Council of Museums",
+   "target": "preserving",
+   "labels": [
+    "consults"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "American Institute for Conservation of Historic and Artistic Works",
+   "target": "preserving",
+   "labels": [
+    "consults"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Photography Stack Exchange",
+   "target": "photography",
+   "labels": [
+    "covers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Fred Miranda",
+   "target": "photography",
+   "labels": [
+    "covers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Photo.net",
+   "target": "photography",
+   "labels": [
+    "covers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Rangefinder Forum",
+   "target": "photography",
+   "labels": [
+    "covers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Vintage Camera Collectors",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Camera Collectors",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Photography Collectors",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "#VintageCameraCollectors",
+   "target": "vintage cameras",
+   "labels": [
+    "showcases"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "#CameraCollectors",
+   "target": "camera collections",
+   "labels": [
+    "shares"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "#FilmPhotography",
+   "target": "film photography",
+   "labels": [
+    "shares"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "r/VintageCameras",
+   "target": "vintage cameras",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "r/CameraCollectors",
+   "target": "camera collections",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "r/Photography",
+   "target": "photography",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Leica Collectors",
+   "target": "Leica cameras",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Nikon Historical Society",
+   "target": "Nikon cameras",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "The Darkroom",
+   "target": "film photography",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "eBay",
+   "target": "marketplace",
+   "labels": [
+    "provides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Etsy",
+   "target": "marketplace",
+   "labels": [
+    "provides"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "International Council of Museums",
+   "target": "conservation",
+   "labels": [
+    "consults"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "American Institute for Conservation of Historic and Artistic Works",
+   "target": "conservation",
+   "labels": [
+    "consults"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "r/VintageCameras",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "r/CameraCollectors",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Leica Collectors",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Nikon Historical Society",
+   "target": "collecting",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "The Darkroom",
+   "target": "photography",
+   "labels": [
+    "dedicated_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Local Antique Shop",
+   "target": "1920s Paris Postcard",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Local Antique Shop",
+   "target": "Eiffel Tower at Night",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "eBay",
+   "target": "Vintage Beach Scene",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "1920s Paris Postcard",
+   "target": "Local Antique Shop",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Vintage Beach Scene",
+   "target": "eBay",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Eiffel Tower at Night",
+   "target": "Local Antique Shop",
+   "labels": [
+    "acquired_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}
