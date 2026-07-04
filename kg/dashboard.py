@@ -23,13 +23,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 
+def _json_for_script(obj) -> str:
+    # Escaping "<" (as <, which round-trips fine inside a JSON/JS string) stops any
+    # embedded "</script>" (or "<!--") in ingested document text from prematurely closing the
+    # surrounding <script> tag when the browser's HTML parser tokenizes the page — otherwise
+    # the rest of the payload (and the real app JS after it) gets parsed as literal HTML/text.
+    return json.dumps(obj, ensure_ascii=False).replace("<", "\\u003c")
+
+
 def render_run_html(run: dict, server: bool = False) -> str:
-    payload = json.dumps({"run": run, "server": server}, ensure_ascii=False)
+    payload = _json_for_script({"run": run, "server": server})
     return _RUN_TEMPLATE.replace("/*__DATA__*/", payload)
 
 
 def render_index_html(runs: list) -> str:
-    payload = json.dumps({"runs": runs}, ensure_ascii=False)
+    payload = _json_for_script({"runs": runs})
     return _INDEX_TEMPLATE.replace("/*__DATA__*/", payload)
 
 
