@@ -24,6 +24,8 @@ import numpy as np
 import pytest
 
 from kg import Config, KnowledgeGraph
+from kg.chunkers import (chunk_code, chunk_for, chunk_markdown, chunk_prose,
+                         chunk_text, sniff_format)
 from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
                              normalize_relation, predicate_cardinality, relation_merge_vetoed)
 from kg.corpus import CorpusItem, load_longmemeval, load_longmemeval_questions
@@ -896,3 +898,134 @@ def test_context_builder_caps_chunks_per_source():
     cb.config = c
     ranked = ["ep_a#c000", "ep_a#c001", "ep_a#c002", "ep_b#c000", "ep_a#c003", "ep_c"]
     assert cb._select_episodes(ranked) == ["ep_a#c000", "ep_a#c001", "ep_b#c000", "ep_c"]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2: format sniffer + multi-format chunkers (kg/chunkers.py)
+# --------------------------------------------------------------------------- #
+def _markdown_doc(sections: int = 6, pad: int = 300) -> str:
+    filler = "Setup notes and configuration details for the deployment. "
+    parts = ["# Guide", "", "Intro paragraph about the guide.", ""]
+    for i in range(sections):
+        parts += [f"## Section {i}", "", filler * (pad // len(filler) + 1), ""]
+    return "\n".join(parts)
+
+
+def _prose_doc(paras: int = 8, pad: int = 300) -> str:
+    filler = "The quick brown fox jumps over the lazy dog near the river bank. "
+    return "\n\n".join(f"Paragraph {i}. " + filler * (pad // len(filler) + 1)
+                       for i in range(paras))
+
+
+def _code_doc(n_funcs: int = 8, body_lines: int = 6) -> str:
+    lines = ["import os", "import sys", ""]
+    for i in range(n_funcs):
+        lines.append(f"def func_{i}(x):")
+        lines.append("")               # internal blank line must NOT split the block
+        for j in range(body_lines):
+            lines.append(f"    value_{j} = x * {j} + {i}")
+        lines.append(f"    return value_{body_lines - 1}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def test_sniff_format_routing():
+    assert sniff_format(_chat_session_text()) == "turns"
+    assert sniff_format(_markdown_doc()) == "markdown"
+    assert sniff_format(_code_doc()) == "code"
+    assert sniff_format(_prose_doc()) == "prose"
+    assert sniff_format("#!/usr/bin/env python\nprint('hello')") == "code"  # shebang
+    assert sniff_format("") == "prose"
+
+
+def test_chunk_markdown_breadcrumbs_and_ceiling():
+    doc = _markdown_doc(sections=6, pad=300)
+    assert chunk_markdown("## Short\n\nfits in one", target=600, max_chars=1200) == []
+    chunks = chunk_markdown(doc, target=600, max_chars=1200)
+    assert len(chunks) >= 2
+    assert [c.ordinal for c in chunks] == list(range(len(chunks)))
+    assert all(len(c.text) <= 1200 for c in chunks)
+    # every chunk opens with its heading breadcrumb path (self-describing)
+    assert all(c.text.startswith("# Guide") for c in chunks)
+    assert any(c.text.splitlines()[0].startswith("# Guide > ## Section") for c in chunks)
+    # section content stays under its own breadcrumb
+    sec3 = next(c.text for c in chunks if "## Section 3" in c.text.splitlines()[0]
+                or "# Guide > ## Section 3" in c.text)
+    assert "Setup notes" in sec3
+
+
+def test_chunk_markdown_oversized_section_fallback():
+    giant = "## Big\n\n" + " ".join(f"Sentence {i} of the giant section body."
+                                    for i in range(120))
+    chunks = chunk_markdown(giant, target=500, max_chars=800)
+    assert len(chunks) >= 3
+    assert all(len(c.text) <= 800 for c in chunks)
+    # every continuation chunk re-opens with the section breadcrumb (like the
+    # turn chunker re-prefixing the session header)
+    assert all(c.text.startswith("## Big\n") for c in chunks)
+
+
+def test_chunk_prose_packing_and_ceiling():
+    assert chunk_prose("short text", target=600, max_chars=1200) == []
+    doc = _prose_doc(paras=8, pad=300)
+    chunks = chunk_prose(doc, target=600, max_chars=1200)
+    assert len(chunks) >= 2
+    assert all(len(c.text) <= 1200 for c in chunks)
+    assert chunks[0].text.startswith("Paragraph 0.")
+    # the promoted fallback is exactly what chunk_text already did for non-chat text
+    assert ([c.text for c in chunks]
+            == [c.text for c in chunk_text(doc, target=600, max_chars=1200)])
+
+
+def test_chunk_code_blocks_and_ceiling():
+    assert chunk_code(_code_doc(n_funcs=2, body_lines=2), target=400, max_chars=800) == []
+    doc = _code_doc()
+    chunks = chunk_code(doc, target=400, max_chars=800)
+    assert len(chunks) >= 2
+    assert all(len(c.text) <= 800 for c in chunks)
+    # chunks break at top-level boundaries: none starts mid-function (indented)
+    assert all(not c.text.startswith((" ", "\t")) for c in chunks)
+    # a function's internal blank line did not split it: func_0 stays whole
+    holder = next(c.text for c in chunks if "def func_0(" in c.text)
+    assert "return value_5" in holder.split("def func_1", 1)[0]
+
+
+def test_turns_chunking_byte_identical_and_auto_routes_chat():
+    text = _chat_session_text()
+    base = chunk_text(text, target=2200, max_chars=4400)
+    assert len(base) >= 2
+    for mode in ("turns", "auto"):
+        got = chunk_for(text, mode=mode, target=2200, max_chars=4400)
+        assert [(c.ordinal, c.text) for c in got] == [(c.ordinal, c.text) for c in base]
+
+
+def test_auto_chunked_markdown_ingest_structure_and_idempotency():
+    c = cfg()
+    c.chunking = "auto"
+    c.chunk_target_chars = 600
+    c.chunk_max_chars = 1200
+    g = KnowledgeGraph.open(tmp_store(), c)
+    g.extractor = ScriptedExtractor({})
+    text = _markdown_doc(sections=6, pad=300)
+    item = CorpusItem(id="d1", modality="text", source_ref="u/d1", title="guide",
+                      text=text, created_at="2023-05-01T10:00:00+00:00")
+    rep = g.ingest([item])
+    eps = [n for n in g.store.nodes.values() if n.ntype == NodeType.EPISODE]
+    assert rep.ingested == len(eps) >= 2
+    assert all(e.id.startswith("ep_d1#c") for e in eps)
+    # every chunk opens with its markdown breadcrumb (auto routed to chunk_markdown)
+    assert all((e.raw_text or "").startswith("# Guide") for e in eps)
+    # ONE un-rankable SOURCE parent holding the full original text
+    srcs = [n for n in g.store.nodes.values() if n.ntype == NodeType.SOURCE]
+    assert len(srcs) == 1 and srcs[0].id == "src_d1" and srcs[0].raw_text == text
+    # PART_OF chunk→parent for every chunk; NEXT chain between consecutive siblings
+    part = [(u, v) for u, v, d in g.store.all_edges()
+            if d["etype"] == EdgeType.PART_OF.value]
+    nxt = [(u, v) for u, v, d in g.store.all_edges()
+           if d["etype"] == EdgeType.NEXT.value]
+    assert len(part) == len(eps) and all(v == "src_d1" for _u, v in part)
+    assert len(nxt) == len(eps) - 1
+    # re-ingest is idempotent: every chunk hash-skips, nothing is duplicated
+    rep2 = g.ingest([item])
+    assert rep2.ingested == 0 and rep2.skipped == len(eps)
+    assert len([n for n in g.store.nodes.values() if n.ntype == NodeType.SOURCE]) == 1

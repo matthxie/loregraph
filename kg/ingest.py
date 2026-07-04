@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 from .canonicalize import Canonicalizer
-from .chunkers import chunk_text
+from .chunkers import chunk_for
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
@@ -181,7 +181,8 @@ class Ingestor:
         chunks (kg/chunkers.py). Chunk ids are `<source_id>#cNNN` — deterministic, and
         the `#` suffix collapses in eval's session-level matching. Returns the expanded
         item list plus (source_node_id, original item, [chunk episode ids]) per parent."""
-        if getattr(self.config, "chunking", "none") == "none":
+        mode = getattr(self.config, "chunking", "none")
+        if mode == "none":
             return items, []
         out: list[CorpusItem] = []
         parents: list[tuple[str, CorpusItem, list[str]]] = []
@@ -189,9 +190,9 @@ class Ingestor:
             if item.modality != "text" or not item.text:
                 out.append(item)
                 continue
-            chunks = chunk_text(item.text,
-                                target=int(self.config.chunk_target_chars),
-                                max_chars=int(self.config.chunk_max_chars))
+            chunks = chunk_for(item.text, mode=mode,
+                               target=int(self.config.chunk_target_chars),
+                               max_chars=int(self.config.chunk_max_chars))
             if not chunks:
                 out.append(item)
                 continue
