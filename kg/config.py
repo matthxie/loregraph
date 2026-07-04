@@ -92,8 +92,12 @@ class Config:
     # episodes, keeps the full original on an un-rankable SOURCE parent, and links
     # chunk→parent (PART_OF) + chunk→next-sibling (NEXT). Retrieval then ranks
     # statement-grained chunks instead of whole multi-thousand-char blobs. "none" =
-    # legacy one-episode-per-entry (byte-for-byte unchanged).
-    chunking: str = "none"            # "none" | "turns"
+    # legacy one-episode-per-entry (byte-for-byte unchanged). Phase 2 adds explicit
+    # "markdown" (heading sections + breadcrumb prefixes) / "prose" (paragraph→sentence
+    # packing) / "code" (top-level blank-line blocks) chunkers plus "auto", which
+    # sniffs the format PER ENTRY (kg/chunkers.py sniff_format) and routes to the
+    # right chunker — chat text still gets exactly the "turns" behavior.
+    chunking: str = "none"            # "none"|"turns"|"markdown"|"prose"|"code"|"auto"
     chunk_target_chars: int = 2200    # greedy-pack natural units up to ~this per chunk
     chunk_max_chars: int = 4400      # entries at/below this stay unchunked; also the
                                       # hard ceiling one packed unit may reach

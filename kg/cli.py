@@ -453,10 +453,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="output ceiling (max_tokens) on the emit_graph call (default 1500). A "
                          "section whose graph exceeds it is truncated; raise it (e.g. 4000/8000) "
                          "when widening --long-doc-chars. run.json reports the truncated-call count.")
-    pt.add_argument("--chunking", choices=["none", "turns"], default=None,
+    pt.add_argument("--chunking",
+                    choices=["none", "turns", "markdown", "prose", "code", "auto"],
+                    default=None,
                     help="natural-boundary chunking A/B: 'turns' splits each session into "
                          "chat-turn chunks (paragraphs for non-chat) with a SOURCE parent + "
-                         "PART_OF/NEXT edges; default: config (none)")
+                         "PART_OF/NEXT edges; 'markdown'/'prose'/'code' force those chunkers; "
+                         "'auto' sniffs the format per entry and routes; default: config (none)")
     pt.add_argument("--k", type=int, default=8, help="episodes per query / recall@k")
     pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
     pt.add_argument("--no-judge", action="store_true",
