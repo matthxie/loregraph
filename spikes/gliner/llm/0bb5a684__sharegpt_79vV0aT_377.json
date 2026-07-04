@@ -1,0 +1,185 @@
+{
+ "id": "0bb5a684__sharegpt_79vV0aT_377",
+ "chars": 9169,
+ "seconds": 141.79,
+ "entities": [
+  {
+   "name": "Macaque",
+   "type": "person"
+  },
+  {
+   "name": "MK",
+   "type": "person"
+  },
+  {
+   "name": "Mei",
+   "type": "person"
+  },
+  {
+   "name": "Wukong",
+   "type": "person"
+  },
+  {
+   "name": "dark-haired monkeys",
+   "type": "other"
+  },
+  {
+   "name": "jungle",
+   "type": "place"
+  },
+  {
+   "name": "dark-haired monkey",
+   "type": "other"
+  },
+  {
+   "name": "the demon that calls itself king",
+   "type": "concept"
+  },
+  {
+   "name": "my imbecile son",
+   "type": "concept"
+  },
+  {
+   "name": "royal monkey guards",
+   "type": "other"
+  }
+ ],
+ "tags": [
+  "monkey",
+  "jungle",
+  "conflict",
+  "betrayal",
+  "family",
+  "loyalty",
+  "violence",
+  "kingship",
+  "rescue",
+  "determination",
+  "monkey kingdom",
+  "interrogation",
+  "fear",
+  "power",
+  "family conflict",
+  "kingdom"
+ ],
+ "relations": [
+  {
+   "source": "Wukong",
+   "target": "dark-haired monkeys",
+   "labels": [
+    "killing",
+    "torturing",
+    "interrogating",
+    "interrogates"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Wukong",
+   "target": "Macaque",
+   "labels": [
+    "searching_for",
+    "demanding_location",
+    "scouring_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Wukong",
+   "target": "MK",
+   "labels": [
+    "searching_for",
+    "demanding_location",
+    "scouring_for",
+    "father_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Macaque",
+   "target": "MK",
+   "labels": [
+    "parent_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "MK",
+   "target": "Macaque",
+   "labels": [
+    "child_of",
+    "concerned_for",
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Macaque",
+   "target": "the demon that calls itself king",
+   "labels": [
+    "demanding_location_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Macaque",
+   "target": "my imbecile son",
+   "labels": [
+    "demanding_location_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Wukong",
+   "target": "royal monkey guards",
+   "labels": [
+    "commands"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "MK",
+   "target": "dark-haired monkeys",
+   "labels": [
+    "wants_to_help"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

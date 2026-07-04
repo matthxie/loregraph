@@ -1,0 +1,2012 @@
+
+==========================================================================================
+SESSION 00ca467f__sharegpt_3cVjZ2b_16
+LLM entities (21): wudhu[concept]; Bismillahir Rahmânir Raheem[concept]; Shariah[concept]; thawâb[concept]; Sunnats[concept]; fardh[concept]; mustahab[concept]; Islam[concept]; miswâk[concept]; khilâl[concept]; Surah al-Qadr[work]; Allah[other]; salât[concept]; Tahiyyatul wudhu[work]; qiblah[concept]; sunnah[concept]; janaza salât[work]; sajdah tilâwat[work]; piles[concept]; semen[concept]; masah[concept]
+
+LOCAL entities (103): bracelets[work]; person[person]; bangles[work]; pads[work]; nose ring[work]; fardh[concept]; splints[work]; plaster[work]; rings[work]; face[place]; chin[place]; feet[place]; wudhu[concept]; gauze[work]; mustahab[concept]; left hand[place]; salât[event]; elbows[place]; lips[place]; masah[concept]; nose[place]; right foot[place]; hair-line[place]; forehead[place]; Sunnats[concept]; sajdah[event]; someone[person]; sea-shore[place]; one[person]; ankles[place]; ear-lobe[place]; left foot[place]; ears[place]; eyebrows[place]; washing[concept]; neck[place]; ibâdat[concept]; head[place]; nails[place]; heels[place]; eye brows[place]; hands[place]; nafl salât[event]; Bismillahir Rahmânir Raheem[person]; ear-lobes[place]; khilâl[concept]; janaza[event]; Tahiyyatul wudhu[event]; bathing[concept]; wax[work]; kalimah[concept]; Bismillah[concept]; ointment[work]; river[place]; throat[place]; act of worship[concept]; qiblah[place]; Surah al-Qadr[concept]; wound[place]; covering[work]; fingers[place]; medicine[work]; dua[concept]; plasters[work]; fore-neck[place]; fasting person[person]; bandage[work]; tilâwat[event]; washing the nose[concept]; soft-bone of the nose[place]; parts[person]; procedure[concept]; tinsel[work]; Islamic ablution[concept]; thawâb[concept]; moustache[place]; fasting[concept]; sunnah[concept]; wajib[concept]; well[place]; flour[work]; rinsing the mouth[concept]; right hand[place]; Shariah[org]; sleep[concept]; hand[person]; bandages[work]; repentants[person]; portion[place]; decorative paint[work]; mouth[person]; dough[work]; worldly talk[concept]; skin[place]; using a miswâk[concept]; sleeps[concept]; water[concept]; Sunnah acts of wudhu[concept]; fardh acts of wudhu[concept]; beard[place]; second wudhu[work]; miswâk[person]; laughs[concept]
+
+LLM entities MISSED by local (3): Allah; piles; semen
+
+LOCAL extras (no LLM match, 78): bracelets; person; bangles; pads; nose ring; splints; plaster; rings; face; chin; feet; gauze; left hand; elbows; lips; nose; right foot; hair-line; forehead; someone; sea-shore; one; ankles; ear-lobe; left foot; ears; eyebrows; washing; neck; ibâdat; head; nails; heels; eye brows; hands; ear-lobes; bathing; wax; kalimah; ointment; river; throat; act of worship; wound; covering; fingers; medicine; dua; plasters; fore-neck; fasting person; bandage; washing the nose; soft-bone of the nose; parts; procedure; tinsel; moustache; fasting; wajib
+
+LLM relations (24):
+  Bismillahir Rahmânir Raheem -[recited_before]-> wudhu
+  wudhu -[includes]-> fardh
+  wudhu -[includes]-> Sunnats
+  wudhu -[includes]-> mustahab
+  Shariah -[emphasizes]-> Sunnats
+  wudhu -[entails]-> thawâb
+  wudhu -[commences_with,recited_before]-> Bismillahir Rahmânir Raheem
+  wudhu -[emphasised_in]-> Shariah
+  Surah al-Qadr -[recited_after]-> wudhu
+  Allah -[included_in]-> salât
+  wudhu -[performed_for]-> salât
+  Khilâl -[performed_after]-> wudhu
+  wudhu -[part_of]-> Tahiyyatul wudhu
+  Allah -[invoked_in]-> wudhu
+  wudhu -[faced]-> qiblah
+  wudhu -[includes]-> sunnah
+  janaza salât -[does_not_break]-> wudhu
+  sajdah tilâwat -[does_not_break]-> wudhu
+  wudhu -[breaks]-> piles
+  wudhu -[breaks]-> semen
+  salât -[does_not_break]-> wudhu
+  masah -[part_of]-> head
+  khilâl -[part_of]-> fingers
+  khilâl -[part_of]-> toes
+
+LLM relations with NO local pair (20):
+  wudhu -[includes]-> Sunnats
+  Shariah -[emphasizes]-> Sunnats
+  wudhu -[entails]-> thawâb
+  wudhu -[emphasised_in]-> Shariah
+  Surah al-Qadr -[recited_after]-> wudhu
+  Allah -[included_in]-> salât
+  wudhu -[performed_for]-> salât
+  Khilâl -[performed_after]-> wudhu
+  wudhu -[part_of]-> Tahiyyatul wudhu
+  Allah -[invoked_in]-> wudhu
+  wudhu -[faced]-> qiblah
+  wudhu -[includes]-> sunnah
+  janaza salât -[does_not_break]-> wudhu
+  sajdah tilâwat -[does_not_break]-> wudhu
+  wudhu -[breaks]-> piles
+  wudhu -[breaks]-> semen
+  salât -[does_not_break]-> wudhu
+  masah -[part_of]-> head
+  khilâl -[part_of]-> fingers
+  khilâl -[part_of]-> toes
+
+LOCAL relations (10):
+  fardh -[part_of]-> wudhu (0.91)
+  washing the nose -[part_of]-> wudhu (0.75)
+  rinsing the mouth -[part_of]-> wudhu (0.73)
+  hands -[part_of]-> wudhu (0.70)
+  feet -[part_of]-> wudhu (0.68)
+  face -[part_of]-> wudhu (0.68)
+  Bismillahir Rahmânir Raheem -[part_of]-> wudhu (0.67)
+  portion -[part_of]-> bandage (0.67)
+  using a miswâk -[part_of]-> wudhu (0.66)
+  mustahab -[part_of]-> wudhu (0.62)
+
+==========================================================================================
+SESSION 00ca467f__8a70ec05_2
+LLM entities (36): fate[concept]; free will[concept]; determinism[concept]; Causal Chain[concept]; Predetermination[concept]; Necessity[concept]; Libertarianism[concept]; Indeterminism[concept]; Agent Causation[concept]; Moral Responsibility[concept]; Soft Determinism[concept]; Hard Incompatibilism[concept]; astrology[concept]; birth chart[concept]; self-reflection[concept]; self-awareness[concept]; moon sign[concept]; Venus placements[concept]; personal growth[concept]; emotional intelligence[concept]; confirmation bias[concept]; astrological fatalism[concept]; chart analysis[concept]; psychology[concept]; Journal of Research in Personality[work]; Journal of Astrology and Psychology[work]; Correlation[work]; Scorpios[other]; Pisces[other]; Cancer[other]; cognitive-behavioral therapy[concept]; mindfulness-based therapies[concept]; Reiki[concept]; acupuncture[concept]; energy work[concept]; y[person]
+
+LOCAL entities (90): mindfulness-based therapies[concept]; astrology[concept]; psychology[concept]; acupuncture[concept]; partner[person]; Reiki[concept]; workshop[event]; CBT[concept]; client[person]; clients[person]; therapists[person]; evidence-based therapies[concept]; personality traits[concept]; event[event]; Emotional Intelligence[concept]; practitioners[person]; mindfulness techniques[concept]; philosophy[concept]; cognitive-behavioral therapy[concept]; Big Five[concept]; neuroticism[concept]; therapy[concept]; yoga[concept]; workshops[event]; conscientiousness[concept]; meditation[concept]; journaling[concept]; astrologers[person]; astrological factors[concept]; openness[concept]; myself[person]; philosophers[person]; therapeutic modalities[concept]; astrologer[person]; chart analysis[concept]; research[concept]; astrological theory[concept]; Pisces[concept]; astrologically-informed therapist[person]; energy work[concept]; actions[event]; randomness[concept]; Self-awareness[concept]; astrological framework[concept]; astrological interpretations[concept]; chance[concept]; astrological signs[concept]; human decisions[event]; reflection[concept]; self-reflection[concept]; entertainment[concept]; studies[concept]; Cancer[concept]; extraversion[concept]; fate[concept]; individuals[person]; agreeableness[concept]; scientific community[org]; personal growth[concept]; planetary positions[concept]; mindfulness-based[concept]; astrological influences[concept]; birth chart[work]; psychologists[concept]; unconscious mind[concept]; decision-making[concept]; free will[concept]; spiritual practices[concept]; choices[concept]; emotional patterns[concept]; aspects[concept]; emotions[concept]; insight[concept]; soft determinism[concept]; qualified practitioners[person]; personal development[concept]; self-reflection practices[concept]; personality[concept]; Hard Incompatibilism[concept]; Scorpios[concept]; human culture[concept]; course of events[event]; certain events[event]; Journal of Research in Personality[org]; guidance[concept]; past experiences[event]; awareness[concept]; astrological insights[concept]; relationships[concept]; emotional regulation[concept]
+
+LLM entities MISSED by local (13): Causal Chain; Predetermination; Necessity; Libertarianism; Indeterminism; Agent Causation; Moral Responsibility; moon sign; Venus placements; confirmation bias; astrological fatalism; Correlation; y
+
+LOCAL extras (no LLM match, 62): partner; workshop; CBT; client; clients; therapists; evidence-based therapies; personality traits; event; practitioners; mindfulness techniques; philosophy; Big Five; neuroticism; yoga; workshops; conscientiousness; meditation; journaling; astrologers; astrological factors; openness; myself; philosophers; therapeutic modalities; astrologer; astrological theory; astrologically-informed therapist; actions; randomness; astrological framework; astrological interpretations; chance; astrological signs; human decisions; entertainment; studies; extraversion; individuals; agreeableness; scientific community; planetary positions; astrological influences; psychologists; unconscious mind; decision-making; spiritual practices; choices; emotional patterns; aspects; emotions; insight; qualified practitioners; personal development; human culture; course of events; certain events; guidance; past experiences; astrological insights
+
+LLM relations (37):
+  determinism -[supports]-> fate
+  Causal Chain -[supports]-> fate
+  Predetermination -[supports]-> fate
+  Necessity -[supports]-> fate
+  Libertarianism -[supports]-> free will
+  Indeterminism -[supports]-> free will
+  Agent Causation -[supports]-> free will
+  Moral Responsibility -[supports,requires]-> free will
+  Soft Determinism -[supports,compatible_with]-> free will
+  Hard Incompatibilism -[supports,incompatible_with]-> free will
+  astrology -[can_be,used_as]-> self-reflection
+  astrology -[can_be,catalyst_for]-> personal growth
+  birth chart -[is_a]-> astrology
+  determinism -[incompatible]-> free will
+  Causal Chain -[supports]-> determinism
+  Predetermination -[supports]-> determinism
+  Necessity -[supports]-> determinism
+  astrology -[involves]-> birth chart
+  self-awareness -[part_of]-> personal growth
+  birth chart -[provides]-> self-reflection
+  moon sign -[part_of]-> birth chart
+  Venus placements -[part_of]-> birth chart
+  self-awareness -[enhances,part_of]-> emotional intelligence
+  self-awareness -[improves]-> relationships
+  astrology -[catalyst_for]-> self-awareness
+  astrology -[influences]-> psychology
+  Journal of Research in Personality -[published_in,published]-> astrology
+  Journal of Astrology and Psychology -[published_in,published]-> astrology
+  Correlation -[published_in,published]-> astrology
+  Scorpios -[associated_with]-> neuroticism
+  Pisces -[associated_with]-> emotional intelligence
+  Cancer -[associated_with]-> emotional intelligence
+  astrology -[integrated_with,used_in_conjunction_with]-> cognitive-behavioral therapy
+  astrology -[integrated_with,used_in_conjunction_with]-> mindfulness-based therapies
+  astrology -[integrated_with,used_in_conjunction_with]-> Reiki
+  astrology -[integrated_with,used_in_conjunction_with]-> acupuncture
+  y -[skepticism_towards]-> astrology
+
+LLM relations with NO local pair (30):
+  determinism -[supports]-> fate
+  Causal Chain -[supports]-> fate
+  Predetermination -[supports]-> fate
+  Necessity -[supports]-> fate
+  Libertarianism -[supports]-> free will
+  Indeterminism -[supports]-> free will
+  Agent Causation -[supports]-> free will
+  Moral Responsibility -[supports,requires]-> free will
+  Soft Determinism -[supports,compatible_with]-> free will
+  Hard Incompatibilism -[supports,incompatible_with]-> free will
+  astrology -[can_be,used_as]-> self-reflection
+  astrology -[can_be,catalyst_for]-> personal growth
+  birth chart -[is_a]-> astrology
+  determinism -[incompatible]-> free will
+  Causal Chain -[supports]-> determinism
+  Predetermination -[supports]-> determinism
+  Necessity -[supports]-> determinism
+  astrology -[involves]-> birth chart
+  self-awareness -[part_of]-> personal growth
+  birth chart -[provides]-> self-reflection
+  moon sign -[part_of]-> birth chart
+  Venus placements -[part_of]-> birth chart
+  self-awareness -[enhances,part_of]-> emotional intelligence
+  self-awareness -[improves]-> relationships
+  astrology -[catalyst_for]-> self-awareness
+  Correlation -[published_in,published]-> astrology
+  Scorpios -[associated_with]-> neuroticism
+  Pisces -[associated_with]-> emotional intelligence
+  Cancer -[associated_with]-> emotional intelligence
+  y -[skepticism_towards]-> astrology
+
+LOCAL relations (32):
+  Self-awareness -[manages]-> emotions (0.99)
+  Astrology -[part_of]-> human culture (0.98)
+  me -[attended]-> workshop (0.97)
+  openness -[part_of]-> Big Five (0.92)
+  me -[interested_in]-> astrology (0.92)
+  conscientiousness -[part_of]-> Big Five (0.91)
+  astrology -[works_with]-> energy work (0.88)
+  astrologically-informed therapist -[works_with]-> client (0.88)
+  astrology -[plays]-> entertainment (0.87)
+  astrologically-informed therapist -[works_with]-> clients (0.86)
+  astrology -[works_with]-> acupuncture (0.85)
+  astrologer -[works_with]-> client (0.83)
+  chart analysis -[part_of]-> Astrology (0.82)
+  astrology -[works_with]-> Reiki (0.82)
+  astrology -[works_with]-> mindfulness-based therapies (0.81)
+  astrology -[works_with]-> cognitive-behavioral therapy (0.80)
+  Astrology -[part_of]-> psychology (0.80)
+  neuroticism -[part_of]-> Big Five (0.77)
+  astrological theory -[part_of]-> Astrology (0.75)
+  astrologer -[works_with]-> clients (0.73)
+  astrology -[works_with]-> CBT (0.72)
+  research -[studied]-> astrology (0.71)
+  therapists -[works_with]-> client (0.68)
+  studies -[studied]-> astrology (0.68)
+  astrology -[part_of]-> therapy (0.67)
+  extraversion -[part_of]-> Big Five (0.67)
+  therapists -[works_with]-> clients (0.67)
+  astrology -[works_with]-> evidence-based therapies (0.67)
+  astrology -[works_with]-> therapeutic modalities (0.66)
+  me -[interested_in]-> spiritual practices (0.66)
+  me -[participated_in]-> workshop (0.65)
+  me -[works_with]-> partner (0.60)
+
+==========================================================================================
+SESSION 00ca467f__answer_39900a0a_2
+LLM entities (22): Dr. Johnson[person]; primary care physician[org]; EMG test[work]; acid reflux[concept]; heartburn[concept]; April 1st[date]; carpal tunnel syndrome[concept]; diabetes[concept]; shingles[concept]; Lyme disease[concept]; Dr. Thompson[person]; ACL[concept]; MRI[work]; CT scans[work]; physical therapy[concept]; muscle atrophy[concept]; nerve conduction velocity[concept]; nerve amplitude[concept]; muscle activity[concept]; healthcare provider[org]; orthopedic surgeon[concept]; physical therapist[person]
+
+LOCAL entities (128): Mylanta[work]; Pepcid[work]; Tums[work]; Zantac[work]; Dr. Johnson[person]; wrist[place]; Rolaids[work]; spine[place]; neurologist[person]; healthcare provider[person]; Dr. Thompson[person]; physical therapist[person]; shoulder[place]; orthopedic surgeon[person]; neck[place]; technician[person]; arm[place]; physical therapy[concept]; sessions[event]; primary care physician[person]; April 1st[date]; Antacids[work]; EMG test[event]; allergist[person]; typing[concept]; Acid reducers[work]; PT[concept]; pulmonologist[person]; lifting[concept]; physiatrist[person]; healthcare providers[person]; your[person]; hand[place]; Manual therapy[concept]; deep breathing exercises[concept]; Follow-up[event]; feet[place]; March 25th[date]; yoga[concept]; Home exercises[concept]; symptoms[concept]; meditation[concept]; specialist[person]; hands[place]; healthcare professional[person]; appointment[event]; chicken[work]; stretches[concept]; posture[concept]; Progress monitoring[concept]; body mechanics[concept]; Results[event]; function[concept]; affected area[place]; fish[work]; antibiotic[work]; Muscle activation[event]; exercises[concept]; healing[concept]; tofu[work]; left hand[place]; ergonomics[concept]; testing facility[org]; joint mobilization[concept]; Exercise therapy[concept]; heartburn[concept]; modalities[concept]; range of motion[concept]; Eat smaller, more frequent meals[concept]; Regular sessions[concept]; falls[event]; Electrode placement[concept]; Caffeine[work]; personalized exercise program[work]; muscle relaxants[work]; massage[concept]; Signal recording[concept]; lungs[place]; Education[concept]; Pain relievers[work]; Preparation[concept]; late January[date]; inflammation[concept]; rehabilitation[concept]; daily activities[concept]; Repetitive movements[concept]; soft tissue mobilization[concept]; diagnostic procedure[concept]; Lose weight[concept]; pain[concept]; Movement[concept]; esophagus[place]; nose[place]; nerve damage[event]; Raise the head of your bed[concept]; electrodes[work]; follow up[event]; Needle EMG[concept]; Test Duration[event]; EMG tests[concept]; accidents[event]; dietary changes[concept]; airways[place]; flexibility[concept]; electrical stimulation[concept]; electrical activity[concept]; Physical trauma[event]; therapist[person]; Customized treatment plan[concept]; needle electrode[work]; Ginger[work]; Avoid lying down after eating[concept]; electrical signals[concept]; test results[event]; Oatmeal[work]; Injuries[event]; nerve function[concept]; losing weight[concept]; physical examination[concept]; sinuses[place]; Lean proteins[work]; Medications[work]; compression[concept]; MRI[concept]; glasses[work]; Nerve amplitude[concept]; fingers[place]; CT scans[concept]
+
+LLM entities MISSED by local (9): acid reflux; carpal tunnel syndrome; diabetes; shingles; Lyme disease; ACL; muscle atrophy; nerve conduction velocity; muscle activity
+
+LOCAL extras (no LLM match, 112): Mylanta; Pepcid; Tums; Zantac; wrist; Rolaids; spine; neurologist; shoulder; neck; technician; arm; sessions; Antacids; allergist; typing; Acid reducers; PT; pulmonologist; lifting; physiatrist; your; hand; Manual therapy; deep breathing exercises; Follow-up; feet; March 25th; yoga; Home exercises; symptoms; meditation; specialist; hands; healthcare professional; appointment; chicken; stretches; posture; Progress monitoring; body mechanics; Results; function; affected area; fish; antibiotic; Muscle activation; exercises; healing; tofu; left hand; ergonomics; testing facility; joint mobilization; Exercise therapy; modalities; range of motion; Eat smaller, more frequent meals; Regular sessions; falls
+
+LLM relations (24):
+  User -[scheduled,works_with]-> Dr. Johnson
+  User -[consulted,works_with]-> primary care physician
+  User -[scheduled,has]-> EMG test
+  User -[experiencing]-> acid reflux
+  User -[experiencing]-> heartburn
+  Dr. Johnson -[scheduled_for]-> EMG test
+  April 1st -[date_of]-> EMG test
+  carpal tunnel syndrome -[compresses]-> median nerve
+  diabetes -[damages]-> nerves
+  shingles -[damages]-> nerves
+  Lyme disease -[damages]-> nerves
+  Dr. Thompson -[cleared_to_start]-> physical therapy
+  physical therapy -[aims_to_strengthen]-> ACL
+  EMG test -[helps_diagnose]-> nerve damage
+  EMG test -[helps_diagnose]-> compression
+  MRI -[further_testing_for]-> nerve damage
+  CT scans -[further_testing_for]-> nerve damage
+  EMG test -[helps_diagnose]-> nerve compression
+  healthcare provider -[recommends]-> further testing
+  physical therapy -[treats]-> nerve damage
+  physical therapy -[treats]-> nerve compression
+  physical therapy -[team_effort]-> orthopedic surgeon
+  physical therapy -[involves]-> physical therapist
+  physical therapist -[works_with]-> orthopedic surgeon
+
+LLM relations with NO local pair (19):
+  User -[experiencing]-> acid reflux
+  User -[experiencing]-> heartburn
+  Dr. Johnson -[scheduled_for]-> EMG test
+  April 1st -[date_of]-> EMG test
+  carpal tunnel syndrome -[compresses]-> median nerve
+  diabetes -[damages]-> nerves
+  shingles -[damages]-> nerves
+  Lyme disease -[damages]-> nerves
+  Dr. Thompson -[cleared_to_start]-> physical therapy
+  physical therapy -[aims_to_strengthen]-> ACL
+  EMG test -[helps_diagnose]-> nerve damage
+  EMG test -[helps_diagnose]-> compression
+  MRI -[further_testing_for]-> nerve damage
+  CT scans -[further_testing_for]-> nerve damage
+  EMG test -[helps_diagnose]-> nerve compression
+  healthcare provider -[recommends]-> further testing
+  physical therapy -[treats]-> nerve damage
+  physical therapy -[treats]-> nerve compression
+  physical therapy -[involves]-> physical therapist
+
+LOCAL relations (30):
+  physical therapist -[works_with]-> your (0.98)
+  me -[attended]-> appointment (0.97)
+  physical therapist -[created]-> personalized exercise program (0.94)
+  healthcare provider -[manages]-> heartburn (0.94)
+  physical therapy -[part_of]-> rehabilitation (0.92)
+  me -[received]-> antibiotic (0.89)
+  your -[attended]-> sessions (0.88)
+  me -[visited]-> primary care physician (0.86)
+  primary care physician -[works_with]-> healthcare providers (0.85)
+  me -[knows]-> Dr. Johnson (0.84)
+  me -[participated_in]-> EMG test (0.84)
+  me -[diagnosed_with]-> nerve damage (0.83)
+  muscle relaxants -[manages]-> symptoms (0.82)
+  Pain relievers -[manages]-> symptoms (0.78)
+  physical therapy -[manages]-> symptoms (0.75)
+  your -[participated_in]-> sessions (0.75)
+  soft tissue mobilization -[part_of]-> Physical Therapy (0.75)
+  joint mobilization -[part_of]-> Physical Therapy (0.75)
+  me -[works_with]-> Dr. Johnson (0.74)
+  stretches -[part_of]-> physical therapy (0.72)
+  physical therapist -[works_with]-> orthopedic surgeon (0.71)
+  massage -[part_of]-> Physical Therapy (0.70)
+  electrical stimulation -[part_of]-> Physical Therapy (0.69)
+  Dr. Johnson -[diagnosed_with]-> nerve damage (0.67)
+  Medications -[manages]-> symptoms (0.66)
+  exercises -[part_of]-> physical therapy (0.65)
+  Tums -[member_of]-> Antacids (0.63)
+  physical therapy -[manages]-> function (0.62)
+  Rolaids -[member_of]-> Antacids (0.62)
+  soft tissue mobilization -[part_of]-> PT (0.62)
+
+==========================================================================================
+SESSION 08f4fc43__fee68529_1
+LLM entities (21): Tokyo National Museum[org]; Shimokitazawa[place]; Shinjuku Station[place]; Ueno Station[place]; Horyu-ji Temple[place]; Jomon period[concept]; Heian period[concept]; Hokusai[person]; Hiroshige[person]; TNM Audio Guide[work]; Tokyo[place]; Japan[place]; Japanese[concept]; Anki[work]; Tofugu's WaniKani[work]; NHK WORLD-JAPAN[org]; Duolingo[work]; HelloTalk[work]; JapanesePod101[work]; Yomiwa[work]; NHK Radio[org]
+
+LOCAL entities (110): Tokyo[place]; Hiroshige[person]; Shimokitazawa[place]; Hokusai[person]; Akihabara[place]; Nara[place]; WaniKani[work]; Japan[place]; Shinjuku[place]; Anki[work]; native speakers[person]; Japanese writing[concept]; ICOCA[work]; Ueno Station[place]; Suica[work]; Japanese art[concept]; language classes[concept]; history[concept]; Honkan[place]; audio guide[work]; Pasmo[work]; ukiyo-e woodblock prints[work]; mobile app[work]; Japanese language[concept]; prepaid IC card[work]; tutors[person]; Tokyo National Museum[place]; TNM Audio Guide[work]; JapanesePod101[work]; Yomiwa[work]; here[place]; Tofugu[org]; NHK Radio[work]; Tandem[work]; Shinjuku Station[place]; HelloTalk[work]; Google Maps[work]; Japanese course[work]; audio guides[work]; Horyu-ji Temple[place]; audio guide player[work]; Shimokitazawa Station[place]; visitors[person]; Duolingo[work]; flashcard app[work]; practice[concept]; Odakyu Line[place]; language practice[concept]; Japanese[place]; tourists[person]; JR Chuo-Sobu Line[place]; locals[person]; outdoor gardens[place]; Google Translate[work]; information desk[place]; Japanese commentary[work]; English[place]; cafes[place]; Hyperdia[work]; resources[work]; museum[place]; dictionary app[work]; flashcards[work]; station staff[person]; restaurants[place]; museum staff[person]; Japanese reading[concept]; learning[concept]; Japanese Archaeology Gallery[org]; Japanese radio station[work]; reading[concept]; language exchange app[work]; patient[person]; player[work]; Chinese reading[concept]; language exchange partners[person]; writing[concept]; language learning app[work]; Temporary Exhibitions[event]; Japanese language skills[concept]; dictionary[work]; videos[work]; language learning[concept]; podcast-based language course[work]; NHK WORLD-JAPAN[org]; Gallery of Horyu-ji Treasures[org]; kun-yomi[work]; efforts[concept]; language learning apps[work]; walking[concept]; podcasts[work]; kanji[work]; kanji recognition[concept]; drama[work]; music[work]; on-yomi[work]; Japanese Gallery[place]; Tokyo residents[person]; news[work]; Japanese vocabulary[concept]; audio commentary[work]; apps[work]; consistent[person]; online resource[work]; lunch[concept]; Japanese public broadcasting organization[org]; sentence structure[concept]; visit[event]; Japanese grammar[concept]; time[concept]
+
+LLM entities MISSED by local (2): Jomon period; Heian period
+
+LOCAL extras (no LLM match, 72): Akihabara; Nara; native speakers; ICOCA; Suica; language classes; history; Honkan; Pasmo; ukiyo-e woodblock prints; mobile app; prepaid IC card; tutors; here; Tandem; Google Maps; audio guides; audio guide player; visitors; flashcard app; practice; Odakyu Line; language practice; tourists; JR Chuo-Sobu Line; locals; outdoor gardens; Google Translate; information desk; English; cafes; Hyperdia; resources; dictionary app; flashcards; station staff; restaurants; museum staff; learning; reading; language exchange app; patient; player; Chinese reading; language exchange partners; writing; language learning app; Temporary Exhibitions; dictionary; videos; language learning; podcast-based language course; Gallery of Horyu-ji Treasures; kun-yomi; efforts; language learning apps; walking; podcasts; kanji; kanji recognition
+
+LLM relations (19):
+  Shimokitazawa -[located_in]-> Tokyo National Museum
+  Shinjuku Station -[located_in]-> Tokyo National Museum
+  Ueno Station -[located_in]-> Tokyo National Museum
+  Horyu-ji Temple -[part_of]-> Horyu-ji Treasures
+  Jomon period -[part_of]-> Japanese Archaeology Gallery
+  Heian period -[part_of]-> Japanese Archaeology Gallery
+  Hokusai -[created]-> ukiyo-e woodblock prints
+  Hiroshige -[created]-> ukiyo-e woodblock prints
+  TNM Audio Guide -[created_by]-> Tokyo National Museum
+  Tokyo National Museum -[part_of]-> Horyu-ji Temple
+  Horyu-ji Temple -[showcases]-> Buddhist art
+  Anki -[used_for]-> Japanese
+  Tofugu's WaniKani -[used_for]-> Japanese
+  NHK WORLD-JAPAN -[provides_resources_for]-> Japanese
+  Duolingo -[offers_course_in]-> Japanese
+  HelloTalk -[connects_with]-> Japanese
+  JapanesePod101 -[offers_course_in]-> Japanese
+  Yomiwa -[used_for]-> Japanese
+  NHK Radio -[provides_resources_for]-> Japanese
+
+LLM relations with NO local pair (16):
+  Shimokitazawa -[located_in]-> Tokyo National Museum
+  Shinjuku Station -[located_in]-> Tokyo National Museum
+  Ueno Station -[located_in]-> Tokyo National Museum
+  Horyu-ji Temple -[part_of]-> Horyu-ji Treasures
+  Jomon period -[part_of]-> Japanese Archaeology Gallery
+  Heian period -[part_of]-> Japanese Archaeology Gallery
+  Tokyo National Museum -[part_of]-> Horyu-ji Temple
+  Horyu-ji Temple -[showcases]-> Buddhist art
+  Anki -[used_for]-> Japanese
+  Tofugu's WaniKani -[used_for]-> Japanese
+  NHK WORLD-JAPAN -[provides_resources_for]-> Japanese
+  Duolingo -[offers_course_in]-> Japanese
+  HelloTalk -[connects_with]-> Japanese
+  JapanesePod101 -[offers_course_in]-> Japanese
+  Yomiwa -[used_for]-> Japanese
+  NHK Radio -[provides_resources_for]-> Japanese
+
+LOCAL relations (48):
+  Tokyo National Museum -[owns]-> audio guides (0.99)
+  me -[interested_in]-> Japanese art (0.99)
+  Horyu-ji Temple -[located_in]-> Nara (0.99)
+  me -[moved_to]-> here (0.97)
+  kanji -[part_of]-> Japanese language (0.97)
+  Tokyo National Museum -[owns]-> mobile app (0.97)
+  Tofugu -[owns]-> WaniKani (0.95)
+  Tandem -[works_with]-> native speakers (0.95)
+  kanji -[part_of]-> Japanese writing (0.95)
+  me -[interested_in]-> history (0.94)
+  me -[interested_in]-> Anki (0.94)
+  me -[interested_in]-> WaniKani (0.94)
+  me -[visited]-> Honkan (0.93)
+  Japanese Gallery -[part_of]-> Tokyo National Museum (0.93)
+  me -[lives_in]-> Shimokitazawa (0.90)
+  audio guide player -[plays]-> audio guides (0.90)
+  tourists -[traveled_to]-> Tokyo National Museum (0.88)
+  museum staff -[works_at]-> museum (0.88)
+  museum -[owns]-> Ukiyo-e Woodblock Prints (0.87)
+  museum -[owns]-> TNM Audio Guide (0.86)
+  station staff -[works_at]-> Ueno Station (0.86)
+  me -[interested_in]-> Japanese language skills (0.85)
+  Hiroshige -[created]-> ukiyo-e woodblock prints (0.85)
+  museum -[owns]-> mobile app (0.84)
+  tourists -[visited]-> Tokyo National Museum (0.84)
+  player -[plays]-> audio guide (0.83)
+  me -[visited]-> ukiyo-e woodblock prints (0.81)
+  Hokusai -[created]-> ukiyo-e woodblock prints (0.81)
+  me -[participated_in]-> language classes (0.78)
+  restaurants -[part_of]-> museum (0.77)
+  tourists -[bought]-> ICOCA (0.77)
+  kun-yomi -[part_of]-> Japanese writing (0.77)
+  me -[interested_in]-> Japanese vocabulary (0.76)
+  cafes -[part_of]-> museum (0.75)
+  restaurants -[part_of]-> Tokyo National Museum (0.73)
+  me -[bought]-> audio guide player (0.70)
+  me -[studied]-> history (0.70)
+  tourists -[bought]-> Suica (0.69)
+  tourists -[bought]-> Pasmo (0.68)
+  cafes -[part_of]-> Tokyo National Museum (0.67)
+  museum staff -[works_at]-> Tokyo National Museum (0.67)
+  tourists -[bought]-> prepaid IC card (0.65)
+  me -[studied]-> language classes (0.64)
+  me -[visited]-> Tokyo National Museum (0.62)
+  Tokyo National Museum -[owns]-> ukiyo-e woodblock prints (0.61)
+  locals -[works_at]-> Ueno Station (0.61)
+  on-yomi -[part_of]-> Japanese writing (0.61)
+  visitors -[visited]-> Tokyo National Museum (0.61)
+
+==========================================================================================
+SESSION 08f4fc43__259d58da_2
+LLM entities (15): Adidas Superstar[work]; Reebok[org]; Adidas[org]; Nike Air Zoom Pegasus[work]; New Balance Fresh Foam[work]; Under Armour Micro G Pursuit[work]; Reebok CrossFit Nano[work]; Reebok cross-trainers[work]; Nike[org]; New Balance[org]; Under Armour[org]; Adidas Ultraboost[work]; Brooks Ghost[work]; Superstar Foundation[org]; Superstar 2.0[work]
+
+LOCAL entities (76): Adidas[org]; New Balance[org]; Fresh Foam[work]; Adidas Superstar[work]; Superstar 2.0[work]; Ultraboost[work]; Superstar Foundation[work]; Superstar[work]; Brooks Ghost[work]; Under Armour Micro G Pursuit[work]; Boost[work]; Nike Air Zoom Pegasus[work]; store[place]; New Balance Fresh Foam[work]; Adidas Ultraboost[work]; Adidas Superstar Bold[work]; Micro G Pursuit[work]; shell toe cap[work]; gym[place]; shoe stretcher[work]; Reebok cross-trainers[work]; Adidas Superstar Foundation[work]; gym shoes[work]; black Adidas sneakers[work]; CrossFit Nano[work]; artists[person]; friend[person]; black sneakers[work]; sneakers[work]; shoes[work]; cross-training[concept]; Insoles[work]; break-in period[event]; Yung[work]; paper[work]; casual outings[concept]; leather[work]; running[concept]; workouts[concept]; current sneakers[work]; Adidas Superstar Slip-On[work]; socks[work]; toe box[place]; arch supports[work]; walking[concept]; daily walking[concept]; designers[person]; heel counter[work]; midsole[work]; Adidas sneakers[work]; shoe[work]; collection[work]; gym workouts[concept]; daily 10,000 steps[concept]; Reebok[org]; Break-in time[event]; I'm[person]; brands[person]; casual workouts[concept]; lounging around[concept]; mesh-based[work]; casual walking[concept]; high-intensity workouts[concept]; midfoot[place]; materials[work]; high-impact activities[concept]; CrossFit[concept]; freezer trick[concept]; casual wear[concept]; low-impact sports[concept]; everyday wear[concept]; current black Adidas sneakers[work]; $120[concept]; 1-2 weeks[event]; initial break-in[event]; foot[person]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 51): store; shell toe cap; gym; shoe stretcher; gym shoes; artists; friend; black sneakers; sneakers; shoes; cross-training; Insoles; break-in period; Yung; paper; casual outings; leather; running; workouts; current sneakers; socks; toe box; arch supports; walking; daily walking; designers; heel counter; midsole; shoe; collection; gym workouts; daily 10,000 steps; Break-in time; I'm; brands; casual workouts; lounging around; mesh-based; casual walking; high-intensity workouts; midfoot; materials; high-impact activities; freezer trick; casual wear; low-impact sports; everyday wear; $120; 1-2 weeks; initial break-in; foot
+
+LLM relations (21):
+  Adidas Superstar -[created_by,produced_by]-> Adidas
+  Reebok -[produced]-> Reebok CrossFit Nano
+  Adidas -[produced]-> Adidas Superstar
+  Nike Air Zoom Pegasus -[produced,created_by]-> Nike
+  New Balance Fresh Foam -[produced,created_by]-> New Balance
+  Under Armour Micro G Pursuit -[produced,created_by]-> Under Armour
+  Reebok CrossFit Nano -[created_by]-> Reebok
+  Reebok cross-trainers -[created_by]-> Reebok
+  Adidas Ultraboost -[created_by]-> Adidas
+  New Balance Fresh Foam -[created_by]-> Adidas
+  Brooks Ghost -[created_by]-> Adidas
+  Adidas Superstar -[compared_to]-> Adidas Ultraboost
+  Adidas Superstar -[compared_to]-> New Balance Fresh Foam
+  Adidas Superstar -[compared_to]-> Brooks Ghost
+  Adidas Superstar -[has]-> cushioning
+  Adidas Superstar -[has]-> support
+  Adidas Ultraboost -[has]-> cushioning
+  Adidas Ultraboost -[has]-> support
+  New Balance Fresh Foam -[has]-> cushioning
+  New Balance Fresh Foam -[has]-> support
+  Adidas Ultraboost -[compared_to]-> New Balance Fresh Foam
+
+LLM relations with NO local pair (16):
+  Reebok -[produced]-> Reebok CrossFit Nano
+  Nike Air Zoom Pegasus -[produced,created_by]-> Nike
+  Under Armour Micro G Pursuit -[produced,created_by]-> Under Armour
+  Reebok CrossFit Nano -[created_by]-> Reebok
+  Reebok cross-trainers -[created_by]-> Reebok
+  New Balance Fresh Foam -[created_by]-> Adidas
+  Brooks Ghost -[created_by]-> Adidas
+  Adidas Superstar -[compared_to]-> New Balance Fresh Foam
+  Adidas Superstar -[compared_to]-> Brooks Ghost
+  Adidas Superstar -[has]-> cushioning
+  Adidas Superstar -[has]-> support
+  Adidas Ultraboost -[has]-> cushioning
+  Adidas Ultraboost -[has]-> support
+  New Balance Fresh Foam -[has]-> cushioning
+  New Balance Fresh Foam -[has]-> support
+  Adidas Ultraboost -[compared_to]-> New Balance Fresh Foam
+
+LOCAL relations (36):
+  me -[visited]-> store (0.98)
+  me -[owns]-> Reebok cross-trainers (0.94)
+  shell toe cap -[part_of]-> Superstar (0.93)
+  me -[received]-> black sneakers (0.92)
+  shell toe cap -[part_of]-> Adidas Superstar (0.92)
+  me -[interested_in]-> Adidas Superstar (0.90)
+  me -[interested_in]-> Ultraboost (0.90)
+  me -[spent_on]-> $120 (0.90)
+  me -[participated_in]-> workouts (0.89)
+  me -[owns]-> black Adidas sneakers (0.89)
+  New Balance -[created]-> Fresh Foam (0.88)
+  me -[participated_in]-> casual outings (0.88)
+  me -[interested_in]-> Fresh Foam (0.88)
+  me -[bought]-> Superstar (0.87)
+  me -[visited]-> gym (0.86)
+  me -[owns]-> sneakers (0.84)
+  shell toe cap -[part_of]-> shoe (0.83)
+  me -[participated_in]-> lounging around (0.83)
+  me -[interested_in]-> shell toe cap (0.81)
+  me -[bought]-> black Adidas sneakers (0.77)
+  shell toe cap -[part_of]-> sneakers (0.77)
+  shell toe cap -[part_of]-> shoes (0.75)
+  Adidas Superstar Slip-On -[part_of]-> Adidas Superstar (0.74)
+  Adidas -[created]-> Adidas Superstar (0.73)
+  Adidas Superstar Bold -[part_of]-> Adidas Superstar (0.72)
+  Superstar 2.0 -[part_of]-> Superstar (0.71)
+  Superstar -[part_of]-> collection (0.69)
+  Adidas -[owns]-> Superstar (0.69)
+  me -[received]-> Adidas sneakers (0.69)
+  me -[bought]-> black sneakers (0.69)
+  Superstar Foundation -[part_of]-> Superstar (0.68)
+  me -[bought]-> Adidas Superstar (0.66)
+  me -[interested_in]-> gym shoes (0.64)
+  shoe -[part_of]-> collection (0.63)
+  me -[owns]-> current black Adidas sneakers (0.63)
+  leather -[part_of]-> Adidas Superstar (0.61)
+
+==========================================================================================
+SESSION 08f4fc43__answer_6ea1541e_2
+LLM entities (18): Ash Wednesday[event]; Catholic Charities[org]; The Salvation Army[org]; Feeding America[org]; National Coalition for the Homeless[org]; Society of St. Vincent de Paul[org]; soup kitchen[other]; Bible study group[org]; local organization[org]; Charity Navigator[org]; GuideStar[org]; Better Business Bureau's Wise Giving Alliance[org]; Book of Psalms[work]; Psalm 146[work]; Psalm 68:5-6[work]; Psalm 72:12-14[work]; Psalm 112:4-5[work]; Psalm 103[work]
+
+LOCAL entities (121): Feeding America[org]; February 1st[date]; Faith-based organizations[org]; Catholic Charities[org]; GuideStar[org]; Society of St. Vincent de Paul[org]; National Coalition for the Homeless[org]; The Salvation Army[org]; synagogues[org]; Homeless shelters[org]; cathedral[place]; mosques[org]; Charity Navigator[org]; churches[org]; supervisors[person]; staff[person]; Better Business Bureau[org]; Food banks[org]; affiliates[org]; soup kitchen[org]; Catholic organization[org]; Wise Giving Alliance[org]; toiletries[work]; local organizations[org]; volunteers[person]; Soup kitchens[org]; charities[org]; fundraiser[event]; Ash Wednesday[event]; gently used clothing[work]; Bible study group[org]; local chapters[org]; organization[org]; food drive[event]; charity dinner[event]; organizations[org]; prayer service[event]; donating[concept]; journaling[concept]; outreach organization[org]; God[person]; volunteering[concept]; Christian non-profit[org]; Ash Wednesday service[event]; potluck[event]; communities[place]; bike ride[event]; local organization[org]; crowdfunding campaign[event]; bake sale[event]; local shelter[org]; Psalm 103[work]; sharing[concept]; charity walk[event]; church[org]; Facebook event[event]; Book of Psalms[work]; community[place]; group[org]; volunteer[person]; local soup kitchen[org]; run[event]; specific organizations[org]; national organization[org]; Psalm 68:5-6[work]; email chain[event]; outreach event[concept]; Psalm 112:4-5[work]; GoFundMe[org]; clients[person]; community clean-up[event]; Follow-up and Evaluation[event]; Psalm 146[work]; people[person]; Psalm 72:12-14[work]; food donations[event]; facility[place]; Local homeless shelters[org]; those who receive them[person]; service project[concept]; Bible study[concept]; fundraisers[concept]; outreach programs[concept]; other essential items[work]; needy[person]; group members[person]; poor[person]; Kickstarter[org]; prayers[concept]; ministries[concept]; contributions[concept]; initiative[event]; group messaging app[event]; individuals[person]; local food bank[org]; homeless population[org]; ways to get involved[concept]; drive[concept]; guidance[concept]; humility[concept]; donations[work]; canned goods[work]; community center[place]; wisdom[concept]; non-perishable items[work]; efforts[concept]; Lenten season[event]; experience[event]; Prayer[concept]; collection point[place]; psalms[work]; food[work]; Reflection[concept]; packing[concept]; kitchen[place]; act of worship[concept]; providing food and shelter[concept]; warm clothing[work]; family[org]; friends[person]; training[concept]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 92): February 1st; Faith-based organizations; synagogues; Homeless shelters; cathedral; mosques; churches; supervisors; staff; Food banks; affiliates; Catholic organization; toiletries; volunteers; fundraiser; gently used clothing; local chapters; food drive; charity dinner; organizations; prayer service; donating; journaling; outreach organization; God; volunteering; Christian non-profit; potluck; communities; bike ride; crowdfunding campaign; bake sale; local shelter; sharing; charity walk; church; Facebook event; community; volunteer; run; specific organizations; national organization; email chain; outreach event; GoFundMe; clients; community clean-up; Follow-up and Evaluation; people; food donations; facility; Local homeless shelters; those who receive them; service project; fundraisers; outreach programs; other essential items; needy; group members; poor
+
+LLM relations (26):
+  soup kitchen -[supported_by,partner_with]-> Catholic Charities
+  soup kitchen -[supported_by,partner_with]-> The Salvation Army
+  soup kitchen -[supported_by,partner_with]-> Feeding America
+  soup kitchen -[supported_by,partner_with]-> National Coalition for the Homeless
+  soup kitchen -[supported_by,partner_with]-> Society of St. Vincent de Paul
+  Ash Wednesday -[inspired]-> community service
+  Bible study group -[supports]-> local organization
+  Bible study group -[supports]-> soup kitchen
+  soup kitchen -[helps]-> local organization
+  Bible study group -[reflects_on]-> Ash Wednesday
+  Bible study group -[studies]-> Book of Psalms
+  local organization -[supports]-> soup kitchen
+  soup kitchen -[addresses,serves]-> homelessness
+  Bible study group -[researches]-> Charity Navigator
+  Bible study group -[researches]-> GuideStar
+  Bible study group -[researches]-> Better Business Bureau's Wise Giving Alliance
+  Ash Wednesday -[influences]-> Bible study group
+  Book of Psalms -[influences]-> Bible study group
+  Psalm 146 -[part_of]-> Book of Psalms
+  soup kitchen -[beneficiary_of]-> food drive
+  Psalm 146 -[included_with]-> soup kitchen
+  Psalm 146 -[guides]-> food drive
+  Psalm 68:5-6 -[guides]-> food drive
+  Psalm 72:12-14 -[guides]-> food drive
+  Psalm 112:4-5 -[guides]-> food drive
+  Psalm 103 -[guides]-> food drive
+
+LLM relations with NO local pair (21):
+  soup kitchen -[supported_by,partner_with]-> Catholic Charities
+  soup kitchen -[supported_by,partner_with]-> The Salvation Army
+  soup kitchen -[supported_by,partner_with]-> Feeding America
+  soup kitchen -[supported_by,partner_with]-> National Coalition for the Homeless
+  soup kitchen -[supported_by,partner_with]-> Society of St. Vincent de Paul
+  Ash Wednesday -[inspired]-> community service
+  Bible study group -[supports]-> local organization
+  Bible study group -[supports]-> soup kitchen
+  soup kitchen -[helps]-> local organization
+  Bible study group -[studies]-> Book of Psalms
+  local organization -[supports]-> soup kitchen
+  soup kitchen -[addresses,serves]-> homelessness
+  Bible study group -[researches]-> Charity Navigator
+  Bible study group -[researches]-> GuideStar
+  Bible study group -[researches]-> Better Business Bureau's Wise Giving Alliance
+  Book of Psalms -[influences]-> Bible study group
+  Psalm 146 -[included_with]-> soup kitchen
+  Psalm 68:5-6 -[guides]-> food drive
+  Psalm 72:12-14 -[guides]-> food drive
+  Psalm 112:4-5 -[guides]-> food drive
+  Psalm 103 -[guides]-> food drive
+
+LOCAL relations (57):
+  Food banks -[located_in]-> communities (0.95)
+  me -[member_of]-> Bible study group (0.94)
+  me -[volunteered_at]-> local soup kitchen (0.93)
+  me -[knows]-> specific organizations (0.93)
+  me -[celebrated]-> Ash Wednesday service (0.93)
+  churches -[part_of]-> Faith-based organizations (0.93)
+  synagogues -[part_of]-> Faith-based organizations (0.93)
+  me -[volunteered_at]-> soup kitchen (0.92)
+  mosques -[part_of]-> Faith-based organizations (0.92)
+  me -[visited]-> cathedral (0.92)
+  me -[gave_to]-> community (0.91)
+  mosques -[member_of]-> Faith-based organizations (0.91)
+  ministries -[part_of]-> Faith-based organizations (0.88)
+  food drive -[donated_to]-> local soup kitchen (0.87)
+  synagogues -[member_of]-> Faith-based organizations (0.87)
+  me -[spent_on]-> February 1st (0.86)
+  me -[celebrated]-> Lenten season (0.86)
+  me -[attended]-> Ash Wednesday service (0.85)
+  churches -[member_of]-> Faith-based organizations (0.84)
+  me -[interested_in]-> ways to get involved (0.84)
+  volunteers -[works_with]-> staff (0.84)
+  me -[knows]-> charities (0.83)
+  me -[participated_in]-> food drive (0.81)
+  volunteering -[volunteered_at]-> soup kitchen (0.80)
+  Bible study group -[celebrated]-> Ash Wednesday (0.79)
+  Bible study group -[interested_in]-> food drive (0.78)
+  gently used clothing -[donated_to]-> local shelter (0.77)
+  me -[interested_in]-> providing food and shelter (0.77)
+  Psalm 146 -[part_of]-> psalms (0.77)
+  staff -[works_at]-> Soup kitchens (0.75)
+  Psalm 68:5-6 -[part_of]-> psalms (0.74)
+  those who receive them -[received]-> food donations (0.74)
+  Bible study group -[created]-> Facebook event (0.72)
+  Bible study group -[interested_in]-> fundraiser (0.71)
+  Psalm 72:12-14 -[part_of]-> psalms (0.71)
+  Bible study group -[created]-> email chain (0.70)
+  me -[member_of]-> group (0.70)
+  Psalm 112:4-5 -[part_of]-> psalms (0.70)
+  journaling -[part_of]-> food drive (0.69)
+  Psalm 103 -[part_of]-> psalms (0.69)
+  organization -[received]-> donations (0.68)
+  volunteer -[works_with]-> staff (0.68)
+  food drive -[received]-> wisdom (0.67)
+  Psalm 146 -[part_of]-> food drive (0.67)
+  sharing -[part_of]-> food drive (0.66)
+  volunteering -[volunteered_at]-> Soup kitchens (0.66)
+  food drive -[received]-> humility (0.65)
+  toiletries -[donated_to]-> local shelter (0.65)
+  outreach programs -[part_of]-> Faith-based organizations (0.65)
+  me -[studied]-> Book of Psalms (0.64)
+  food donations -[donated_to]-> soup kitchen (0.64)
+  gently used clothing -[donated_to]-> outreach organization (0.63)
+  food drive -[received]-> guidance (0.63)
+  supervisors -[works_at]-> Soup kitchens (0.62)
+  local chapters -[part_of]-> organizations (0.61)
+  me -[celebrated]-> prayer service (0.61)
+  Bible study group -[created]-> group messaging app (0.60)
+
+==========================================================================================
+SESSION 01493427__answer_a7b44747_1
+LLM entities (38): vintage camera equipment[concept]; postcards[concept]; Google Sheets[work]; Microsoft Excel[work]; LibreOffice Calc[work]; Adobe Lightroom[work]; Photoshop[work]; Skylum Luminar[work]; Collectionaire[work]; Collectify[work]; ArtBinder[work]; eBay[org]; Etsy[org]; International Council of Museums[org]; American Institute for Conservation of Historic and Artistic Works[org]; Photography Stack Exchange[org]; Fred Miranda[org]; Photo.net[org]; Rangefinder Forum[org]; Vintage Camera Collectors[org]; Camera Collectors[org]; Photography Collectors[org]; #VintageCameraCollectors[other]; #CameraCollectors[other]; #FilmPhotography[other]; r/VintageCameras[org]; r/CameraCollectors[org]; r/Photography[org]; Leica Collectors[org]; Nikon Historical Society[org]; The Darkroom[org]; Paris[place]; Colourpicture Publishers[org]; Local Antique Shop[org]; 1920s Paris Postcard[work]; Vintage Beach Scene[work]; Eiffel Tower at Night[work]; Unknown[org]
+
+LOCAL entities (129): office[place]; recipient[person]; home[place]; Tiered Shelf[work]; sender[person]; Mini Display Case[work]; postcards[work]; photography[concept]; Ladder Shelf[work]; lenses[work]; ArtBinder[work]; Postcard[work]; Floating Shelves[work]; accessories[work]; display cases[work]; cameras[work]; shelves[work]; collecting[concept]; Glass-Fronted Cabinet[work]; I'm[person]; PC003[work]; film rolls[work]; Vintage Camera Collectors[org]; ephemera[work]; PC002[work]; collectors[person]; Photography Collectors[org]; stands[work]; Camera Collectors[org]; r/CameraCollectors[org]; The Darkroom[org]; ladder shelves[work]; r/VintageCameras[org]; risers[work]; Photoshop[work]; Skylum Luminar[work]; Camera[work]; acrylic cases[work]; Acrylic Display Case[work]; Shadow Box[work]; Collectify[work]; eBay[org]; vintage camera equipment[work]; Collectionaire[work]; museums[org]; Colourpicture Publishers[org]; Reddit[org]; label[work]; Local Antique Shop[org]; cataloging[concept]; Nikon Historical Society[org]; Adobe Lightroom[work]; Collection management software[work]; American Institute for Conservation of Historic and Artistic Works (AIC)[org]; shelf[work]; tracking[concept]; Leica Collectors[org]; Nikon cameras[work]; Instagram[org]; plaque[work]; shadow boxes[work]; vintage cameras[work]; Etsy[work]; LibreOffice Calc[work]; Eiffel Tower at Night[work]; Image editing software[work]; Publisher[org]; Leica cameras[work]; acrylic case[work]; items[work]; International Council of Museums[org]; adjustable shelves[work]; medium format[work]; 1920s[date]; 35mm[work]; single camera[work]; Microsoft Excel[work]; Google Sheets[work]; item[work]; LED strips[work]; 1950s[date]; large format[work]; Vintage Beach Scene[work]; online communities[org]; 1960s[date]; preserve[concept]; professional conservators[org]; Model[work]; catalog[concept]; printer[org]; ICOM[org]; photographers[person]; organizing[concept]; spotlights[work]; Mini Shelf with Hooks[work]; 2 months ago[date]; 1 month ago[date]; CameraCollectors[org]; Photo.net[org]; camera collecting[concept]; film[work]; social media groups[org]; display case[work]; collection[work]; r/Photography[org]; history[concept]; Fred Miranda[org]; display area[place]; wall[place]; Spreadsheets[work]; Rangefinder Forum[org]; #VintageCameraCollectors[org]; Provenance[concept]; Location[place]; local clubs[org]; PC001[work]; cube-shaped cases[work]; exhibitions[event]; #FilmPhotography[org]; ownership[concept]; Photography Stack Exchange[org]; database[concept]; category[work]; journey[concept]; Facebook Groups[org]; 17 new postcards[work]; forums[org]; spreadsheet[concept]; postcard collection[work]
+
+LLM entities MISSED by local (2): Paris; Unknown
+
+LOCAL extras (no LLM match, 81): recipient; home; Tiered Shelf; sender; Mini Display Case; Ladder Shelf; lenses; Floating Shelves; accessories; display cases; shelves; collecting; Glass-Fronted Cabinet; I'm; PC003; film rolls; ephemera; PC002; stands; ladder shelves; risers; acrylic cases; Acrylic Display Case; Shadow Box; Reddit; label; cataloging; Collection management software; shelf; tracking; Nikon cameras; Instagram; plaque; shadow boxes; Image editing software; Leica cameras; acrylic case; items; adjustable shelves; medium format; 35mm; single camera; item; LED strips; 1950s; large format; online communities; 1960s; preserve; professional conservators; Model; catalog; printer; ICOM; photographers; organizing; spotlights; Mini Shelf with Hooks; 2 months ago; 1 month ago
+
+LLM relations (50):
+  Google Sheets -[used_for]-> vintage camera equipment
+  Microsoft Excel -[used_for]-> vintage camera equipment
+  Google Sheets -[used_for]-> postcards
+  Microsoft Excel -[used_for]-> postcards
+  vintage camera equipment -[documented_by]-> Google Sheets
+  postcards -[documented_by]-> Microsoft Excel
+  Google Sheets -[used_for]-> cataloging
+  Microsoft Excel -[used_for]-> cataloging
+  LibreOffice Calc -[used_for]-> cataloging
+  Adobe Lightroom -[used_for]-> editing
+  Photoshop -[used_for]-> editing
+  Skylum Luminar -[used_for]-> editing
+  Collectionaire -[used_for]-> cataloging
+  Collectify -[used_for]-> cataloging
+  ArtBinder -[used_for]-> cataloging
+  eBay -[provides]-> item values
+  Etsy -[provides]-> item values
+  International Council of Museums -[consults]-> preserving
+  American Institute for Conservation of Historic and Artistic Works -[consults]-> preserving
+  Photography Stack Exchange -[covers]-> photography
+  Fred Miranda -[covers]-> photography
+  Photo.net -[covers]-> photography
+  Rangefinder Forum -[covers]-> photography
+  Vintage Camera Collectors -[dedicated_to]-> collecting
+  Camera Collectors -[dedicated_to]-> collecting
+  Photography Collectors -[dedicated_to]-> collecting
+  #VintageCameraCollectors -[showcases]-> vintage cameras
+  #CameraCollectors -[shares]-> camera collections
+  #FilmPhotography -[shares]-> film photography
+  r/VintageCameras -[dedicated_to]-> vintage cameras
+  r/CameraCollectors -[dedicated_to]-> camera collections
+  r/Photography -[dedicated_to]-> photography
+  Leica Collectors -[dedicated_to]-> Leica cameras
+  Nikon Historical Society -[dedicated_to]-> Nikon cameras
+  The Darkroom -[dedicated_to]-> film photography
+  eBay -[provides]-> marketplace
+  Etsy -[provides]-> marketplace
+  International Council of Museums -[consults]-> conservation
+  American Institute for Conservation of Historic and Artistic Works -[consults]-> conservation
+  r/VintageCameras -[dedicated_to]-> collecting
+  r/CameraCollectors -[dedicated_to]-> collecting
+  Leica Collectors -[dedicated_to]-> collecting
+  Nikon Historical Society -[dedicated_to]-> collecting
+  The Darkroom -[dedicated_to]-> photography
+  Local Antique Shop -[acquired_from]-> 1920s Paris Postcard
+  Local Antique Shop -[acquired_from]-> Eiffel Tower at Night
+  eBay -[acquired_from]-> Vintage Beach Scene
+  1920s Paris Postcard -[acquired_from]-> Local Antique Shop
+  Vintage Beach Scene -[acquired_from]-> eBay
+  Eiffel Tower at Night -[acquired_from]-> Local Antique Shop
+
+LLM relations with NO local pair (49):
+  Google Sheets -[used_for]-> vintage camera equipment
+  Microsoft Excel -[used_for]-> vintage camera equipment
+  Google Sheets -[used_for]-> postcards
+  Microsoft Excel -[used_for]-> postcards
+  vintage camera equipment -[documented_by]-> Google Sheets
+  postcards -[documented_by]-> Microsoft Excel
+  Google Sheets -[used_for]-> cataloging
+  Microsoft Excel -[used_for]-> cataloging
+  LibreOffice Calc -[used_for]-> cataloging
+  Adobe Lightroom -[used_for]-> editing
+  Photoshop -[used_for]-> editing
+  Skylum Luminar -[used_for]-> editing
+  Collectionaire -[used_for]-> cataloging
+  Collectify -[used_for]-> cataloging
+  ArtBinder -[used_for]-> cataloging
+  eBay -[provides]-> item values
+  Etsy -[provides]-> item values
+  International Council of Museums -[consults]-> preserving
+  American Institute for Conservation of Historic and Artistic Works -[consults]-> preserving
+  Photography Stack Exchange -[covers]-> photography
+  Fred Miranda -[covers]-> photography
+  Photo.net -[covers]-> photography
+  Rangefinder Forum -[covers]-> photography
+  Vintage Camera Collectors -[dedicated_to]-> collecting
+  Camera Collectors -[dedicated_to]-> collecting
+  Photography Collectors -[dedicated_to]-> collecting
+  #CameraCollectors -[shares]-> camera collections
+  #FilmPhotography -[shares]-> film photography
+  r/VintageCameras -[dedicated_to]-> vintage cameras
+  r/CameraCollectors -[dedicated_to]-> camera collections
+  r/Photography -[dedicated_to]-> photography
+  Leica Collectors -[dedicated_to]-> Leica cameras
+  Nikon Historical Society -[dedicated_to]-> Nikon cameras
+  The Darkroom -[dedicated_to]-> film photography
+  eBay -[provides]-> marketplace
+  Etsy -[provides]-> marketplace
+  International Council of Museums -[consults]-> conservation
+  American Institute for Conservation of Historic and Artistic Works -[consults]-> conservation
+  r/VintageCameras -[dedicated_to]-> collecting
+  r/CameraCollectors -[dedicated_to]-> collecting
+  Leica Collectors -[dedicated_to]-> collecting
+  Nikon Historical Society -[dedicated_to]-> collecting
+  The Darkroom -[dedicated_to]-> photography
+  Local Antique Shop -[acquired_from]-> 1920s Paris Postcard
+  Local Antique Shop -[acquired_from]-> Eiffel Tower at Night
+  eBay -[acquired_from]-> Vintage Beach Scene
+  1920s Paris Postcard -[acquired_from]-> Local Antique Shop
+  Vintage Beach Scene -[acquired_from]-> eBay
+  Eiffel Tower at Night -[acquired_from]-> Local Antique Shop
+
+LOCAL relations (22):
+  me -[owns]-> vintage camera equipment (0.98)
+  me -[owns]-> postcards (0.97)
+  me -[interested_in]-> photography (0.94)
+  me -[interested_in]-> collecting (0.92)
+  collectors -[owns]-> items (0.86)
+  me -[interested_in]-> camera collecting (0.80)
+  Colourpicture Publishers -[created]-> Vintage Beach Scene (0.77)
+  me -[member_of]-> online communities (0.76)
+  collectors -[interested_in]-> photography (0.73)
+  collectors -[member_of]-> local clubs (0.72)
+  postcards -[part_of]-> collection (0.72)
+  postcards -[part_of]-> postcard collection (0.71)
+  recipient -[received]-> postcard (0.68)
+  photographers -[interested_in]-> photography (0.68)
+  me -[knows]-> forums (0.66)
+  me -[interested_in]-> display cases (0.66)
+  Vintage Camera Collectors -[owns]-> vintage cameras (0.65)
+  me -[interested_in]-> display case (0.65)
+  me -[interested_in]-> shelves (0.64)
+  medium format -[part_of]-> category (0.61)
+  me -[member_of]-> Facebook Groups (0.61)
+  sender -[received]-> postcard (0.60)
+
+==========================================================================================
+SESSION 01493427__e1e39425
+LLM entities (20): Chase Freedom Unlimited[work]; Citi Double Cash Card[work]; Discover it Cash Back[work]; Ibotta[work]; Fetch Rewards[work]; Uber Eats[work]; Hilton Honors[work]; World of Hyatt[work]; Airbnb[work]; Target RedCard[work]; Kohl's Yes2You Rewards[work]; Rakuten[work]; Drop[work]; Dosh[work]; RetailMeNot[work]; American Express Blue Cash Preferred[work]; Capital One Quicksilver Cash Rewards Credit Card[work]; Wells Fargo Propel American Express Card[work]; Bank of America Cash Rewards credit card[work]; 0% introductory APR for 18 months on balance transfers[concept]
+
+LOCAL entities (53): Citi Double Cash Card[work]; Discover it Cash Back[work]; Rakuten[org]; American Express Blue Cash Preferred[work]; Chase Freedom Unlimited[work]; gas[concept]; Capital One Quicksilver Cash Rewards Credit Card[work]; groceries[concept]; dining[concept]; Airbnb[org]; RetailMeNot[org]; Uber Eats[org]; entertainment[concept]; World of Hyatt[org]; Hilton Honors[org]; cashback credit cards[work]; purchases[concept]; hotel stays[concept]; Ibotta[org]; Bank of America Cash Rewards credit card[work]; restaurants[place]; travel[concept]; Fetch Rewards[org]; everything else[concept]; Wells Fargo Propel American Express Card[work]; Chase Freedom Unlimited card[work]; online purchases[concept]; Citi[org]; Ebates[org]; grocery stores[place]; credit cards[work]; gas stations[place]; Dosh[org]; grocery purchases[concept]; cashback credit card[work]; another card[work]; daily essentials[concept]; 3% cashback[work]; Target RedCard[org]; Drop[work]; food delivery orders[concept]; balance transfers[concept]; individual[person]; Kohl's Yes2You Rewards[org]; I'm[person]; Target purchases[concept]; first year[date]; New cardmembers[person]; grocery items[concept]; Grocery and Food Delivery[work]; regular APR[concept]; 18-month intro period[event]; Cashback and Rewards Credit Cards[work]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 31): gas; groceries; dining; entertainment; cashback credit cards; purchases; hotel stays; restaurants; travel; everything else; online purchases; Ebates; grocery stores; credit cards; gas stations; grocery purchases; cashback credit card; another card; daily essentials; 3% cashback; food delivery orders; individual; I'm; Target purchases; first year; New cardmembers; grocery items; Grocery and Food Delivery; regular APR; 18-month intro period; Cashback and Rewards Credit Cards
+
+LLM relations (29):
+  Chase Freedom Unlimited -[offers]-> 3% cashback
+  Chase Freedom Unlimited -[spending_limit,has_spending_limit]-> $20,000
+  Citi Double Cash Card -[offers]-> 2% cashback
+  Discover it Cash Back -[offers]-> 1% cashback
+  Ibotta -[offers]-> cashback
+  Fetch Rewards -[offers]-> points
+  Uber Eats -[offers]-> points
+  Hilton Honors -[offers]-> points
+  World of Hyatt -[offers]-> points
+  Airbnb -[offers]-> credits
+  Target RedCard -[offers]-> 5% off
+  Kohl's Yes2You Rewards -[offers]-> points
+  Rakuten -[offers]-> cashback
+  Drop -[offers]-> points
+  Dosh -[offers]-> cashback
+  RetailMeNot -[offers]-> cashback
+  American Express Blue Cash Preferred -[offers]-> 6% cashback
+  Capital One Quicksilver Cash Rewards Credit Card -[offers]-> 1.5% cashback
+  Wells Fargo Propel American Express Card -[offers]-> 3% cashback
+  Bank of America Cash Rewards credit card -[offers]-> cashback
+  Chase Freedom Unlimited -[reverts_to]-> 1.5% cashback
+  Citi Double Cash Card -[offers]-> 13.99% - 23.99% (Variable) APR
+  Chase Freedom Unlimited -[offers]-> 14.99% - 23.74% (Variable) APR
+  Capital One Quicksilver Cash Rewards Credit Card -[offers]-> 14.49% - 24.49% (Variable) APR
+  American Express Blue Cash Preferred -[offers]-> 12.99% - 23.99% (Variable) APR
+  Discover it Cash Back -[offers]-> 11.99% - 22.99% (Variable) APR
+  Wells Fargo Propel American Express Card -[offers]-> 12.99% - 24.99% (Variable) APR
+  Bank of America Cash Rewards credit card -[offers]-> 12.99% - 22.99% (Variable) APR
+  Citi Double Cash Card -[offers]-> 0% introductory APR for 18 months on balance transfers
+
+LLM relations with NO local pair (29):
+  Chase Freedom Unlimited -[offers]-> 3% cashback
+  Chase Freedom Unlimited -[spending_limit,has_spending_limit]-> $20,000
+  Citi Double Cash Card -[offers]-> 2% cashback
+  Discover it Cash Back -[offers]-> 1% cashback
+  Ibotta -[offers]-> cashback
+  Fetch Rewards -[offers]-> points
+  Uber Eats -[offers]-> points
+  Hilton Honors -[offers]-> points
+  World of Hyatt -[offers]-> points
+  Airbnb -[offers]-> credits
+  Target RedCard -[offers]-> 5% off
+  Kohl's Yes2You Rewards -[offers]-> points
+  Rakuten -[offers]-> cashback
+  Drop -[offers]-> points
+  Dosh -[offers]-> cashback
+  RetailMeNot -[offers]-> cashback
+  American Express Blue Cash Preferred -[offers]-> 6% cashback
+  Capital One Quicksilver Cash Rewards Credit Card -[offers]-> 1.5% cashback
+  Wells Fargo Propel American Express Card -[offers]-> 3% cashback
+  Bank of America Cash Rewards credit card -[offers]-> cashback
+  Chase Freedom Unlimited -[reverts_to]-> 1.5% cashback
+  Citi Double Cash Card -[offers]-> 13.99% - 23.99% (Variable) APR
+  Chase Freedom Unlimited -[offers]-> 14.99% - 23.74% (Variable) APR
+  Capital One Quicksilver Cash Rewards Credit Card -[offers]-> 14.49% - 24.49% (Variable) APR
+  American Express Blue Cash Preferred -[offers]-> 12.99% - 23.99% (Variable) APR
+  Discover it Cash Back -[offers]-> 11.99% - 22.99% (Variable) APR
+  Wells Fargo Propel American Express Card -[offers]-> 12.99% - 24.99% (Variable) APR
+  Bank of America Cash Rewards credit card -[offers]-> 12.99% - 22.99% (Variable) APR
+  Citi Double Cash Card -[offers]-> 0% introductory APR for 18 months on balance transfers
+
+LOCAL relations (6):
+  me -[interested_in]-> Chase Freedom Unlimited card (0.88)
+  me -[interested_in]-> Citi Double Cash Card (0.77)
+  Citi -[owns]-> Citi Double Cash Card (0.75)
+  Rakuten -[owns]-> Ebates (0.71)
+  Fetch Rewards -[spent_on]-> grocery purchases (0.63)
+  New cardmembers -[received]-> 3% cashback (0.62)
+
+==========================================================================================
+SESSION 01493427__1980bbfa_4
+LLM entities (14): Philips Hue[org]; LIFX[org]; Belkin Wemo[org]; IKEA Tradfri[org]; GE Smart Bulbs[org]; Sylvania Smart+[org]; Eufy Lumos[org]; Philips Hue White Starter Kit[work]; Philips Hue Dimmer Switch[work]; Philips Hue Bulb Types[concept]; Philips Hue White Ambiance Starter Kit[work]; Philips Hue Color Starter Kit[work]; Philips Hue Smart Button[work]; Philips Hue Bridge[work]
+
+LOCAL entities (105): bathroom[place]; bedroom[place]; closets[place]; IKEA[org]; Amazon Alexa[work]; stairways[place]; Philips Hue Bridge[work]; Philips Hue White Starter Kit[work]; hallways[place]; Philips Hue Color Starter Kit[work]; floor lamps[work]; Philips Hue Dimmer Switch[work]; guests[person]; Eufy Lumos[work]; Google Assistant[work]; CFL[work]; dimmer switches[work]; Philips Hue Smart Button[work]; dimmable bulbs[work]; table lamps[work]; areas[place]; Dimmer Switch[work]; Starter Kit[work]; Sylvania Smart+[work]; halogen bulbs[work]; home[place]; smart bulbs[work]; LED[work]; Philips Hue[work]; smart light bulbs[work]; switches[work]; bulbs[work]; Philips Hue White and Color Starter Kit[work]; Philips Hue White Ambiance Starter Kit[work]; Bridge[work]; family members[person]; overhead lighting[work]; Apple HomeKit[work]; power adapter[work]; rooms[place]; GE Smart Bulbs[work]; blinds[work]; Belkin[org]; White Ambiance[work]; incandescent bulbs[work]; White bulbs[work]; lighting[concept]; curtains[work]; White[work]; focused lighting[work]; LEDs[work]; White Ambiance bulbs[work]; lighting control system[work]; lights[work]; smart lighting[work]; Color[work]; Color Ambiance[work]; LIFX[work]; Color bulbs[work]; room[place]; router[work]; wall[place]; starter kits[work]; smart lighting system[work]; occupancy sensors[work]; cooking[concept]; your[person]; reading[concept]; energy consumption[concept]; Task lighting[work]; Dimming[work]; whole-home lighting control system[work]; energy-efficient bulbs[work]; lighting setup[work]; non-smart bulbs[work]; $49.99[work]; light bulbs[work]; bundles[work]; White and Color bulbs[work]; Philips Hue bulbs[work]; Sylvania[org]; system[work]; wireless dimmer switch[work]; Philips Hue Starter Kits[work]; walk-through[concept]; wireless button[work]; energy-efficient ones[work]; $24.99[work]; hub[work]; accessories[work]; Philips Hue Bulb Types[work]; Natural light[work]; Wemo[work]; renovation[event]; lighting audit[concept]; $14.99[work]; Thanks[person]; new fixtures[work]; phone[work]; lighting layout[work]; Wemo smart bulbs[work]; artificial lighting[work]; new bulbs[work]; smart home[place]; tablet[work]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 77): bathroom; bedroom; closets; Amazon Alexa; stairways; hallways; floor lamps; guests; Google Assistant; CFL; dimmer switches; dimmable bulbs; table lamps; areas; halogen bulbs; home; LED; smart light bulbs; switches; family members; overhead lighting; Apple HomeKit; power adapter; rooms; blinds; incandescent bulbs; White bulbs; lighting; curtains; focused lighting; LEDs; White Ambiance bulbs; lighting control system; lights; smart lighting; Color Ambiance; Color bulbs; room; router; wall; starter kits; smart lighting system; occupancy sensors; cooking; your; reading; energy consumption; Task lighting; Dimming; whole-home lighting control system; energy-efficient bulbs; lighting setup; non-smart bulbs; $49.99; light bulbs; bundles; White and Color bulbs; system; wireless dimmer switch; walk-through
+
+LLM relations (31):
+  Philips Hue -[offers]-> energy-efficient bulbs
+  LIFX -[offers]-> energy-efficient bulbs
+  Belkin Wemo -[offers]-> energy-efficient bulbs
+  IKEA Tradfri -[offers]-> energy-efficient bulbs
+  GE Smart Bulbs -[offers]-> energy-efficient bulbs
+  Sylvania Smart+ -[offers]-> energy-efficient bulbs
+  Eufy Lumos -[offers]-> energy-efficient bulbs
+  Philips Hue -[works_with]-> Amazon Alexa
+  Philips Hue -[works_with]-> Google Assistant
+  Philips Hue -[works_with]-> Apple HomeKit
+  LIFX -[works_with]-> Amazon Alexa
+  LIFX -[works_with]-> Google Assistant
+  LIFX -[works_with]-> Apple HomeKit
+  Belkin Wemo -[works_with]-> Amazon Alexa
+  Belkin Wemo -[works_with]-> Google Assistant
+  IKEA Tradfri -[works_with]-> Amazon Alexa
+  IKEA Tradfri -[works_with]-> Google Assistant
+  Philips Hue White Starter Kit -[part_of]-> Philips Hue
+  Philips Hue Dimmer Switch -[part_of]-> Philips Hue
+  Philips Hue White Starter Kit -[includes]-> Philips Hue Bridge
+  Philips Hue White Starter Kit -[includes]-> Philips Hue White bulbs
+  Philips Hue White and Color Starter Kit -[includes]-> Philips Hue Bridge
+  Philips Hue White and Color Starter Kit -[includes]-> Philips Hue White and Color bulbs
+  Philips Hue White Ambiance Starter Kit -[includes]-> Philips Hue Bridge
+  Philips Hue White Ambiance Starter Kit -[includes]-> Philips Hue White Ambiance bulbs
+  Philips Hue Color Starter Kit -[includes]-> Philips Hue Bridge
+  Philips Hue Color Starter Kit -[includes]-> Philips Hue Color bulbs
+  Philips Hue Smart Button -[part_of]-> Philips Hue
+  Philips Hue Bridge -[part_of]-> Philips Hue
+  Philips Hue -[offers]-> smart bulbs
+  Philips Hue -[related_to]-> smart lighting
+
+LLM relations with NO local pair (10):
+  LIFX -[offers]-> energy-efficient bulbs
+  Belkin Wemo -[offers]-> energy-efficient bulbs
+  IKEA Tradfri -[offers]-> energy-efficient bulbs
+  GE Smart Bulbs -[offers]-> energy-efficient bulbs
+  Sylvania Smart+ -[offers]-> energy-efficient bulbs
+  Eufy Lumos -[offers]-> energy-efficient bulbs
+  LIFX -[works_with]-> Apple HomeKit
+  IKEA Tradfri -[works_with]-> Amazon Alexa
+  IKEA Tradfri -[works_with]-> Google Assistant
+  Philips Hue -[related_to]-> smart lighting
+
+LOCAL relations (66):
+  Philips Hue -[works_with]-> Amazon Alexa (0.97)
+  me -[interested_in]-> smart lighting system (0.97)
+  White Ambiance -[part_of]-> Philips Hue (0.94)
+  GE Smart Bulbs -[works_with]-> Amazon Alexa (0.94)
+  occupancy sensors -[located_in]-> hallways (0.94)
+  Philips Hue Dimmer Switch -[part_of]-> system (0.94)
+  me -[owns]-> bulbs (0.94)
+  Philips Hue -[works_with]-> Google Assistant (0.93)
+  occupancy sensors -[located_in]-> stairways (0.93)
+  occupancy sensors -[located_in]-> closets (0.92)
+  White -[part_of]-> Philips Hue (0.92)
+  occupancy sensors -[located_in]-> areas (0.91)
+  me -[lives_in]-> home (0.91)
+  Sylvania Smart+ -[works_with]-> Amazon Alexa (0.90)
+  me -[owns]-> lighting setup (0.90)
+  Dimmer Switch -[part_of]-> Philips Hue (0.90)
+  halogen bulbs -[part_of]-> lighting setup (0.89)
+  LEDs -[part_of]-> lighting setup (0.89)
+  LIFX -[works_with]-> Amazon Alexa (0.89)
+  bulbs -[part_of]-> smart home (0.87)
+  LED -[part_of]-> lighting setup (0.87)
+  GE Smart Bulbs -[works_with]-> Google Assistant (0.86)
+  Sylvania Smart+ -[works_with]-> Google Assistant (0.86)
+  incandescent bulbs -[part_of]-> lighting setup (0.86)
+  LIFX -[works_with]-> Google Assistant (0.85)
+  CFL -[part_of]-> lighting setup (0.85)
+  Dimmer Switch -[part_of]-> system (0.85)
+  Wemo -[works_with]-> Amazon Alexa (0.83)
+  light bulbs -[part_of]-> lighting setup (0.82)
+  Wemo smart bulbs -[works_with]-> Amazon Alexa (0.82)
+  your -[interested_in]-> smart lighting (0.82)
+  Eufy Lumos -[works_with]-> Amazon Alexa (0.82)
+  lighting setup -[located_in]-> home (0.80)
+  me -[owns]-> Philips Hue (0.79)
+  Philips Hue -[works_with]-> Apple HomeKit (0.78)
+  me -[bought]-> halogen bulbs (0.78)
+  me -[bought]-> LEDs (0.76)
+  Philips Hue Bulb Types -[part_of]-> Philips Hue (0.76)
+  Wemo -[works_with]-> Google Assistant (0.76)
+  bulbs -[part_of]-> Philips Hue (0.76)
+  your -[owns]-> bulbs (0.76)
+  me -[bought]-> LED (0.76)
+  Wemo smart bulbs -[works_with]-> Google Assistant (0.74)
+  Eufy Lumos -[works_with]-> Google Assistant (0.74)
+  me -[bought]-> CFL (0.74)
+  me -[bought]-> Dimmer Switch (0.73)
+  me -[bought]-> incandescent bulbs (0.73)
+  Dimmer Switch -[located_in]-> bathroom (0.73)
+  me -[interested_in]-> Philips Hue Dimmer Switch (0.72)
+  Dimmer Switch -[located_in]-> bedroom (0.71)
+  me -[bought]-> energy-efficient ones (0.71)
+  me -[interested_in]-> energy consumption (0.71)
+  me -[interested_in]-> smart lighting (0.69)
+  me -[bought]-> light bulbs (0.67)
+  me -[interested_in]-> Philips Hue (0.67)
+  lights -[part_of]-> smart home (0.67)
+  me -[bought]-> Philips Hue White Starter Kit (0.67)
+  Google Assistant -[works_with]-> Philips Hue (0.66)
+  White Ambiance -[part_of]-> Philips Hue Starter Kits (0.66)
+  Bridge -[part_of]-> Philips Hue Starter Kits (0.64)
+  White bulbs -[part_of]-> Philips Hue Starter Kits (0.63)
+  smart bulbs -[located_in]-> rooms (0.63)
+  Color bulbs -[part_of]-> Philips Hue Starter Kits (0.62)
+  smart bulbs -[located_in]-> areas (0.61)
+  starter kit -[part_of]-> Philips Hue (0.61)
+  Philips Hue White Starter Kit -[part_of]-> Philips Hue (0.61)
+
+==========================================================================================
+SESSION 001be529__3722ea11_2
+LLM entities (21): thrift store[org]; vintage band t-shirt[concept]; high-waisted jeans[concept]; Doc Martens[other]; flannel shirt[other]; white button-down shirt[other]; loafers[other]; leather jacket[other]; combat boots[other]; flowy top[other]; The KonMari Method[concept]; The FlyLady Method[concept]; The 4-Box Method[concept]; coral pink t-shirt[work]; pastel blue sweater[work]; white tank top[work]; black blouse[work]; t-shirt[work]; tank top[work]; blouse[work]; sweater[work]
+
+LOCAL entities (168): sweaters[work]; tank tops[work]; ankle boots[work]; blouses[work]; denim jacket[work]; high-waisted jeans[work]; t-shirts[work]; summer tank tops[work]; sandals[work]; baseball cap[work]; sneakers[work]; leather jacket[work]; winter sweaters[work]; bomber jacket[work]; stackable shelf[work]; fitted top[work]; gently used clothes[work]; hanging organizer[work]; cropped jacket[work]; fedora[work]; cardigan[work]; new tops[work]; hat[work]; flowy skirt[work]; Top Rail[work]; vintage band t-shirt[work]; polka dots[work]; dress[work]; statement necklace[work]; vintage band tee[work]; pants[work]; distressed denim jeans[work]; tops[work]; vintage tee[work]; existing wardrobe[place]; your[person]; new ones[work]; fitted bottoms[work]; sweatshirts[work]; High-waisted distressed denim jeans[work]; closet[place]; dresses[work]; top-specific storage solution[work]; Top Stack[work]; combat boots[work]; Black ankle boots[work]; yoga tops[work]; bottoms[work]; flannel shirt[work]; fashion advice[concept]; Date night tops[work]; eye level[place]; loafers[work]; shoes[work]; Doc Martens[work]; flannels[work]; tee[work]; fill a bag for $10[event]; accessories[work]; silk tops[work]; stackable shelves[work]; hanging rods[work]; workout tops[work]; cropped cardigan[work]; flowy top[work]; underwear[work]; stripes[work]; Work tops[work]; White sneakers[work]; florals[work]; wardrobe[place]; white button-down shirt[work]; Everyday tops[work]; Closet organization[concept]; white tank top[work]; The FlyLady Method[org]; socks[work]; black blouse[work]; Lounging tops[work]; Thanks[person]; Long-sleeve tops[work]; clothes[work]; belted cardigan[work]; band tee[work]; most-worn tops[work]; hem[work]; Dressy tops[work]; chunky chain[work]; frequently worn tops[work]; distressed denim[work]; closet organization project[concept]; shopping[concept]; thrift store[org]; Short-sleeve tops[work]; tunics[work]; geometric pendant[work]; front of your closet[place]; tank top[work]; ripped knees[work]; guidance[concept]; Top Triangle[work]; closet organization system[work]; fitted denim jacket[work]; most-worn items[work]; skirt[work]; belt[work]; Activewear[work]; Purge and declutter[concept]; new favorite combinations[concept]; soft, pastel blue sweater[work]; athletic wear[work]; The 4-Box Method[org]; double hangers[work]; wrinkled tops[work]; retro piece[work]; advice[concept]; high-waisted pants[work]; top organization system[org]; help[concept]; easy-to-reach locations[place]; skinny belt[work]; sell[concept]; long-sleeved shirt[work]; floor[place]; fancy tees[work]; Categorize and group[concept]; The KonMari Method[org]; tips[concept]; categorizing[concept]; main closet space[place]; embellishments[work]; button fly[work]; space[work]; thrift store finds[work]; bright coral pink t-shirt[work]; containers[work]; old item[work]; logo[work]; less frequently worn items[work]; discard[concept]; outerwear[work]; items[work]; top[place]; donate[concept]; organization tasks[concept]; rod[work]; out-of-season clothing[work]; specific colors[work]; bottom[place]; blues[work]; denim washes[work]; local thrift store[place]; white t-shirts[work]; keep[concept]; out-of-season tops[work]; baskets[work]; organization[concept]; Who knows[person]; chain[work]; sale[event]; most frequently worn items[work]; color-coded system[work]; bins[work]; frequently worn items[work]; Sort by occasion[concept]; everything[work]; modern pieces[work]; outfit[work]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 139): ankle boots; denim jacket; sandals; baseball cap; sneakers; bomber jacket; stackable shelf; fitted top; gently used clothes; hanging organizer; cropped jacket; fedora; cardigan; new tops; hat; flowy skirt; Top Rail; polka dots; dress; statement necklace; vintage band tee; pants; distressed denim jeans; tops; vintage tee; existing wardrobe; your; new ones; fitted bottoms; High-waisted distressed denim jeans; closet; dresses; top-specific storage solution; Top Stack; Black ankle boots; yoga tops; bottoms; fashion advice; Date night tops; eye level; shoes; flannels; tee; fill a bag for $10; accessories; silk tops; stackable shelves; hanging rods; workout tops; cropped cardigan; underwear; stripes; Work tops; White sneakers; florals; wardrobe; Everyday tops; Closet organization; socks; Lounging tops
+
+LLM relations (28):
+  User -[visited]-> thrift store
+  User -[styled]-> vintage band t-shirt
+  User -[styled]-> high-waisted jeans
+  User -[organized]-> closet
+  Assistant -[styled,advised]-> vintage band t-shirt
+  Assistant -[styled,advised]-> high-waisted jeans
+  Assistant -[organized,advised]-> closet
+  high-waisted jeans -[styled_with]-> Doc Martens
+  high-waisted jeans -[styled_with]-> flannel shirt
+  high-waisted jeans -[styled_with]-> white button-down shirt
+  high-waisted jeans -[styled_with]-> loafers
+  high-waisted jeans -[styled_with]-> leather jacket
+  high-waisted jeans -[styled_with]-> combat boots
+  high-waisted jeans -[styled_with]-> flowy top
+  vintage band t-shirt -[paired_with]-> high-waisted jeans
+  The KonMari Method -[focuses_on]-> items that spark joy
+  The FlyLady Method -[emphasizes]-> organization tasks
+  The 4-Box Method -[sorts]-> items into four boxes
+  The KonMari Method -[focuses_on]-> items
+  The 4-Box Method -[sorts_into]-> items
+  coral pink t-shirt -[purchased_from]-> thrift store
+  pastel blue sweater -[purchased_from]-> thrift store
+  white tank top -[purchased_from]-> thrift store
+  black blouse -[purchased_from]-> thrift store
+  coral pink t-shirt -[incorporate_into]-> wardrobe
+  pastel blue sweater -[incorporate_into]-> wardrobe
+  white tank top -[incorporate_into]-> wardrobe
+  black blouse -[incorporate_into]-> wardrobe
+
+LLM relations with NO local pair (25):
+  User -[styled]-> vintage band t-shirt
+  User -[styled]-> high-waisted jeans
+  Assistant -[styled,advised]-> vintage band t-shirt
+  Assistant -[styled,advised]-> high-waisted jeans
+  Assistant -[organized,advised]-> closet
+  high-waisted jeans -[styled_with]-> Doc Martens
+  high-waisted jeans -[styled_with]-> flannel shirt
+  high-waisted jeans -[styled_with]-> white button-down shirt
+  high-waisted jeans -[styled_with]-> loafers
+  high-waisted jeans -[styled_with]-> combat boots
+  high-waisted jeans -[styled_with]-> flowy top
+  vintage band t-shirt -[paired_with]-> high-waisted jeans
+  The KonMari Method -[focuses_on]-> items that spark joy
+  The FlyLady Method -[emphasizes]-> organization tasks
+  The 4-Box Method -[sorts]-> items into four boxes
+  The KonMari Method -[focuses_on]-> items
+  The 4-Box Method -[sorts_into]-> items
+  coral pink t-shirt -[purchased_from]-> thrift store
+  pastel blue sweater -[purchased_from]-> thrift store
+  white tank top -[purchased_from]-> thrift store
+  black blouse -[purchased_from]-> thrift store
+  coral pink t-shirt -[incorporate_into]-> wardrobe
+  pastel blue sweater -[incorporate_into]-> wardrobe
+  white tank top -[incorporate_into]-> wardrobe
+  black blouse -[incorporate_into]-> wardrobe
+
+LOCAL relations (52):
+  me -[visited]-> thrift store (0.99)
+  me -[bought]-> gently used clothes (0.97)
+  me -[bought]-> t-shirts (0.95)
+  me -[bought]-> sweaters (0.95)
+  me -[bought]-> tank tops (0.95)
+  me -[bought]-> blouses (0.95)
+  me -[visited]-> local thrift store (0.94)
+  me -[bought]-> black blouse (0.92)
+  me -[received]-> new ones (0.91)
+  me -[bought]-> white tank top (0.91)
+  me -[interested_in]-> Closet organization (0.90)
+  me -[received]-> guidance (0.89)
+  me -[interested_in]-> new favorite combinations (0.89)
+  me -[bought]-> bright coral pink t-shirt (0.89)
+  me -[bought]-> soft, pastel blue sweater (0.88)
+  me -[bought]-> new tops (0.87)
+  me -[received]-> help (0.86)
+  me -[participated_in]-> fill a bag for $10 (0.86)
+  tee -[part_of]-> outfit (0.85)
+  me -[knows]-> Who knows (0.79)
+  me -[received]-> advice (0.77)
+  me -[owns]-> tops (0.76)
+  me -[owns]-> wardrobe (0.75)
+  High-waisted distressed denim jeans -[part_of]-> outfit (0.73)
+  stackable shelves -[part_of]-> closet (0.73)
+  me -[bought]-> thrift store finds (0.73)
+  me -[interested_in]-> fashion advice (0.72)
+  vintage band tee -[part_of]-> outfit (0.70)
+  me -[owns]-> clothes (0.69)
+  leather jacket -[works_with]-> high-waisted jeans (0.69)
+  long-sleeved shirt -[part_of]-> outfit (0.69)
+  Black ankle boots -[part_of]-> outfit (0.69)
+  bomber jacket -[works_with]-> high-waisted jeans (0.69)
+  button fly -[part_of]-> high-waisted jeans (0.68)
+  denim jacket -[works_with]-> high-waisted jeans (0.67)
+  tank top -[part_of]-> outfit (0.67)
+  me -[owns]-> existing wardrobe (0.66)
+  high-waisted pants -[part_of]-> outfit (0.66)
+  hanging rods -[part_of]-> closet (0.66)
+  cropped jacket -[works_with]-> high-waisted jeans (0.66)
+  top organization system -[manages]-> wrinkled tops (0.64)
+  your -[gave_to]-> me (0.64)
+  fitted top -[works_with]-> high-waisted jeans (0.63)
+  belt -[works_with]-> high-waisted jeans (0.62)
+  The FlyLady Method -[manages]-> space (0.62)
+  me -[received]-> new tops (0.62)
+  Thanks -[gave_to]-> your (0.62)
+  me -[owns]-> new tops (0.62)
+  skirt -[part_of]-> outfit (0.61)
+  me -[interested_in]-> tips (0.61)
+  top organization system -[manages]-> tops (0.61)
+  everything -[located_in]-> closet (0.61)
+
+==========================================================================================
+SESSION 001be529__3c11dc79
+LLM entities (45): Chicago[place]; New York[place]; John F. Kennedy International Airport[other]; LaGuardia Airport[other]; Newark Liberty International Airport[other]; Midway International Airport[other]; O'Hare International Airport[other]; American Airlines[org]; Delta Air Lines[org]; JetBlue Airways[org]; United Airlines[org]; Boston[place]; Pittsburgh[place]; Nashville[place]; Washington, D.C.[place]; USS Constitution[work]; Andy Warhol Museum[work]; Country Music Hall of Fame[work]; Smithsonian Museums[work]; Willis Tower[work]; Navy Pier[work]; Wicker Park[work]; Lincoln Park[work]; Mount Washington[place]; Phipps Conservatory and Botanical Gardens[work]; Penn Brewery[org]; East End Brewing Company[org]; Grist House Brewing[org]; PNC Park[work]; Carnegie Science Center[work]; Three Rivers Heritage Trail[concept]; Pittsburgh International Airport[place]; LaGuardia[place]; Delta[org]; JetBlue[org]; Hotel Indigo Pittsburgh East Liberty[work]; The Inn on the Mexican War Streets[work]; The Oaklander Hotel[work]; Hotel Shadyside[work]; The Inn on Walnut[work]; San Diego[place]; Shadyside[place]; The Mansions on Fifth Hotel[org]; Walnut Street[place]; Ellsworth Avenue[place]
+
+LOCAL entities (131): Avis[org]; San Diego[place]; LA[place]; Wicker Park[place]; Hertz[org]; Adams Morgan[place]; Georgetown[place]; Shadyside[place]; American Airlines[org]; Oakland[place]; Lincoln Park[place]; Enterprise[org]; Chicago[place]; New York City[place]; Lake Michigan[place]; Pittsburgh[place]; North Shore[place]; New York[place]; 3-Day Pass[work]; JetBlue Airways[org]; National Mall[place]; Walnut Street[place]; Ellsworth Avenue[place]; JetBlue[org]; Delta Air Lines[org]; downtown area[place]; Delta[org]; Tidal Basin[place]; Boston[place]; 1-Day Pass[work]; foodie trip[concept]; North End[place]; 2/10[date]; Cambridge[place]; Navy Pier[place]; Airbnb[org]; cultural exploration[concept]; Walk the Freedom Trail[concept]; Willis Tower[place]; Tennessee[place]; NYC[place]; Massachusetts[place]; Mount Washington[place]; Strip District[place]; Washington, D.C.[place]; Pennsylvania[place]; Pittsburgh East Liberty[place]; beach relaxation[concept]; downtown[place]; Andy Warhol Bridge[place]; Nashville[place]; Phipps Conservatory and Botanical Gardens[place]; PNC Park[place]; United Airlines[org]; 12 South[place]; Smithsonian Museums[place]; John F. Kennedy International Airport[place]; outdoor adventure[concept]; Three Rivers Heritage Trail[place]; city break[concept]; your[person]; Country Music Hall of Fame[place]; LaGuardia[place]; East End Brewing Company[org]; Port Authority of Allegheny County[org]; Day Pass[work]; airport[place]; Lyft[org]; Grist House Brewing[org]; Free Transit Zone[place]; Andy Warhol Museum[place]; Pittsburgh International Airport[place]; Bluebird Cafe[place]; Penn Brewery[org]; Quincy Market[place]; Port Authority[org]; Uber[org]; Carnegie Science Center[place]; round-trip ticket[work]; The Foundry[place]; March[date]; November[date]; flights[concept]; Saturdays[date]; quiet neighborhood[place]; Tuesdays[date]; Newark Liberty International Airport[place]; USS Constitution[concept]; Duquesne Incline[place]; light rail[work]; University of Pittsburgh[place]; October[date]; The Inn on the Mexican War Streets[place]; Healthy Ride[work]; LGA[place]; Monongahela Incline[place]; street food[concept]; Midway International Airport[place]; Hotel Shadyside[work]; JFK[place]; The Inn on Walnut[place]; trip[event]; LaGuardia Airport[place]; Wednesdays[date]; buses[work]; Trip Planner[work]; The Mansions on Fifth Hotel[work]; August[date]; downtown Chicago[place]; MDW[place]; June[date]; accommodations[concept]; PIT[place]; Primanti Bros.[org]; EWR[place]; vacation[event]; attractions[concept]; airlines[org]; ORD[place]; O'Hare International Airport[place]; brewery tour[event]; experiences[concept]; travel enthusiast[person]; B&B[org]; off-peak seasons[event]; apartments[work]; quick weekend getaway[event]; next trip[concept]; weekend getaway[event]; Public Transportation[concept]; city[place]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 81): Avis; LA; Hertz; Adams Morgan; Georgetown; Enterprise; Lake Michigan; North Shore; 3-Day Pass; National Mall; downtown area; Tidal Basin; 1-Day Pass; foodie trip; North End; 2/10; Cambridge; Airbnb; cultural exploration; Walk the Freedom Trail; Tennessee; NYC; Massachusetts; Strip District; Pennsylvania; beach relaxation; downtown; Andy Warhol Bridge; 12 South; outdoor adventure; city break; your; Port Authority of Allegheny County; Day Pass; Lyft; Free Transit Zone; Bluebird Cafe; Quincy Market; Port Authority; Uber; round-trip ticket; The Foundry; March; November; flights; Saturdays; quiet neighborhood; Tuesdays; Duquesne Incline; light rail; October; Healthy Ride; LGA; Monongahela Incline; street food; JFK; trip; Wednesdays; buses; Trip Planner
+
+LLM relations (47):
+  New York -[travel_to]-> Chicago
+  John F. Kennedy International Airport -[flights_from]-> Chicago
+  LaGuardia Airport -[flights_from]-> Chicago
+  Newark Liberty International Airport -[flights_from]-> Chicago
+  Midway International Airport -[flights_to]-> Chicago
+  O'Hare International Airport -[flights_to]-> Chicago
+  American Airlines -[operates_from]-> John F. Kennedy International Airport
+  Delta Air Lines -[operates_from]-> John F. Kennedy International Airport
+  JetBlue Airways -[operates_from]-> John F. Kennedy International Airport
+  United Airlines -[operates_from]-> Newark Liberty International Airport
+  American Airlines -[operates_from]-> LaGuardia Airport
+  Delta Air Lines -[operates_from]-> LaGuardia Airport
+  United Airlines -[operates_from]-> LaGuardia Airport
+  Boston -[attraction]-> USS Constitution
+  Pittsburgh -[attraction,has_attraction]-> Andy Warhol Museum
+  Nashville -[attraction]-> Country Music Hall of Fame
+  Washington, D.C. -[attraction]-> Smithsonian Museums
+  Chicago -[attraction,has_landmark]-> Willis Tower
+  Chicago -[attraction,has_landmark]-> Navy Pier
+  Chicago -[attraction,has_neighborhood]-> Wicker Park
+  Chicago -[attraction,has_neighborhood]-> Lincoln Park
+  Chicago -[located_near]-> Lake Michigan
+  Pittsburgh -[has_attraction,located_in]-> Mount Washington
+  Pittsburgh -[has_attraction,located_in]-> Phipps Conservatory and Botanical Gardens
+  Pittsburgh -[has_brewery,located_in]-> Penn Brewery
+  Pittsburgh -[has_brewery,located_in]-> East End Brewing Company
+  Pittsburgh -[has_brewery,located_in]-> Grist House Brewing
+  Pittsburgh -[has_attraction,located_in]-> PNC Park
+  Pittsburgh -[has_attraction,located_in]-> Carnegie Science Center
+  Pittsburgh -[has_trail,located_in]-> Three Rivers Heritage Trail
+  Pittsburgh International Airport -[serves]-> Pittsburgh
+  LaGuardia -[flights_from,flights_to]-> Pittsburgh International Airport
+  John F. Kennedy International Airport -[flights_from,flights_to]-> Pittsburgh International Airport
+  American Airlines -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  Delta -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  JetBlue -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  Hotel Indigo Pittsburgh East Liberty -[located_in]-> Pittsburgh
+  The Inn on the Mexican War Streets -[located_in]-> Pittsburgh
+  The Oaklander Hotel -[located_in]-> Pittsburgh
+  Hotel Shadyside -[located_in]-> Pittsburgh
+  The Inn on Walnut -[located_in]-> Pittsburgh
+  Pittsburgh -[located_in]-> The Strip District
+  The Mansions on Fifth Hotel -[located_in]-> historic mansion
+  The Inn on the Mexican War Streets -[located_in]-> quiet neighborhood
+  Shadyside -[located_near]-> shops and restaurants
+  Walnut Street -[located_in]-> Shadyside
+  Ellsworth Avenue -[located_in]-> Shadyside
+
+LLM relations with NO local pair (33):
+  John F. Kennedy International Airport -[flights_from]-> Chicago
+  LaGuardia Airport -[flights_from]-> Chicago
+  Newark Liberty International Airport -[flights_from]-> Chicago
+  American Airlines -[operates_from]-> John F. Kennedy International Airport
+  Delta Air Lines -[operates_from]-> John F. Kennedy International Airport
+  JetBlue Airways -[operates_from]-> John F. Kennedy International Airport
+  United Airlines -[operates_from]-> Newark Liberty International Airport
+  American Airlines -[operates_from]-> LaGuardia Airport
+  Delta Air Lines -[operates_from]-> LaGuardia Airport
+  United Airlines -[operates_from]-> LaGuardia Airport
+  Boston -[attraction]-> USS Constitution
+  Washington, D.C. -[attraction]-> Smithsonian Museums
+  Pittsburgh -[has_brewery,located_in]-> Penn Brewery
+  Pittsburgh -[has_brewery,located_in]-> East End Brewing Company
+  Pittsburgh -[has_brewery,located_in]-> Grist House Brewing
+  Pittsburgh -[has_attraction,located_in]-> PNC Park
+  Pittsburgh -[has_attraction,located_in]-> Carnegie Science Center
+  Pittsburgh -[has_trail,located_in]-> Three Rivers Heritage Trail
+  Pittsburgh International Airport -[serves]-> Pittsburgh
+  LaGuardia -[flights_from,flights_to]-> Pittsburgh International Airport
+  John F. Kennedy International Airport -[flights_from,flights_to]-> Pittsburgh International Airport
+  American Airlines -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  Delta -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  JetBlue -[operates_flight,operates_flights_to]-> Pittsburgh International Airport
+  Hotel Indigo Pittsburgh East Liberty -[located_in]-> Pittsburgh
+  The Inn on the Mexican War Streets -[located_in]-> Pittsburgh
+  Hotel Shadyside -[located_in]-> Pittsburgh
+  The Inn on Walnut -[located_in]-> Pittsburgh
+  The Mansions on Fifth Hotel -[located_in]-> historic mansion
+  The Inn on the Mexican War Streets -[located_in]-> quiet neighborhood
+  Shadyside -[located_near]-> shops and restaurants
+  Walnut Street -[located_in]-> Shadyside
+  Ellsworth Avenue -[located_in]-> Shadyside
+
+LOCAL relations (93):
+  Port Authority of Allegheny County -[owns]-> Monongahela Incline (0.97)
+  Uber -[located_in]-> Pittsburgh (0.97)
+  Port Authority of Allegheny County -[owns]-> Duquesne Incline (0.96)
+  me -[traveled_to]-> Pittsburgh (0.95)
+  me -[interested_in]-> quick weekend getaway (0.94)
+  Lyft -[located_in]-> Pittsburgh (0.94)
+  me -[traveled_to]-> Boston (0.94)
+  John F. Kennedy International Airport -[located_in]-> New York City (0.93)
+  LaGuardia Airport -[located_in]-> New York City (0.93)
+  Free Transit Zone -[located_in]-> downtown area (0.93)
+  me -[bought]-> flights (0.93)
+  Free Transit Zone -[located_in]-> Pittsburgh (0.92)
+  JFK -[located_in]-> New York City (0.91)
+  Hotel Shadyside -[located_in]-> Shadyside (0.91)
+  me -[visited]-> Quincy Market (0.90)
+  PNC Park -[located_in]-> North Shore (0.89)
+  Wicker Park -[part_of]-> Chicago (0.89)
+  me -[visited]-> USS Constitution (0.88)
+  Navy Pier -[located_in]-> Chicago (0.88)
+  me -[traveled_to]-> Chicago (0.88)
+  your -[traveled_to]-> Boston (0.88)
+  me -[participated_in]-> Walk the Freedom Trail (0.88)
+  Willis Tower -[located_in]-> Chicago (0.87)
+  Lincoln Park -[part_of]-> Chicago (0.87)
+  me -[spent_on]-> 2/10 (0.86)
+  LGA -[located_in]-> New York City (0.86)
+  me -[spent_on]-> accommodations (0.86)
+  Andy Warhol Bridge -[located_in]-> North Shore (0.85)
+  The Foundry -[located_in]-> North Shore (0.84)
+  me -[visited]-> North End (0.84)
+  NYC -[traveled_to]-> Nashville (0.84)
+  me -[traveled_to]-> NYC (0.84)
+  The Mansions on Fifth Hotel -[located_in]-> Shadyside (0.82)
+  Monongahela Incline -[part_of]-> Pittsburgh (0.82)
+  Phipps Conservatory and Botanical Gardens -[located_in]-> Pittsburgh (0.81)
+  me -[visited]-> LA (0.81)
+  JFK -[part_of]-> New York City (0.80)
+  Mount Washington -[located_in]-> Pittsburgh (0.80)
+  me -[traveled_to]-> LA (0.80)
+  me -[visited]-> San Diego (0.80)
+  me -[visited]-> Cambridge (0.80)
+  me -[traveled_to]-> San Diego (0.80)
+  The Strip District -[located_in]-> Pittsburgh (0.80)
+  Duquesne Incline -[part_of]-> Pittsburgh (0.80)
+  Midway International Airport -[located_in]-> Chicago (0.80)
+  me -[bought]-> 3-Day Pass (0.79)
+  me -[traveled_to]-> New York (0.78)
+  LaGuardia Airport -[part_of]-> New York City (0.78)
+  Oakland -[part_of]-> Pittsburgh (0.78)
+  city break -[part_of]-> vacation (0.78)
+  Andy Warhol Museum -[located_in]-> Pittsburgh (0.77)
+  outdoor adventure -[part_of]-> vacation (0.77)
+  Willis Tower -[part_of]-> Chicago (0.77)
+  Navy Pier -[part_of]-> Chicago (0.77)
+  beach relaxation -[part_of]-> vacation (0.76)
+  LGA -[part_of]-> New York City (0.75)
+  Strip District -[located_in]-> Pittsburgh (0.75)
+  me -[interested_in]-> Strip District (0.75)
+  Port Authority of Allegheny County -[bought]-> Day Pass (0.75)
+  cultural exploration -[part_of]-> vacation (0.75)
+  Carnegie Science Center -[located_in]-> North Shore (0.74)
+  me -[bought]-> 1-Day Pass (0.73)
+  John F. Kennedy International Airport -[located_in]-> New York (0.72)
+  me -[visited]-> Chicago (0.71)
+  apartments -[located_in]-> Oakland (0.71)
+  your -[interested_in]-> Pittsburgh (0.70)
+  Phipps Conservatory and Botanical Gardens -[part_of]-> Pittsburgh (0.70)
+  Mount Washington -[part_of]-> Pittsburgh (0.70)
+  Strip District -[part_of]-> Pittsburgh (0.69)
+  The Inn on Walnut -[located_in]-> Shadyside (0.69)
+  O'Hare International Airport -[located_in]-> Chicago (0.69)
+  New York City -[located_in]-> Chicago (0.69)
+  Wicker Park -[located_in]-> Chicago (0.68)
+  Three Rivers Heritage Trail -[located_in]-> North Shore (0.67)
+  John F. Kennedy International Airport -[part_of]-> New York City (0.67)
+  Lincoln Park -[located_in]-> Chicago (0.67)
+  Country Music Hall of Fame -[located_in]-> Nashville (0.66)
+  apartments -[located_in]-> Shadyside (0.66)
+  foodie trip -[part_of]-> vacation (0.65)
+  Lake Michigan -[part_of]-> Chicago (0.65)
+
+==========================================================================================
+SESSION 001be529__sharegpt_YSEjnMT_7
+LLM entities (5): Dalan Hargrave[person]; GemCad[work]; Kashmir Blue Synthetic flame-fusion corundum[concept]; GemCad 5.0[work]; CREATIVE GEMS SC-33[org]
+
+LOCAL entities (20): Dalan Hargrave[person]; Fantasy Cut[work]; PCP[work]; 8mm ring stone[work]; GMP[work]; C1[work]; C2[work]; P4[work]; C3[work]; May 23, 2003[date]; TCP[work]; GMP. a[work]; GemCad[work]; C4[work]; PC[work]; gemstone[work]; CREATIVE GEMS[org]; SC-33 Kashmir Blue Synthetic flame-fusion corundum[work]; girdle[work]; C5[work]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 16): Fantasy Cut; PCP; 8mm ring stone; GMP; C1; C2; P4; C3; May 23, 2003; TCP; GMP. a; C4; PC; gemstone; girdle; C5
+
+LLM relations (4):
+  Dalan Hargrave -[designed]-> GemCad
+  Dalan Hargrave -[optimized_for,designed_for]-> Kashmir Blue Synthetic flame-fusion corundum
+  Dalan Hargrave -[designed]-> GemCad 5.0
+  GemCad 5.0 -[developed_by]-> CREATIVE GEMS SC-33
+
+LLM relations with NO local pair (4):
+  Dalan Hargrave -[designed]-> GemCad
+  Dalan Hargrave -[optimized_for,designed_for]-> Kashmir Blue Synthetic flame-fusion corundum
+  Dalan Hargrave -[designed]-> GemCad 5.0
+  GemCad 5.0 -[developed_by]-> CREATIVE GEMS SC-33
+
+LOCAL relations (1):
+  Dalan Hargrave -[created]-> Fantasy Cut (0.94)
+
+==========================================================================================
+SESSION 0e5e2d1a__sharegpt_CnhRZxj_0
+LLM entities (11): NOVA LU[person]; Goldman Sachs[org]; University of Wisconsin Madison[org]; Los Angeles[place]; Bachelor of Business Administration[work]; May 2013[date]; apparel business[org]; social media[concept]; influencer partnerships[concept]; content marketing[concept]; email marketing[concept]
+
+LOCAL entities (116): NOVA LU[person]; Los Angeles[place]; Goldman Sachs[org]; Investment & Banking[concept]; Asset Management Division[org]; consultant[person]; Management and Human Resources[concept]; WI[place]; Finance[concept]; industry events[event]; apparel business[org]; Nova Cosmo[org]; Nova Cosmo Threads[work]; Lu[work]; market research[concept]; industry influencers[person]; Nova Cosmo Style[work]; Nova Lu Luxury[work]; Nova Lu Essentials[work]; business plan[concept]; Step 1[event]; financial projections[concept]; LuChic Fashion Co.[org]; materials[work]; CosmoNova Essentials[work]; focus groups[concept]; Nova Lu Style[work]; surveys[concept]; Nova Cosmo Wardrobe[work]; LuNova Collection[work]; email marketing[concept]; NovaLu Threads[work]; Marketing Strategy[concept]; business[org]; content marketing[concept]; Nova[work]; sales forecast[concept]; Nova Lu Wardrobe[work]; conversion rates[concept]; visual style[concept]; developing your brand[concept]; CosmoNova Apparel[work]; logo[concept]; Cosmo Couture Co.[org]; social media advertising[concept]; influencer partnerships[concept]; social media engagement[concept]; equipment[work]; sustainable fashion brand[org]; pricing strategies[concept]; financial software[work]; registering your business[concept]; new apparel business[org]; LuLux Apparel[work]; Budget[concept]; Sales Strategy[concept]; manufacturing[concept]; expenses[work]; CosmoNova Collection[work]; Conduct Market Research[concept]; revenue[concept]; leasing a workspace[concept]; revenue projections[concept]; break-even analysis[concept]; pitch book[work]; brand name[concept]; production process[concept]; Nova Cosmo Luxe[work]; University of Wisconsin Madison[org]; staffing costs[concept]; myself[person]; industry publications[concept]; NovaLu Fashion[work]; financial plan[work]; marketing tactics[concept]; Identify Your Target Market[concept]; Analytics[concept]; LuxeNova Couture[work]; Metrics[concept]; marketing strategies[concept]; marketing efforts[concept]; brand identity[concept]; start-up costs[concept]; Competitors[person]; Feedback[concept]; marketing expenses[concept]; angel investors[person]; Cosmo Chic Fashion[work]; sales channel[concept]; Operations Plan[concept]; website traffic[concept]; sales and marketing plan[concept]; vendors[org]; e-commerce website[concept]; detailed budget[concept]; profit margins[concept]; customers[person]; Conducting market research[concept]; names[work]; grants[concept]; Product Strategy[concept]; yourself[person]; income[concept]; suppliers[org]; venture capitalists[person]; start-up[concept]; Nova Cosmo Couture[org]; loans[concept]; reports[work]; customer expectations[concept]; May 2013[date]; distribution[concept]; advertising[concept]; plan[concept]; Define Your Vision and Mission Statement[event]; brick-and-mortar store[concept]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 98): Investment & Banking; Asset Management Division; consultant; Management and Human Resources; WI; Finance; industry events; Nova Cosmo; Nova Cosmo Threads; Lu; market research; industry influencers; Nova Cosmo Style; business plan; Step 1; financial projections; LuChic Fashion Co.; materials; CosmoNova Essentials; focus groups; surveys; Nova Cosmo Wardrobe; LuNova Collection; NovaLu Threads; Marketing Strategy; sales forecast; conversion rates; visual style; developing your brand; CosmoNova Apparel; logo; Cosmo Couture Co.; equipment; sustainable fashion brand; pricing strategies; financial software; registering your business; LuLux Apparel; Budget; Sales Strategy; manufacturing; expenses; CosmoNova Collection; Conduct Market Research; revenue; leasing a workspace; revenue projections; break-even analysis; pitch book; brand name; production process; Nova Cosmo Luxe; staffing costs; myself; industry publications; NovaLu Fashion; financial plan; marketing tactics; Identify Your Target Market; Analytics
+
+LLM relations (12):
+  NOVA LU -[worked_for]-> Goldman Sachs (status=ended)
+  NOVA LU -[graduated_from]-> University of Wisconsin Madison (from=2013-05-01)
+  NOVA LU -[wants_to_start_business_in]-> Los Angeles
+  NOVA LU -[graduated_with]-> Bachelor of Business Administration
+  Bachelor of Business Administration -[awarded_by]-> University of Wisconsin Madison
+  apparel business -[conducts,informed_by]-> market research
+  apparel business -[creates,developed_by]-> financial plan
+  apparel business -[creates,created_by]-> sales and marketing plan
+  apparel business -[utilizes]-> social media
+  apparel business -[utilizes]-> influencer partnerships
+  apparel business -[utilizes]-> content marketing
+  apparel business -[utilizes]-> email marketing
+
+LLM relations with NO local pair (10):
+  NOVA LU -[wants_to_start_business_in]-> Los Angeles
+  NOVA LU -[graduated_with]-> Bachelor of Business Administration
+  Bachelor of Business Administration -[awarded_by]-> University of Wisconsin Madison
+  apparel business -[conducts,informed_by]-> market research
+  apparel business -[creates,developed_by]-> financial plan
+  apparel business -[creates,created_by]-> sales and marketing plan
+  apparel business -[utilizes]-> social media
+  apparel business -[utilizes]-> influencer partnerships
+  apparel business -[utilizes]-> content marketing
+  apparel business -[utilizes]-> email marketing
+
+LOCAL relations (22):
+  NOVA LU -[studied]-> Management and Human Resources (1.00)
+  NOVA LU -[studied]-> Finance (1.00)
+  NOVA LU -[studied]-> Investment & Banking (1.00)
+  NOVA LU -[attended]-> University of Wisconsin Madison (0.99)
+  NOVA LU -[works_at]-> Goldman Sachs (0.97)
+  apparel business -[attended]-> industry events (0.96)
+  NOVA LU -[created]-> pitch book (0.95)
+  sustainable fashion brand -[located_in]-> Los Angeles (0.92)
+  me -[founded]-> new apparel business (0.92)
+  NOVA LU -[created]-> business plan (0.90)
+  University of Wisconsin Madison -[located_in]-> WI (0.84)
+  financial plan -[manages]-> expenses (0.84)
+  Asset Management Division -[part_of]-> Goldman Sachs (0.82)
+  apparel business -[bought]-> equipment (0.75)
+  apparel business -[received]-> Feedback (0.75)
+  financial plan -[manages]-> revenue (0.75)
+  apparel business -[bought]-> materials (0.74)
+  names -[plays]-> Nova (0.71)
+  names -[plays]-> Lu (0.70)
+  Conduct Market Research -[part_of]-> Conducting market research (0.62)
+  apparel business -[studied]-> Competitors (0.61)
+  Nova Cosmo -[located_in]-> Los Angeles (0.60)
+
+==========================================================================================
+SESSION 0e5e2d1a__sharegpt_jobjzzl_11
+LLM entities (14): Renogy G1[org]; air conditioner[other]; Battle Born Batteries[other]; 12 volts[concept]; 500 watts[concept]; 2400[concept]; 12,000 watt-hours[concept]; 36,000 watt-hours[concept]; $30,000[other]; Alaska[place]; solar charge controller[concept]; battery bank[concept]; solar array[concept]; Chinese controllers[org]
+
+LOCAL entities (64): Alaska[place]; battery bank[work]; alternator[work]; desert[place]; solar charge controller[work]; solar power system[work]; solar panels[work]; battery[work]; 40 amp one[work]; solar array[work]; solar charge controllers[work]; solar panel array[work]; 200 amp controller[work]; 240 amp controllers[work]; 100 amp controllers[work]; batteries[work]; system[work]; air conditioner[work]; DC to DC charger[work]; battery pack[work]; 500 watts[work]; author[person]; driving[concept]; copper[work]; solar battery[work]; most people[person]; wire[work]; people[person]; 40 amp charger[work]; 48 volt battery[work]; Renogy G1[work]; six kilowatt hours[work]; Rena g1[work]; 12-volt appliances[work]; book[work]; higher voltage battery[work]; Chinese controllers[work]; small window air conditioner[work]; two separate arrays[work]; DC to DC R energy charger[work]; microwave[work]; controllers[work]; ten kilowatt array[work]; battleborn batteries[work]; laptop[work]; van[work]; mounting[work]; grounder[work]; converters[work]; RV[work]; math[concept]; website[work]; 12 kilo watt hours[work]; 80 amp[work]; reader[person]; conditioner[work]; beginner videos[work]; 10 kilowatt hours[work]; device[work]; guys[person]; 208 amps[work]; backup redundancy[work]; video[work]; 40 amps[work]
+
+LLM entities MISSED by local (5): 12 volts; 2400; 12,000 watt-hours; 36,000 watt-hours; $30,000
+
+LOCAL extras (no LLM match, 49): alternator; desert; solar power system; solar panels; 40 amp one; solar panel array; 200 amp controller; 240 amp controllers; 100 amp controllers; system; DC to DC charger; battery pack; author; driving; copper; solar battery; most people; wire; people; 40 amp charger; 48 volt battery; six kilowatt hours; Rena g1; 12-volt appliances; book; higher voltage battery; two separate arrays; DC to DC R energy charger; microwave; ten kilowatt array; laptop; van; mounting; grounder; converters; RV; math; website; 12 kilo watt hours; 80 amp; reader; beginner videos; 10 kilowatt hours; device; guys; 208 amps; backup redundancy; video; 40 amps
+
+LLM relations (23):
+  Renogy G1 -[outputs]-> 40 amps
+  40 amps -[multiplied_by,gives]-> 12 volts
+  12 volts -[multiplied_by,gives]-> 480 watts
+  480 watts -[divided_by,gives]-> 2400
+  2400 -[gives]-> 5 hours
+  5 hours -[adjusted_for,gives]-> 2.5 hours
+  air conditioner -[requires]-> 500 watts
+  500 watts -[multiplied_by,gives]-> 24 hours
+  12,000 watt-hours -[multiplied_by,gives]-> 3 days
+  12,000 watt-hours -[increased_for,gives]-> 36,000 watt-hours
+  36,000 watt-hours -[requires]-> Battle Born Batteries
+  Battle Born Batteries -[costs,cost]-> $30,000
+  Renogy G1 -[charges]-> Battle Born Batteries
+  Renogy G1 -[operates_at]-> 12 volts
+  Battle Born Batteries -[rated_at]-> 12 volts
+  Battle Born Batteries -[capacity]-> 500 watts
+  Battle Born Batteries -[capacity]-> 2400
+  Battle Born Batteries -[capacity]-> 12,000 watt-hours
+  Battle Born Batteries -[capacity]-> 36,000 watt-hours
+  Alaska -[located_in]-> solar array
+  solar array -[charges,charging]-> battery bank
+  battery bank -[requires]-> solar charge controller
+  solar charge controller -[controls]-> solar array
+
+LLM relations with NO local pair (23):
+  Renogy G1 -[outputs]-> 40 amps
+  40 amps -[multiplied_by,gives]-> 12 volts
+  12 volts -[multiplied_by,gives]-> 480 watts
+  480 watts -[divided_by,gives]-> 2400
+  2400 -[gives]-> 5 hours
+  5 hours -[adjusted_for,gives]-> 2.5 hours
+  air conditioner -[requires]-> 500 watts
+  500 watts -[multiplied_by,gives]-> 24 hours
+  12,000 watt-hours -[multiplied_by,gives]-> 3 days
+  12,000 watt-hours -[increased_for,gives]-> 36,000 watt-hours
+  36,000 watt-hours -[requires]-> Battle Born Batteries
+  Battle Born Batteries -[costs,cost]-> $30,000
+  Renogy G1 -[charges]-> Battle Born Batteries
+  Renogy G1 -[operates_at]-> 12 volts
+  Battle Born Batteries -[rated_at]-> 12 volts
+  Battle Born Batteries -[capacity]-> 500 watts
+  Battle Born Batteries -[capacity]-> 2400
+  Battle Born Batteries -[capacity]-> 12,000 watt-hours
+  Battle Born Batteries -[capacity]-> 36,000 watt-hours
+  Alaska -[located_in]-> solar array
+  solar array -[charges,charging]-> battery bank
+  battery bank -[requires]-> solar charge controller
+  solar charge controller -[controls]-> solar array
+
+LOCAL relations (21):
+  battery -[part_of]-> solar power system (0.94)
+  me -[owns]-> air conditioner (0.91)
+  batteries -[part_of]-> solar power system (0.91)
+  solar array -[part_of]-> solar power system (0.90)
+  solar charge controller -[part_of]-> solar power system (0.89)
+  me -[owns]-> small window air conditioner (0.87)
+  solar charge controllers -[part_of]-> solar power system (0.78)
+  me -[owns]-> website (0.78)
+  solar panels -[part_of]-> solar power system (0.74)
+  me -[knows]-> math (0.70)
+  me -[owns]-> book (0.66)
+  solar charge controller -[part_of]-> system (0.65)
+  me -[located_in]-> desert (0.64)
+  wire -[part_of]-> solar power system (0.63)
+  battery -[part_of]-> system (0.63)
+  DC to DC R energy charger -[works_with]-> DC to DC charger (0.61)
+  solar panel array -[part_of]-> system (0.61)
+  battery pack -[part_of]-> solar panel array (0.61)
+  me -[bought]-> 40 amp one (0.61)
+  me -[received]-> six kilowatt hours (0.61)
+  me -[created]-> book (0.60)
+
+==========================================================================================
+SESSION 0e5e2d1a__ultrachat_222974
+LLM entities (18): Singer[person]; London[place]; Facebook[org]; Twitter[org]; Instagram[org]; YouTube[org]; social media[concept]; business conferences[event]; trade shows[event]; street teams[concept]; music events[concept]; fans[other]; promotional materials[concept]; musicians[other]; social media ads[work]; ticket sales[concept]; backstage passes[other]; exclusive merchandise[other]
+
+LOCAL entities (91): London[place]; Singer[person]; members[person]; influencers[person]; thought leaders[person]; musician[person]; stickers[work]; bloggers[person]; posters[work]; live music events[event]; promoter[person]; marketing experts[person]; brand ambassadors[person]; flyers[work]; event promoters[person]; artists[person]; social media ads[work]; volunteers[person]; street team[org]; team[person]; videos[work]; street team members[person]; social media influencers[person]; event pages[work]; musicians[person]; management[concept]; fans[person]; social media accounts[work]; promotional materials[work]; trade shows[event]; exclusive merchandise[work]; Twitter[work]; swag[work]; creation[concept]; Instagram[work]; backstage passes[work]; keynote speakers[person]; social media marketing[concept]; businesses[org]; organizations[org]; street teams[org]; event posters[work]; relevant brands[person]; music[work]; bands[person]; free tickets[work]; YouTube[work]; personal recommendations[concept]; social media profiles[work]; Facebook[work]; supporters[person]; listeners[person]; business conferences[event]; incentives[concept]; human touch[concept]; personal recommendation[concept]; social media[work]; event planning[concept]; social media platforms[work]; personal networks[org]; effort[concept]; promotional videos[work]; referral programs[concept]; event[event]; resources[concept]; testimonials[concept]; hashtags[concept]; giveaways[concept]; social media contests[concept]; special features[concept]; events[event]; ideal fans[person]; dedication[concept]; music events[event]; trade show[event]; local music events[event]; social media Q&A sessions[concept]; photos[concept]; shows[event]; targeted ads[work]; social media ad campaigns[concept]; performers[person]; AI Language model[person]; user-generated content[concept]; word of mouth[concept]; Personalized promotion[concept]; social sharing[concept]; word-of-mouth promotion[concept]; stories[work]; followers[person]; early bird pricing[work]
+
+LLM entities MISSED by local (1): ticket sales
+
+LOCAL extras (no LLM match, 55): members; influencers; thought leaders; stickers; bloggers; posters; promoter; marketing experts; brand ambassadors; flyers; event promoters; artists; volunteers; videos; street team members; event pages; management; swag; creation; keynote speakers; businesses; organizations; event posters; relevant brands; bands; free tickets; personal recommendations; supporters; listeners; incentives; human touch; personal recommendation; event planning; personal networks; effort; promotional videos; referral programs; resources; testimonials; hashtags; giveaways; special features; dedication; photos; targeted ads; performers; AI Language model; user-generated content; word of mouth; Personalized promotion; social sharing; word-of-mouth promotion; stories; followers; early bird pricing
+
+LLM relations (14):
+  Singer -[utilized]-> social media
+  Singer -[promoted]-> live music events
+  live music events -[located_in]-> London
+  business conferences -[promoted_by]-> social media
+  trade shows -[promoted_by]-> social media
+  social media -[promotes]-> live music events
+  social media -[applicable_to]-> business conferences
+  social media -[applicable_to]-> trade shows
+  street teams -[promotes]-> music events
+  street teams -[consist_of]-> fans
+  street teams -[provides]-> promotional materials
+  fans -[attend]-> music events
+  social media -[drives_traffic_to]-> music events
+  street teams -[increases]-> ticket sales
+
+LLM relations with NO local pair (10):
+  business conferences -[promoted_by]-> social media
+  trade shows -[promoted_by]-> social media
+  social media -[promotes]-> live music events
+  social media -[applicable_to]-> business conferences
+  social media -[applicable_to]-> trade shows
+  street teams -[promotes]-> music events
+  street teams -[consist_of]-> fans
+  fans -[attend]-> music events
+  social media -[drives_traffic_to]-> music events
+  street teams -[increases]-> ticket sales
+
+LOCAL relations (21):
+  members -[member_of]-> street team (0.91)
+  Singer -[works_with]-> bloggers (0.90)
+  street team -[created]-> promotional materials (0.88)
+  live music events -[located_in]-> London (0.86)
+  Singer -[participated_in]-> live music events (0.83)
+  Singer -[manages]-> live music events (0.83)
+  Singer -[works_with]-> social media influencers (0.83)
+  members -[received]-> incentives (0.83)
+  Singer -[created]-> event pages (0.80)
+  street team members -[received]-> promotional materials (0.77)
+  street team members -[member_of]-> street team (0.77)
+  Singer -[attended]-> live music events (0.71)
+  musician -[owns]-> social media profiles (0.70)
+  Singer -[works_with]-> team (0.69)
+  management -[manages]-> street team (0.68)
+  street team members -[received]-> flyers (0.65)
+  street team members -[received]-> stickers (0.63)
+  street team members -[received]-> exclusive merchandise (0.62)
+  street team members -[received]-> posters (0.62)
+  Singer -[created]-> promotional videos (0.60)
+  Singer -[created]-> event posters (0.60)
+
+==========================================================================================
+SESSION 0100672e__c694fe7b_1
+LLM entities (31): Data Science[concept]; Glassdoor[org]; Bureau of Labor Statistics[org]; Indeed[org]; Data Science Council of America[org]; Certified Data Scientist (CDS)[work]; Certified Analytics Professional (CAP)[work]; Certified Business Analyst (CBA)[work]; DataCamp[org]; XYZ University[org]; Master's in Business Administration[work]; Institute for Operations Research and the Management Sciences[org]; Certified Data Scientist[work]; Certified Analytics Professional[work]; IIBA[org]; DASCA[org]; INFORMS[org]; Python[concept]; R[concept]; SQL[concept]; CDS exam[event]; pandas[concept]; NumPy[concept]; scikit-learn[concept]; DataCamp's Python for Data Science Course[work]; Codecademy's Python Course[work]; Python for Data Science Handbook[work]; Coursera's Python for Everybody[work]; financial aid options[concept]; certification course[concept]; employer[org]
+
+LOCAL entities (150): 2013[date]; 1952[date]; DASCA[org]; IIBA[org]; Boston[place]; Chicago[place]; scikit-learn[work]; DataCamp[org]; New York City[place]; INFORMS[org]; NumPy[work]; International Institute of Business Analysis[org]; San Francisco[place]; Slack[work]; Los Angeles[place]; XYZ University[org]; Indeed[org]; Jake VanderPlas[person]; pandas[work]; Data Science Council of America[org]; Python for Everybody[work]; June[date]; Bureau of Labor Statistics[org]; Jupyter Notebook[work]; data science[concept]; algorithms[concept]; neural networks[concept]; data visualization[concept]; Git[work]; machine learning[concept]; Oracle[org]; Python for Data Science Handbook[work]; Azure[org]; object-oriented programming[concept]; analytics[concept]; Microsoft[org]; business analysis[concept]; text analytics[concept]; Institute for Operations Research and the Management Sciences[org]; MySQL[work]; AWS[org]; data analysis[concept]; IBM[org]; data structures[concept]; reinforcement learning[concept]; Deep learning[concept]; Google Cloud[org]; Natural language processing[concept]; Python for Data Science Course[work]; architecture[concept]; PostgreSQL[work]; unsupervised[concept]; Tableau[work]; Python Course[work]; MongoDB[work]; myself[person]; Glassdoor[org]; Power BI[work]; Data engineering[concept]; TensorFlow[work]; International Institute of Business Analysis (IIBA)[org]; employees[person]; supervised[concept]; Institute for Operations Research and the Management Sciences (INFORMS)[org]; Python[concept]; Certified Analytics Professional[work]; Excel[work]; business operations[concept]; I'm[person]; 2029[date]; Machine learning algorithms[concept]; commerce[concept]; Certified Data Scientist[work]; Certified Analytics Associate[work]; certification body[org]; computer science[concept]; learning[concept]; programming language[concept]; Codecademy[org]; Database management[concept]; Fortune 500[org]; operations research[concept]; statistics[concept]; practicing[concept]; data scientists[person]; Cloud platforms[work]; Business acumen[concept]; PyTorch[work]; D3.js[work]; materials[work]; employers[org]; Data visualization and communication[concept]; Data Scientist[person]; CDS exam[event]; SQL[concept]; Data mining and pattern recognition[concept]; Data Science Certification[work]; career development[concept]; Data types and data preprocessing[concept]; mathematics[concept]; government agencies[org]; employer[org]; domain expertise[concept]; tutorials[concept]; case studies[concept]; Data Science Fundamentals[concept]; guidance[concept]; CAP[work]; CDS[work]; online courses[concept]; Certified Business Analyst (CBA)[work]; exam[event]; Data Science Applications[concept]; projects[concept]; Big data and analytics[concept]; CAA[work]; investment[concept]; Python programming course[event]; programming concepts[concept]; Data manipulation and analysis[concept]; support[concept]; MBA[concept]; Programming languages[concept]; Machine learning libraries[concept]; Certified Analytics Professional (CAP)[work]; Coursera[org]; 5 years[date]; Certified Data Scientist (CDS)[work]; education[concept]; Programming Skills[concept]; beginner-friendly course[work]; quizzes[concept]; healthcare[org]; certification course[event]; finance[org]; educational institutions[org]; career[concept]; CDS certification[event]; management[concept]; resources[work]; programming[concept]; Cost[concept]; recommended resources[concept]; retail[org]; practice exercises[concept]; Master's in Business Administration[concept]; scholarships[concept]; study[concept]; Communication and collaboration[work]; financial aid[concept]
+
+LLM entities MISSED by local (1): R
+
+LOCAL extras (no LLM match, 105): 2013; 1952; Boston; Chicago; New York City; International Institute of Business Analysis; San Francisco; Slack; Los Angeles; Jake VanderPlas; June; Jupyter Notebook; algorithms; neural networks; data visualization; Git; machine learning; Oracle; Azure; object-oriented programming; Microsoft; business analysis; text analytics; MySQL; AWS; data analysis; IBM; data structures; reinforcement learning; Deep learning; Google Cloud; Natural language processing; architecture; PostgreSQL; unsupervised; Tableau; MongoDB; myself; Power BI; Data engineering; TensorFlow; employees; supervised; Excel; business operations; I'm; 2029; Machine learning algorithms; commerce; Certified Analytics Associate; certification body; computer science; learning; programming language; Database management; Fortune 500; practicing; data scientists; Cloud platforms; Business acumen
+
+LLM relations (45):
+  Data Science -[reported_by]-> Glassdoor
+  Data Science -[reported_by]-> Bureau of Labor Statistics
+  Data Science -[reported_by]-> Indeed
+  Data Science -[certified_by]-> Data Science Council of America
+  Certified Data Scientist (CDS) -[created_by]-> Data Science Council of America
+  Certified Analytics Professional (CAP) -[created_by]-> Institute for Operations Research and the Management Sciences
+  Certified Business Analyst (CBA) -[created_by]-> International Institute of Business Analysis
+  Data Science Certification by DataCamp -[created_by]-> DataCamp
+  XYZ University -[offered,offers]-> Master's in Business Administration
+  Data Science -[is_a]-> data science
+  Data Science Council of America -[offers]-> Certified Data Scientist (CDS)
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Professional (CAP)
+  International Institute of Business Analysis -[offers]-> Certified Business Analyst (CBA)
+  Data Science Council of America -[offers]-> Certified Data Scientist
+  Data Science Council of America -[offers]-> Certified Analytics Professional
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Professional
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Associate
+  DataCamp -[offers]-> certification
+  IIBA -[offers]-> certification
+  Data Science Council of America -[partnered_with]-> IBM
+  Data Science Council of America -[partnered_with]-> Microsoft
+  Data Science Council of America -[partnered_with]-> Oracle
+  DASCA -[offers]-> Certified Data Scientist
+  DASCA -[offers]-> Certified Analytics Professional
+  INFORMS -[offers]-> Certified Analytics Professional
+  INFORMS -[offers]-> Certified Analytics Associate
+  DASCA -[partnered_with]-> IBM
+  DASCA -[partnered_with]-> Microsoft
+  DASCA -[partnered_with]-> Oracle
+  DASCA -[recommends]-> CDS exam
+  CDS exam -[requires]-> Python
+  CDS exam -[requires]-> R
+  CDS exam -[requires]-> SQL
+  CDS exam -[requires]-> pandas
+  CDS exam -[requires]-> NumPy
+  CDS exam -[requires]-> scikit-learn
+  DataCamp's Python for Data Science Course -[focuses_on]-> Python
+  Codecademy's Python Course -[focuses_on]-> Python
+  Python for Data Science Handbook -[focuses_on]-> Python
+  Coursera's Python for Everybody -[focuses_on]-> Python
+  Python -[popular_in]-> data science
+  Python -[relies_on]-> machine learning
+  Python -[relies_on]-> data visualization
+  certification course -[explore]-> financial aid options
+  employer -[sponsor,reimburse]-> certification course
+
+LLM relations with NO local pair (36):
+  Data Science -[reported_by]-> Glassdoor
+  Data Science -[reported_by]-> Bureau of Labor Statistics
+  Data Science -[reported_by]-> Indeed
+  Data Science -[certified_by]-> Data Science Council of America
+  Certified Data Scientist (CDS) -[created_by]-> Data Science Council of America
+  Certified Analytics Professional (CAP) -[created_by]-> Institute for Operations Research and the Management Sciences
+  Certified Business Analyst (CBA) -[created_by]-> International Institute of Business Analysis
+  Data Science Certification by DataCamp -[created_by]-> DataCamp
+  XYZ University -[offered,offers]-> Master's in Business Administration
+  Data Science -[is_a]-> data science
+  Data Science Council of America -[offers]-> Certified Data Scientist (CDS)
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Professional (CAP)
+  International Institute of Business Analysis -[offers]-> Certified Business Analyst (CBA)
+  Data Science Council of America -[offers]-> Certified Data Scientist
+  Data Science Council of America -[offers]-> Certified Analytics Professional
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Professional
+  Institute for Operations Research and the Management Sciences -[offers]-> Certified Analytics Associate
+  DataCamp -[offers]-> certification
+  IIBA -[offers]-> certification
+  Data Science Council of America -[partnered_with]-> IBM
+  Data Science Council of America -[partnered_with]-> Microsoft
+  Data Science Council of America -[partnered_with]-> Oracle
+  INFORMS -[offers]-> Certified Analytics Professional
+  INFORMS -[offers]-> Certified Analytics Associate
+  DASCA -[recommends]-> CDS exam
+  CDS exam -[requires]-> Python
+  CDS exam -[requires]-> R
+  CDS exam -[requires]-> SQL
+  CDS exam -[requires]-> pandas
+  CDS exam -[requires]-> NumPy
+  CDS exam -[requires]-> scikit-learn
+  Coursera's Python for Everybody -[focuses_on]-> Python
+  Python -[relies_on]-> machine learning
+  Python -[relies_on]-> data visualization
+  certification course -[explore]-> financial aid options
+  employer -[sponsor,reimburse]-> certification course
+
+LOCAL relations (73):
+  INFORMS -[founded]-> 1952 (0.99)
+  DASCA -[works_with]-> Oracle (0.99)
+  DASCA -[works_with]-> Microsoft (0.99)
+  DASCA -[founded]-> 2013 (0.99)
+  DASCA -[works_with]-> IBM (0.99)
+  me -[attended]-> XYZ University (0.98)
+  New York City -[located_in]-> me (0.97)
+  Jake VanderPlas -[created]-> Python for Data Science Handbook (0.97)
+  me -[interested_in]-> Data Science (0.96)
+  San Francisco -[located_in]-> me (0.95)
+  Boston -[located_in]-> me (0.94)
+  Chicago -[located_in]-> me (0.93)
+  me -[received]-> support (0.93)
+  Los Angeles -[located_in]-> me (0.92)
+  Python -[part_of]-> data science (0.92)
+  data scientists -[works_with]-> Pandas (0.91)
+  me -[received]-> guidance (0.91)
+  data scientists -[works_with]-> MySQL (0.89)
+  data scientists -[works_with]-> Excel (0.89)
+  data scientists -[works_with]-> NumPy (0.88)
+  data scientists -[works_with]-> MongoDB (0.87)
+  NumPy -[part_of]-> data science (0.87)
+  data scientists -[works_with]-> Tableau (0.86)
+  pandas -[part_of]-> data science (0.86)
+  data scientists -[works_with]-> PostgreSQL (0.86)
+  scikit-learn -[part_of]-> data science (0.86)
+  data scientists -[works_with]-> Power BI (0.86)
+  me -[interested_in]-> certification course (0.83)
+  me -[studied]-> commerce (0.83)
+  data scientists -[works_with]-> D3.js (0.82)
+  Data Science Council of America -[located_in]-> me (0.82)
+  data scientists -[works_with]-> Python (0.82)
+  data scientists -[works_with]-> scikit-learn (0.81)
+  Codecademy -[owns]-> Python Course (0.79)
+  data scientists -[knows]-> Python (0.78)
+  me -[studied]-> Python (0.78)
+  data scientists -[works_with]-> TensorFlow (0.77)
+  data scientists -[works_with]-> R (0.76)
+  data scientists -[knows]-> SQL (0.76)
+  data scientists -[knows]-> R (0.75)
+  data science -[located_in]-> me (0.75)
+  supervised -[part_of]-> Machine learning algorithms (0.74)
+  data scientists -[knows]-> scikit-learn (0.73)
+  unsupervised -[part_of]-> Machine learning algorithms (0.72)
+  data scientists -[knows]-> Machine learning libraries (0.72)
+  DataCamp -[owns]-> Python for Data Science Course (0.72)
+  me -[received]-> Master's in Business Administration (0.72)
+  neural networks -[part_of]-> Machine learning algorithms (0.71)
+  me -[received]-> MBA (0.71)
+  reinforcement learning -[part_of]-> Machine learning algorithms (0.70)
+  me -[studied]-> management (0.70)
+  data scientists -[works_with]-> PyTorch (0.70)
+  data scientists -[works_with]-> SQL (0.70)
+  data scientists -[knows]-> Pandas (0.70)
+  data scientists -[interested_in]-> Data Science (0.69)
+  data scientists -[knows]-> Excel (0.69)
+  data scientists -[knows]-> TensorFlow (0.67)
+  data scientists -[knows]-> D3.js (0.67)
+  data scientists -[knows]-> PyTorch (0.66)
+  data scientists -[knows]-> Tableau (0.65)
+  data scientists -[knows]-> NumPy (0.64)
+  data scientists -[knows]-> Data visualization (0.64)
+  machine learning -[part_of]-> data science (0.63)
+  DASCA -[member_of]-> Data Science Council of America (0.63)
+  me -[interested_in]-> data analysis (0.63)
+  data scientists -[works_with]-> Data visualization (0.63)
+  DASCA -[created]-> Certified Analytics Professional (0.62)
+  me -[attended]-> certification course (0.61)
+  me -[celebrated]-> June (0.61)
+  me -[interested_in]-> scholarships (0.61)
+  DASCA -[created]-> Certified Data Scientist (0.61)
+  data structures -[part_of]-> programming concepts (0.60)
+  data scientists -[knows]-> Power BI (0.60)
+
+==========================================================================================
+SESSION 0100672e__a4b223a7_1
+LLM entities (28): Sarah[person]; farmers' market[place]; small business association[org]; spicy pepper jelly[work]; cranberry orange marmalade[work]; homemade jam[concept]; holiday market[event]; holiday season[event]; Instagram[other]; Gift of the Month[work]; holiday-themed backdrop[concept]; decorative elements[concept]; Gift of the Month subscription service[work]; local businesses[org]; influencers[org]; holiday-themed notecards[work]; artisanal coffee[work]; vintage jars[other]; metal lanterns[other]; pinecones[other]; evergreen branches[other]; jam[other]; honey[other]; eucalyptus[other]; ferns[other]; string lights[other]; Photo Opportunity[other]; Take a Winter Wonderland Selfie[other]
+
+LOCAL entities (125): Sarah[person]; customers[person]; cranberry orange marmalade[work]; friends[person]; festival[event]; spicy pepper jelly[work]; customer[person]; seminar[event]; Gift-Giving Event[event]; evergreen branches[work]; metal lanterns[work]; holiday market[event]; festive lights[work]; strawberry jam[work]; pinecones[work]; new flavors[work]; I've[person]; vintage jars[work]; local small business association[org]; family[person]; yogurt[work]; social media contest[event]; free gift[work]; homemade jam[work]; lanterns[work]; flowers[work]; Tasting Collection[work]; weekly farmers' market[event]; jars[work]; Flavor Flight[work]; eucalyptus[work]; influencers[person]; artisanal coffee[work]; ingredients[work]; holiday-themed backdrop[work]; flavors[work]; winner[person]; honey[work]; gift baskets[work]; staff[person]; holiday-themed notecards[work]; ferns[work]; stall[place]; string lights[work]; Winter Wonderland Bundle[work]; limited-edition gift[work]; bundles[work]; risers[work]; products[work]; different flavors[work]; small-scale test[concept]; multiple jars[work]; packaging[work]; jam[work]; local businesses[org]; gift-giving[concept]; farmers' market[place]; decorations[work]; shelves[work]; gifts[work]; purchase[concept]; Verbal communication[concept]; Pricing[concept]; new flavor[work]; Photo Opportunity[event]; Gift wrapping[work]; warm lighting[work]; Hostess Gift Baskets[work]; Exclusive gifts[work]; Teacher Appreciation Jars[work]; discount offer[work]; Holiday Season Special[work]; business[org]; seasonal labels[concept]; Gift of the Month[work]; Competitor pricing[concept]; labor[work]; Visual merchandising[concept]; brand[org]; great ideas[concept]; decorative elements[work]; hanging displays[work]; pricing strategy[concept]; backdrop[work]; target audience[person]; Value-based pricing[concept]; core products[work]; recipients[person]; effective market stall design[concept]; complimentary gift wrapping[work]; market stall design[concept]; personalized gift consultations[concept]; Product of the Month[work]; unique flavors[work]; vintage wooden table[work]; unique and thoughtful presents[work]; specific flavors[work]; markup[concept]; holiday season[event]; testing[concept]; email marketing[concept]; Feature Flavor[work]; holiday shopping[concept]; visually appealing displays[concept]; seasonal flavors[work]; fresh greenery[work]; Point-of-purchase materials[concept]; Gift-givers[person]; artisanal jam vendors[person]; selling price[concept]; pricing strategies[concept]; social media[concept]; prize[work]; similar products[work]; unique and thoughtful gift[work]; greenery[work]; competitors[person]; sales[work]; baskets[work]; complementary flavors[work]; average sale amount[concept]; Instagram-worthy backdrop[work]; Research[concept]; Lighting[work]; artisanal gifts[work]
+
+LLM entities MISSED by local (1): Take a Winter Wonderland Selfie
+
+LOCAL extras (no LLM match, 93): customers; friends; festival; customer; seminar; Gift-Giving Event; festive lights; strawberry jam; new flavors; I've; family; yogurt; social media contest; free gift; flowers; Tasting Collection; Flavor Flight; ingredients; flavors; winner; gift baskets; staff; stall; Winter Wonderland Bundle; limited-edition gift; bundles; risers; products; different flavors; small-scale test; multiple jars; packaging; gift-giving; decorations; shelves; gifts; purchase; Verbal communication; Pricing; new flavor; Gift wrapping; warm lighting; Hostess Gift Baskets; Exclusive gifts; Teacher Appreciation Jars; discount offer; seasonal labels; Competitor pricing; labor; Visual merchandising; brand; great ideas; hanging displays; pricing strategy; target audience; Value-based pricing; core products; recipients; effective market stall design; complimentary gift wrapping
+
+LLM relations (30):
+  Sarah -[uses]-> strawberry jam
+  homemade jam -[sold_at]-> farmers' market
+  small business association -[hosted]-> seminar
+  spicy pepper jelly -[is_a_flavor_of]-> homemade jam
+  cranberry orange marmalade -[is_a_flavor_of]-> homemade jam
+  holiday market -[featured_at]-> homemade jam
+  User -[asked,received_help]-> Assistant
+  seminar -[focused_on]-> market stall design
+  Sarah -[loyal_customer,celebrates]-> holiday season
+  holiday season -[features,promotes]-> Gift of the Month
+  Instagram -[shares,promotes]-> holiday season
+  Sarah -[received]-> discount
+  holiday season -[increases]-> gift-giving potential
+  decorative elements -[enhances]-> stall
+  Gift of the Month subscription service -[attracts]-> customers
+  holiday-themed notecards -[promoted_by]-> Instagram
+  artisanal coffee -[promoted_by]-> Instagram
+  Instagram -[showcased_in]-> holiday-themed notecards
+  Instagram -[showcased_in]-> artisanal coffee
+  vintage jars -[incorporated_in]-> backdrop
+  metal lanterns -[incorporated_in]-> backdrop
+  pinecones -[incorporated_in]-> backdrop
+  evergreen branches -[incorporated_in]-> backdrop
+  jam -[displayed_in]-> backdrop
+  honey -[displayed_in]-> backdrop
+  eucalyptus -[incorporated_in]-> backdrop
+  ferns -[incorporated_in]-> backdrop
+  string lights -[used_in]-> backdrop
+  Photo Opportunity -[created_for]-> stall
+  Take a Winter Wonderland Selfie -[created_for]-> stall
+
+LLM relations with NO local pair (28):
+  Sarah -[uses]-> strawberry jam
+  homemade jam -[sold_at]-> farmers' market
+  small business association -[hosted]-> seminar
+  spicy pepper jelly -[is_a_flavor_of]-> homemade jam
+  cranberry orange marmalade -[is_a_flavor_of]-> homemade jam
+  holiday market -[featured_at]-> homemade jam
+  User -[asked,received_help]-> Assistant
+  Sarah -[loyal_customer,celebrates]-> holiday season
+  holiday season -[features,promotes]-> Gift of the Month
+  Instagram -[shares,promotes]-> holiday season
+  Sarah -[received]-> discount
+  holiday season -[increases]-> gift-giving potential
+  Gift of the Month subscription service -[attracts]-> customers
+  holiday-themed notecards -[promoted_by]-> Instagram
+  artisanal coffee -[promoted_by]-> Instagram
+  Instagram -[showcased_in]-> holiday-themed notecards
+  Instagram -[showcased_in]-> artisanal coffee
+  vintage jars -[incorporated_in]-> backdrop
+  metal lanterns -[incorporated_in]-> backdrop
+  pinecones -[incorporated_in]-> backdrop
+  evergreen branches -[incorporated_in]-> backdrop
+  jam -[displayed_in]-> backdrop
+  honey -[displayed_in]-> backdrop
+  eucalyptus -[incorporated_in]-> backdrop
+  ferns -[incorporated_in]-> backdrop
+  string lights -[used_in]-> backdrop
+  Photo Opportunity -[created_for]-> stall
+  Take a Winter Wonderland Selfie -[created_for]-> stall
+
+LOCAL relations (54):
+  me -[attended]-> seminar (0.96)
+  customers -[attended]-> seminar (0.94)
+  me -[received]-> great ideas (0.94)
+  me -[created]-> packaging (0.92)
+  me -[created]-> seasonal labels (0.92)
+  customers -[bought]-> jars (0.92)
+  customers -[interested_in]-> flavors (0.91)
+  me -[visited]-> weekly farmers' market (0.91)
+  customers -[visited]-> weekly farmers' market (0.89)
+  me -[attended]-> weekly farmers' market (0.89)
+  seminar -[studied]-> market stall design (0.89)
+  Lighting -[located_in]-> stall (0.87)
+  me -[owns]-> stall (0.85)
+  me -[created]-> cranberry orange marmalade (0.85)
+  festive lights -[part_of]-> stall (0.82)
+  customers -[interested_in]-> artisanal gifts (0.82)
+  me -[created]-> spicy pepper jelly (0.81)
+  me -[received]-> pricing strategies (0.81)
+  customer -[received]-> free gift (0.80)
+  customers -[visited]-> stall (0.80)
+  Sarah -[interested_in]-> new flavors (0.78)
+  me -[created]-> new flavors (0.77)
+  artisanal jam vendors -[visited]-> farmers' market (0.77)
+  me -[member_of]-> local small business association (0.77)
+  customers -[participated_in]-> social media contest (0.77)
+  flowers -[part_of]-> stall (0.76)
+  me -[participated_in]-> seminar (0.76)
+  evergreen branches -[part_of]-> stall (0.76)
+  holiday-themed backdrop -[part_of]-> stall (0.75)
+  customers -[received]-> free gift (0.74)
+  me -[owns]-> homemade jam (0.74)
+  customers -[bought]-> different flavors (0.73)
+  pinecones -[part_of]-> stall (0.71)
+  me -[received]-> visually appealing displays (0.70)
+  decorative elements -[part_of]-> stall (0.69)
+  customers -[participated_in]-> seminar (0.69)
+  customers -[received]-> new flavor (0.67)
+  customers -[participated_in]-> Gift-Giving Event (0.67)
+  artisanal jam vendors -[attended]-> farmers' market (0.67)
+  customers -[interested_in]-> unique and thoughtful presents (0.66)
+  winner -[participated_in]-> social media contest (0.66)
+  customers -[participated_in]-> small-scale test (0.66)
+  customers -[bought]-> multiple jars (0.66)
+  customers -[works_with]-> influencers (0.65)
+  customers -[received]-> holiday-themed notecards (0.65)
+  customers -[attended]-> Gift-Giving Event (0.65)
+  Sarah -[interested_in]-> different flavors (0.64)
+  me -[interested_in]-> holiday market (0.63)
+  customers -[interested_in]-> new flavors (0.63)
+  metal lanterns -[part_of]-> stall (0.63)
+  customers -[interested_in]-> different flavors (0.63)
+  customers -[bought]-> homemade jam (0.62)
+  customers -[bought]-> gifts (0.62)
+  me -[created]-> visually appealing displays (0.61)
+
+==========================================================================================
+SESSION 0100672e__answer_35c9798c_2
+LLM entities (19): coffee mugs[work]; cousin[person]; Christmas[event]; birthdays[event]; Easter[event]; Thanksgiving[event]; $297[other]; $1,188[other]; $250[other]; $718[other]; $200[other]; $325[other]; $135[other]; $60[other]; $150[other]; $810[other]; close friends[other]; family[other]; coworkers[other]
+
+LOCAL entities (64): weddings[event]; Graduations[event]; holidays[event]; Hanukkah[event]; Christmas[event]; coffee mugs[work]; Baby showers[event]; birthday[event]; birthdays[event]; best friend[person]; baby shower[event]; coworkers[person]; Thanksgiving[event]; wedding[event]; Easter[event]; friend[person]; anniversary[event]; mom[person]; close friends[person]; friends[person]; gifts[work]; family member[person]; family[person]; colleagues[person]; group gift[event]; your[person]; Graduation[event]; cards[work]; wrapping paper[work]; Christmas gifts[work]; gift-giving expenses[event]; wine tastings[concept]; Host/hostess gifts[event]; gift-giving[concept]; coworker[person]; coffee mug[work]; birthday gifts[event]; cooking classes[concept]; budgeting plan[concept]; expenses[concept]; brother[person]; hostess[person]; acquaintances[person]; significant occasion[event]; Charitable donations[concept]; cousin[person]; gift-giving occasions[event]; Other[event]; family members[person]; $60[concept]; finances[concept]; miscellaneous gifts[event]; birthday gift[event]; holiday gifts[work]; someone[person]; Experiences[concept]; gift-giving habits[concept]; Occasional gifts[event]; $200[concept]; regular gifts[work]; spontaneous gifts[event]; Homemade gifts[work]; housewarming[event]; 3 months[date]
+
+LLM entities MISSED by local (8): $297; $1,188; $250; $718; $325; $135; $150; $810
+
+LOCAL extras (no LLM match, 45): weddings; Graduations; holidays; Hanukkah; Baby showers; best friend; baby shower; wedding; anniversary; mom; gifts; colleagues; group gift; your; Graduation; cards; wrapping paper; gift-giving expenses; wine tastings; Host/hostess gifts; gift-giving; birthday gifts; cooking classes; budgeting plan; expenses; brother; hostess; acquaintances; significant occasion; Charitable donations; gift-giving occasions; Other; finances; miscellaneous gifts; birthday gift; holiday gifts; someone; Experiences; gift-giving habits; Occasional gifts; regular gifts; spontaneous gifts; Homemade gifts; housewarming; 3 months
+
+LLM relations (23):
+  User -[spent]-> coffee mugs
+  User -[interested_in]-> gift-giving
+  User -[seeking_help_with]-> budgeting
+  Assistant -[provides_advice_on]-> gift-giving
+  Assistant -[provides_advice_on]-> budgeting
+  $297 -[annualized]-> $1,188
+  $1,188 -[includes]-> Christmas
+  $1,188 -[includes]-> birthdays
+  $718 -[allocated_to]-> birthdays
+  $718 -[allocated_to]-> Christmas
+  $718 -[allocated_to]-> other regular gifts
+  $200 -[allocated]-> birthdays
+  $325 -[allocated]-> Christmas
+  $135 -[allocated]-> other regular gifts
+  $150 -[allocated]-> coworker birthday gifts
+  $1,188 -[annualized,based_on]-> $297
+  $1,438 -[updated,based_on]-> $1,188
+  $718 -[allocated,from]-> $1,438
+  $200 -[allocated,for]-> $718
+  $250 -[allocated,for]-> Christmas
+  $810 -[allocated_to]-> close friends
+  $810 -[allocated_to]-> family
+  $810 -[allocated_to]-> coworkers
+
+LLM relations with NO local pair (20):
+  Assistant -[provides_advice_on]-> gift-giving
+  Assistant -[provides_advice_on]-> budgeting
+  $297 -[annualized]-> $1,188
+  $1,188 -[includes]-> Christmas
+  $1,188 -[includes]-> birthdays
+  $718 -[allocated_to]-> birthdays
+  $718 -[allocated_to]-> Christmas
+  $718 -[allocated_to]-> other regular gifts
+  $200 -[allocated]-> birthdays
+  $325 -[allocated]-> Christmas
+  $135 -[allocated]-> other regular gifts
+  $150 -[allocated]-> coworker birthday gifts
+  $1,188 -[annualized,based_on]-> $297
+  $1,438 -[updated,based_on]-> $1,188
+  $718 -[allocated,from]-> $1,438
+  $200 -[allocated,for]-> $718
+  $250 -[allocated,for]-> Christmas
+  $810 -[allocated_to]-> close friends
+  $810 -[allocated_to]-> family
+  $810 -[allocated_to]-> coworkers
+
+LOCAL relations (51):
+  me -[bought]-> coffee mugs (0.97)
+  me -[donated_to]-> group gift (0.93)
+  Christmas -[part_of]-> Holidays (0.92)
+  me -[celebrated]-> Christmas (0.92)
+  me -[gave_to]-> coworkers (0.92)
+  me -[bought]-> gifts (0.92)
+  coworkers -[received]-> coffee mug (0.84)
+  me -[celebrated]-> birthday (0.83)
+  me -[created]-> budgeting plan (0.82)
+  brother -[celebrated]-> anniversary (0.81)
+  Weddings -[part_of]-> Holidays (0.81)
+  me -[spent_on]-> Christmas gifts (0.81)
+  best friend -[celebrated]-> birthday (0.80)
+  Hanukkah -[part_of]-> Holidays (0.80)
+  me -[spent_on]-> $60 (0.78)
+  me -[spent_on]-> gifts (0.78)
+  mom -[celebrated]-> Birthday (0.78)
+  Wedding -[part_of]-> Holidays (0.77)
+  your -[spent_on]-> Christmas gifts (0.77)
+  best friend -[friend_of]-> me (0.76)
+  coworkers -[received]-> coffee mugs (0.76)
+  me -[manages]-> finances (0.76)
+  me -[manages]-> gift-giving (0.74)
+  friend -[received]-> gift-giving (0.74)
+  weddings -[part_of]-> gift-giving occasions (0.74)
+  your -[celebrated]-> birthdays (0.73)
+  holidays -[part_of]-> gift-giving occasions (0.73)
+  Christmas -[part_of]-> gift-giving occasions (0.72)
+  Baby showers -[part_of]-> Holidays (0.70)
+  family -[family_of]-> me (0.69)
+  me -[bought]-> regular gifts (0.69)
+  close friends -[received]-> birthday gifts (0.68)
+  weddings -[part_of]-> gift-giving (0.67)
+  me -[gave_to]-> close friends (0.67)
+  your -[spent_on]-> birthday gifts (0.67)
+  Thanksgiving -[part_of]-> Holidays (0.66)
+  Easter -[part_of]-> Holidays (0.65)
+  Baby shower -[part_of]-> Holidays (0.65)
+  coworkers -[bought]-> coffee mug (0.65)
+  Graduations -[part_of]-> Holidays (0.65)
+  your -[bought]-> Christmas gifts (0.65)
+  me -[donated_to]-> baby shower (0.65)
+  holidays -[part_of]-> gift-giving (0.64)
+  Birthdays -[part_of]-> Holidays (0.64)
+  Christmas gifts -[part_of]-> Christmas (0.64)
+  me -[spent_on]-> birthday (0.63)
+  me -[works_with]-> coworkers (0.63)
+  gift-giving occasions -[part_of]-> gift-giving (0.62)
+  me -[participated_in]-> baby shower (0.62)
+  Christmas -[part_of]-> gift-giving (0.61)
+  your -[bought]-> holiday gifts (0.61)
+
+==========================================================================================
+SESSION 0bb5a684__7652f851_1
+LLM entities (25): February 12th[date]; $60,000[other]; $20,000[other]; $250,000 to $300,000[other]; $1,500 - $2,000[other]; $150 - $200[other]; $500 - $700[other]; $500 - $1,000[other]; $1,000 - $1,500[other]; $200 - $500[other]; FHA Loans[concept]; Federal Housing Administration[org]; conventional loans[concept]; 30th birthday[event]; college[other]; adjustable-rate mortgages[concept]; fixed-rate mortgages[concept]; VA Loans[work]; USDA Loans[work]; state and local programs[org]; New York City[place]; Los Angeles[place]; Chicago[place]; Houston[place]; Phoenix[place]
+
+LOCAL entities (140): Federal Housing Administration[org]; townhouse[work]; IRA[work]; United States[place]; FHA loans[work]; TX[place]; CA[place]; condo[work]; IL[place]; NY[place]; county[place]; conventional loans[work]; AZ[place]; city[place]; financial advisor[person]; research[concept]; 401(k)[work]; 30th birthday celebration[event]; single-family home[work]; local governments[org]; Fixed-rate mortgages[work]; lender[org]; gifts[concept]; hobbies[concept]; subscriptions[concept]; real estate agent[person]; credit cards[work]; rural area[place]; ARM[work]; Travel[concept]; high-yield savings accounts[work]; state[place]; February 12th[date]; Miscellaneous[concept]; progress[event]; adjustable-rate[work]; Get pre-approved[concept]; www.hud.gov[org]; guidance[concept]; ARMs[work]; lower-interest loan[work]; adjustable-rate mortgage[work]; balance transfer credit card[work]; fixed-rate mortgage[work]; adjustable-rate mortgages[work]; real estate agents[person]; fixed-rate[work]; tax returns[concept]; lenders[org]; certificates of deposit (CDs)[work]; advice[concept]; Houston[place]; FHA[org]; achievements[event]; first-time homebuyers[person]; your[person]; Determine your goals[concept]; crunching numbers[concept]; bank statements[concept]; roommate[person]; Entertainment[concept]; dining out[concept]; gas[concept]; personalized plan[work]; Down Payment Savings Plan[work]; home[work]; virtual cheers[event]; Chicago[place]; Assess your financial situation[concept]; government-backed loans[work]; First-Time Homebuyer Programs[work]; USDA Loans[work]; 30th birthday[event]; VA Loans[work]; VA loan[work]; property[work]; house[work]; Phoenix[place]; electricity[concept]; Rent[concept]; I'm[person]; income verification[concept]; high-interest debts[work]; states[org]; success[event]; mortgage broker[person]; Gather documents[concept]; FHA loan[work]; Los Angeles[place]; USDA loan[work]; employer-matched retirement accounts[work]; Groceries[concept]; future[place]; fees[concept]; planning[concept]; professionals[org]; State and Local Programs[org]; tax credits[work]; water[concept]; compare rates[concept]; maintenance[concept]; New York City[place]; college[org]; homebuying[concept]; government[org]; current job[org]; Debt Repayment[concept]; FHA loan limits[work]; mortgages[work]; phone bill[concept]; internet[concept]; insurance[concept]; down payment[concept]; $20,000[concept]; Discretionary Spending[concept]; areas of interest[place]; area[place]; Down payment savings[concept]; financial documents[concept]; track your income and expenses[concept]; car insurance[concept]; set new goals[concept]; Utilities[concept]; yourself[person]; student loans[concept]; grants[work]; terms[concept]; closing costs[concept]; Research lenders[concept]; long-term goals[concept]; Transportation[concept]; expenses[concept]; government-backed mortgages[work]; Resources[org]; purchase price[work]; mortgage options[concept]; Minimum debt payments[concept]; pre-approved[concept]; car loan[concept]; Cheers[person]
+
+LLM entities MISSED by local (8): $60,000; $250,000 to $300,000; $1,500 - $2,000; $150 - $200; $500 - $700; $500 - $1,000; $1,000 - $1,500; $200 - $500
+
+LOCAL extras (no LLM match, 112): townhouse; IRA; United States; TX; CA; condo; IL; NY; county; AZ; financial advisor; research; 401(k); single-family home; local governments; lender; gifts; hobbies; subscriptions; real estate agent; credit cards; rural area; ARM; Travel; high-yield savings accounts; Miscellaneous; progress; Get pre-approved; www.hud.gov; guidance; ARMs; lower-interest loan; balance transfer credit card; real estate agents; tax returns; lenders; certificates of deposit (CDs); advice; FHA; achievements; first-time homebuyers; your; Determine your goals; crunching numbers; bank statements; roommate; Entertainment; dining out; gas; personalized plan; Down Payment Savings Plan; home; virtual cheers; Assess your financial situation; government-backed loans; First-Time Homebuyer Programs; property; house; electricity; Rent
+
+LLM relations (21):
+  User -[celebrated]-> February 12th
+  User -[earns]-> $60,000
+  User -[saves]-> $20,000
+  User -[targets,targets_price_range]-> $250,000 to $300,000
+  User -[allocates,for_rent,allocates_rent]-> $1,500 - $2,000
+  User -[allocates,for_utilities,allocates_utilities]-> $150 - $200
+  User -[allocates,for_groceries,for_transportation,allocates_groceries,allocates_transportation]-> $500 - $700
+  User -[allocates,for_debt_payments,for_debt_repayment,for_entertainment,allocates_debt_payments]-> $500 - $1,000
+  User -[allocates,for_down_payment_savings,allocates_down_payment_savings]-> $1,000 - $1,500
+  User -[allocates,for_travel,for_miscellaneous]-> $200 - $500
+  FHA Loans -[backed_by,regulated_by,created_by]-> Federal Housing Administration
+  FHA Loans -[compared_to]-> conventional loans
+  30th birthday -[reflects_on]-> college
+  VA Loans -[available_to]-> military veterans
+  USDA Loans -[available_in]-> rural areas
+  state and local programs -[designed_for]-> first-time homebuyers
+  FHA loans -[loan_limits_in,located_in]-> New York City
+  FHA loans -[loan_limits_in,located_in]-> Los Angeles
+  FHA loans -[loan_limits_in,located_in]-> Chicago
+  FHA loans -[loan_limits_in,located_in]-> Houston
+  FHA loans -[loan_limits_in,located_in]-> Phoenix
+
+LLM relations with NO local pair (17):
+  User -[earns]-> $60,000
+  User -[targets,targets_price_range]-> $250,000 to $300,000
+  User -[allocates,for_rent,allocates_rent]-> $1,500 - $2,000
+  User -[allocates,for_utilities,allocates_utilities]-> $150 - $200
+  User -[allocates,for_groceries,for_transportation,allocates_groceries,allocates_transportation]-> $500 - $700
+  User -[allocates,for_debt_payments,for_debt_repayment,for_entertainment,allocates_debt_payments]-> $500 - $1,000
+  User -[allocates,for_down_payment_savings,allocates_down_payment_savings]-> $1,000 - $1,500
+  User -[allocates,for_travel,for_miscellaneous]-> $200 - $500
+  FHA Loans -[compared_to]-> conventional loans
+  30th birthday -[reflects_on]-> college
+  VA Loans -[available_to]-> military veterans
+  state and local programs -[designed_for]-> first-time homebuyers
+  FHA loans -[loan_limits_in,located_in]-> New York City
+  FHA loans -[loan_limits_in,located_in]-> Los Angeles
+  FHA loans -[loan_limits_in,located_in]-> Chicago
+  FHA loans -[loan_limits_in,located_in]-> Houston
+  FHA loans -[loan_limits_in,located_in]-> Phoenix
+
+LOCAL relations (36):
+  me -[celebrated]-> 30th birthday celebration (1.00)
+  me -[interested_in]-> FHA loans (0.98)
+  me -[celebrated]-> 30th birthday (0.97)
+  me -[interested_in]-> planning (0.95)
+  me -[interested_in]-> first-time homebuyer programs (0.94)
+  me -[owns]-> house (0.92)
+  me -[bought]-> house (0.91)
+  Federal Housing Administration -[manages]-> FHA loan limits (0.89)
+  me -[manages]-> $20,000 (0.89)
+  me -[works_with]-> financial advisor (0.85)
+  me -[interested_in]-> areas of interest (0.85)
+  me -[interested_in]-> ARM (0.84)
+  me -[attended]-> college (0.84)
+  your -[works_with]-> financial advisor (0.83)
+  me -[works_at]-> current job (0.81)
+  your -[interested_in]-> ARM (0.81)
+  me -[interested_in]-> fixed-rate mortgages (0.79)
+  me -[works_with]-> lender (0.79)
+  your -[owns]-> house (0.78)
+  Los Angeles -[located_in]-> United States (0.77)
+  New York City -[located_in]-> United States (0.76)
+  fixed-rate mortgage -[part_of]-> Fixed-Rate Mortgages (0.75)
+  your -[interested_in]-> fixed-rate mortgages (0.75)
+  your -[works_with]-> lender (0.73)
+  Gather documents -[part_of]-> financial documents (0.71)
+  me -[celebrated]-> February 12th (0.69)
+  your -[bought]-> house (0.66)
+  first-time homebuyers -[interested_in]-> ARM (0.66)
+  yourself -[owns]-> home (0.65)
+  Your -[manages]-> $20,000 (0.64)
+  Chicago -[located_in]-> United States (0.64)
+  me -[interested_in]-> fixed-rate mortgage (0.64)
+  Fixed-Rate Mortgages -[part_of]-> fixed-rate mortgage (0.63)
+  USDA loan -[located_in]-> rural area (0.63)
+  FHA Loans -[part_of]-> Federal Housing Administration (0.61)
+  first-time homebuyers -[owns]-> house (0.61)
+
+==========================================================================================
+SESSION 0bb5a684__sharegpt_79vV0aT_377
+LLM entities (10): Macaque[person]; MK[person]; Mei[person]; Wukong[person]; dark-haired monkeys[other]; jungle[place]; dark-haired monkey[other]; the demon that calls itself king[concept]; my imbecile son[concept]; royal monkey guards[other]
+
+LOCAL entities (41): Wukong[person]; Mei[person]; MK[person]; Macaque[person]; jungle[place]; kingdom[place]; mountain[place]; father[person]; dark-haired monkey[person]; bushes[place]; my imbecile son[person]; foolish son[person]; throne[place]; demon[person]; campsite[place]; clearing[place]; new location[place]; son[person]; campfire[place]; small campsite[place]; prince[person]; Your Majesty[person]; underbrush[place]; Guards[org]; monkey[person]; the demon that calls itself king[person]; traitorous monkey[person]; One monkey[person]; young female[person]; newcomer[person]; dark-haired monkeys[person]; trees[place]; royal guards[person]; king[person]; monkeys[place]; Your Highness[person]; himself[person]; quarry[person]; royal monkey guards[person]; I-I[person]; his own son[person]
+
+LLM entities MISSED by local (0): 
+
+LOCAL extras (no LLM match, 26): kingdom; mountain; father; bushes; foolish son; throne; campsite; clearing; new location; son; campfire; small campsite; prince; Your Majesty; underbrush; traitorous monkey; One monkey; young female; newcomer; trees; royal guards; Your Highness; himself; quarry; I-I; his own son
+
+LLM relations (9):
+  Wukong -[killing,torturing,interrogating,interrogates]-> dark-haired monkeys
+  Wukong -[searching_for,demanding_location,scouring_for]-> Macaque
+  Wukong -[searching_for,demanding_location,scouring_for,father_of]-> MK
+  Macaque -[parent_of]-> MK
+  MK -[child_of,concerned_for,works_with]-> Macaque
+  Macaque -[demanding_location_of]-> the demon that calls itself king
+  Macaque -[demanding_location_of]-> my imbecile son
+  Wukong -[commands]-> royal monkey guards
+  MK -[wants_to_help]-> dark-haired monkeys
+
+LLM relations with NO local pair (4):
+  Macaque -[demanding_location_of]-> the demon that calls itself king
+  Macaque -[demanding_location_of]-> my imbecile son
+  Wukong -[commands]-> royal monkey guards
+  MK -[wants_to_help]-> dark-haired monkeys
+
+LOCAL relations (37):
+  Wukong -[knows]-> my imbecile son (0.91)
+  Wukong -[knows]-> the demon that calls itself king (0.90)
+  Wukong -[interested_in]-> quarry (0.85)
+  dark-haired monkey -[friend_of]-> Macaque (0.84)
+  small campsite -[located_in]-> jungle (0.84)
+  MK -[friend_of]-> Macaque (0.83)
+  Macaque -[friend_of]-> MK (0.83)
+  MK -[knows]-> Wukong (0.83)
+  Macaque -[knows]-> Wukong (0.82)
+  Wukong -[owns]-> throne (0.81)
+  Wukong -[owns]-> kingdom (0.81)
+  Wukong -[has_pet]-> dark-haired monkeys (0.80)
+  My father -[family_of]-> MK (0.80)
+  Wukong -[owns]-> dark-haired monkeys (0.80)
+  MK -[has_pet]-> Macaque (0.79)
+  Wukong -[knows]-> Macaque (0.78)
+  Wukong -[knows]-> traitorous monkey (0.77)
+  Macaque -[moved_to]-> new location (0.76)
+  MK -[owns]-> small campsite (0.76)
+  MK -[family_of]-> Wukong (0.76)
+  Wukong -[owns]-> mountain (0.75)
+  Wukong -[has_pet]-> Macaque (0.74)
+  Wukong -[knows]-> king (0.74)
+  Mei -[friend_of]-> Macaque (0.72)
+  Wukong -[knows]-> foolish son (0.72)
+  Macaque -[lives_in]-> small campsite (0.72)
+  MK -[friend_of]-> Mei (0.70)
+  Wukong -[knows]-> son (0.70)
+  Wukong -[knows]-> imbecile son (0.69)
+  Wukong -[knows]-> One monkey (0.67)
+  Wukong -[lives_in]-> mountain (0.67)
+  Wukong -[knows]-> demon (0.66)
+  Wukong -[knows]-> my son (0.65)
+  Wukong -[located_in]-> jungle (0.65)
+  Mei -[friend_of]-> MK (0.64)
+  Macaque -[lives_in]-> jungle (0.64)
+  Wukong -[knows]-> me (0.61)

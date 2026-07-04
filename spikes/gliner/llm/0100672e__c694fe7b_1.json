@@ -1,0 +1,710 @@
+{
+ "id": "0100672e__c694fe7b_1",
+ "chars": 19361,
+ "seconds": 447.6,
+ "entities": [
+  {
+   "name": "Data Science",
+   "type": "concept"
+  },
+  {
+   "name": "Glassdoor",
+   "type": "org"
+  },
+  {
+   "name": "Bureau of Labor Statistics",
+   "type": "org"
+  },
+  {
+   "name": "Indeed",
+   "type": "org"
+  },
+  {
+   "name": "Data Science Council of America",
+   "type": "org"
+  },
+  {
+   "name": "Certified Data Scientist (CDS)",
+   "type": "work"
+  },
+  {
+   "name": "Certified Analytics Professional (CAP)",
+   "type": "work"
+  },
+  {
+   "name": "Certified Business Analyst (CBA)",
+   "type": "work"
+  },
+  {
+   "name": "DataCamp",
+   "type": "org"
+  },
+  {
+   "name": "XYZ University",
+   "type": "org"
+  },
+  {
+   "name": "Master's in Business Administration",
+   "type": "work"
+  },
+  {
+   "name": "Institute for Operations Research and the Management Sciences",
+   "type": "org"
+  },
+  {
+   "name": "Certified Data Scientist",
+   "type": "work"
+  },
+  {
+   "name": "Certified Analytics Professional",
+   "type": "work"
+  },
+  {
+   "name": "IIBA",
+   "type": "org"
+  },
+  {
+   "name": "DASCA",
+   "type": "org"
+  },
+  {
+   "name": "INFORMS",
+   "type": "org"
+  },
+  {
+   "name": "Python",
+   "type": "concept"
+  },
+  {
+   "name": "R",
+   "type": "concept"
+  },
+  {
+   "name": "SQL",
+   "type": "concept"
+  },
+  {
+   "name": "CDS exam",
+   "type": "event"
+  },
+  {
+   "name": "pandas",
+   "type": "concept"
+  },
+  {
+   "name": "NumPy",
+   "type": "concept"
+  },
+  {
+   "name": "scikit-learn",
+   "type": "concept"
+  },
+  {
+   "name": "DataCamp's Python for Data Science Course",
+   "type": "work"
+  },
+  {
+   "name": "Codecademy's Python Course",
+   "type": "work"
+  },
+  {
+   "name": "Python for Data Science Handbook",
+   "type": "work"
+  },
+  {
+   "name": "Coursera's Python for Everybody",
+   "type": "work"
+  },
+  {
+   "name": "financial aid options",
+   "type": "concept"
+  },
+  {
+   "name": "certification course",
+   "type": "concept"
+  },
+  {
+   "name": "employer",
+   "type": "org"
+  }
+ ],
+ "tags": [
+  "data science",
+  "job prospects",
+  "salary ranges",
+  "certification courses",
+  "career development",
+  "certification",
+  "analytics",
+  "education",
+  "programming",
+  "certification body",
+  "career goals",
+  "job opportunities",
+  "industry reputation",
+  "learning",
+  "machine learning",
+  "deep learning",
+  "natural language processing",
+  "data analysis",
+  "Python",
+  "R",
+  "SQL",
+  "data engineering",
+  "data architecture",
+  "business acumen",
+  "domain expertise",
+  "programming concepts",
+  "critical thinking",
+  "problem-solving",
+  "career advancement",
+  "financial aid",
+  "investment",
+  "sponsorship",
+  "reimbursement"
+ ],
+ "relations": [
+  {
+   "source": "Data Science",
+   "target": "Glassdoor",
+   "labels": [
+    "reported_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science",
+   "target": "Bureau of Labor Statistics",
+   "labels": [
+    "reported_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science",
+   "target": "Indeed",
+   "labels": [
+    "reported_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science",
+   "target": "Data Science Council of America",
+   "labels": [
+    "certified_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Certified Data Scientist (CDS)",
+   "target": "Data Science Council of America",
+   "labels": [
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Certified Analytics Professional (CAP)",
+   "target": "Institute for Operations Research and the Management Sciences",
+   "labels": [
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Certified Business Analyst (CBA)",
+   "target": "International Institute of Business Analysis",
+   "labels": [
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Certification by DataCamp",
+   "target": "DataCamp",
+   "labels": [
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "XYZ University",
+   "target": "Master's in Business Administration",
+   "labels": [
+    "offered",
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science",
+   "target": "data science",
+   "labels": [
+    "is_a"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "Certified Data Scientist (CDS)",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Institute for Operations Research and the Management Sciences",
+   "target": "Certified Analytics Professional (CAP)",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "International Institute of Business Analysis",
+   "target": "Certified Business Analyst (CBA)",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "Certified Data Scientist",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "Certified Analytics Professional",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Institute for Operations Research and the Management Sciences",
+   "target": "Certified Analytics Professional",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Institute for Operations Research and the Management Sciences",
+   "target": "Certified Analytics Associate",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DataCamp",
+   "target": "certification",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "IIBA",
+   "target": "certification",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "IBM",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "Microsoft",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Data Science Council of America",
+   "target": "Oracle",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "Certified Data Scientist",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "Certified Analytics Professional",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "INFORMS",
+   "target": "Certified Analytics Professional",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "INFORMS",
+   "target": "Certified Analytics Associate",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "IBM",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "Microsoft",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "Oracle",
+   "labels": [
+    "partnered_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DASCA",
+   "target": "CDS exam",
+   "labels": [
+    "recommends"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "Python",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "R",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "SQL",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "pandas",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "NumPy",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "CDS exam",
+   "target": "scikit-learn",
+   "labels": [
+    "requires"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "DataCamp's Python for Data Science Course",
+   "target": "Python",
+   "labels": [
+    "focuses_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Codecademy's Python Course",
+   "target": "Python",
+   "labels": [
+    "focuses_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Python for Data Science Handbook",
+   "target": "Python",
+   "labels": [
+    "focuses_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Coursera's Python for Everybody",
+   "target": "Python",
+   "labels": [
+    "focuses_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Python",
+   "target": "data science",
+   "labels": [
+    "popular_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Python",
+   "target": "machine learning",
+   "labels": [
+    "relies_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Python",
+   "target": "data visualization",
+   "labels": [
+    "relies_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "certification course",
+   "target": "financial aid options",
+   "labels": [
+    "explore"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "employer",
+   "target": "certification course",
+   "labels": [
+    "sponsor",
+    "reimburse"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

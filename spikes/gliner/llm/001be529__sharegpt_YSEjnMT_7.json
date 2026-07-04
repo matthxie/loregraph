@@ -1,0 +1,90 @@
+{
+ "id": "001be529__sharegpt_YSEjnMT_7",
+ "chars": 2537,
+ "seconds": 53.09,
+ "entities": [
+  {
+   "name": "Dalan Hargrave",
+   "type": "person"
+  },
+  {
+   "name": "GemCad",
+   "type": "work"
+  },
+  {
+   "name": "Kashmir Blue Synthetic flame-fusion corundum",
+   "type": "concept"
+  },
+  {
+   "name": "GemCad 5.0",
+   "type": "work"
+  },
+  {
+   "name": "CREATIVE GEMS SC-33",
+   "type": "org"
+  }
+ ],
+ "tags": [
+  "gemstone",
+  "design",
+  "cut",
+  "facets",
+  "synthetic material",
+  "gemstone cut",
+  "synthetic corundum",
+  "gem design",
+  "gemstone facets",
+  "gemstone optimization"
+ ],
+ "relations": [
+  {
+   "source": "Dalan Hargrave",
+   "target": "GemCad",
+   "labels": [
+    "designed"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Dalan Hargrave",
+   "target": "Kashmir Blue Synthetic flame-fusion corundum",
+   "labels": [
+    "optimized_for",
+    "designed_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Dalan Hargrave",
+   "target": "GemCad 5.0",
+   "labels": [
+    "designed"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "GemCad 5.0",
+   "target": "CREATIVE GEMS SC-33",
+   "labels": [
+    "developed_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

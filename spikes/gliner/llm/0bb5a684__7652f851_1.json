@@ -1,0 +1,416 @@
+{
+ "id": "0bb5a684__7652f851_1",
+ "chars": 17607,
+ "seconds": 337.27,
+ "entities": [
+  {
+   "name": "User",
+   "type": "person"
+  },
+  {
+   "name": "February 12th",
+   "type": "date"
+  },
+  {
+   "name": "$60,000",
+   "type": "other"
+  },
+  {
+   "name": "$20,000",
+   "type": "other"
+  },
+  {
+   "name": "$250,000 to $300,000",
+   "type": "other"
+  },
+  {
+   "name": "$1,500 - $2,000",
+   "type": "other"
+  },
+  {
+   "name": "$150 - $200",
+   "type": "other"
+  },
+  {
+   "name": "$500 - $700",
+   "type": "other"
+  },
+  {
+   "name": "$500 - $1,000",
+   "type": "other"
+  },
+  {
+   "name": "$1,000 - $1,500",
+   "type": "other"
+  },
+  {
+   "name": "$200 - $500",
+   "type": "other"
+  },
+  {
+   "name": "FHA Loans",
+   "type": "concept"
+  },
+  {
+   "name": "Federal Housing Administration",
+   "type": "org"
+  },
+  {
+   "name": "conventional loans",
+   "type": "concept"
+  },
+  {
+   "name": "30th birthday",
+   "type": "event"
+  },
+  {
+   "name": "college",
+   "type": "other"
+  },
+  {
+   "name": "adjustable-rate mortgages",
+   "type": "concept"
+  },
+  {
+   "name": "fixed-rate mortgages",
+   "type": "concept"
+  },
+  {
+   "name": "VA Loans",
+   "type": "work"
+  },
+  {
+   "name": "USDA Loans",
+   "type": "work"
+  },
+  {
+   "name": "state and local programs",
+   "type": "org"
+  },
+  {
+   "name": "New York City",
+   "type": "place"
+  },
+  {
+   "name": "Los Angeles",
+   "type": "place"
+  },
+  {
+   "name": "Chicago",
+   "type": "place"
+  },
+  {
+   "name": "Houston",
+   "type": "place"
+  },
+  {
+   "name": "Phoenix",
+   "type": "place"
+  }
+ ],
+ "tags": [
+  "home buying",
+  "financial planning",
+  "budgeting",
+  "savings",
+  "mortgage",
+  "real estate",
+  "long-term goals",
+  "mortgages",
+  "homebuying",
+  "FHA loans",
+  "conventional loans",
+  "first-time homebuyer programs",
+  "home financing",
+  "mortgage types",
+  "first-time homebuyer tips",
+  "interest rates",
+  "loan limits",
+  "credit score",
+  "down payment",
+  "mortgage insurance",
+  "debt-to-income ratio",
+  "mortgage insurance premiums",
+  "upfront mortgage insurance premium",
+  "stricter appraisal standards",
+  "higher interest rates"
+ ],
+ "relations": [
+  {
+   "source": "User",
+   "target": "February 12th",
+   "labels": [
+    "celebrated"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$60,000",
+   "labels": [
+    "earns"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$20,000",
+   "labels": [
+    "saves"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$250,000 to $300,000",
+   "labels": [
+    "targets",
+    "targets_price_range"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$1,500 - $2,000",
+   "labels": [
+    "allocates",
+    "for_rent",
+    "allocates_rent"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$150 - $200",
+   "labels": [
+    "allocates",
+    "for_utilities",
+    "allocates_utilities"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$500 - $700",
+   "labels": [
+    "allocates",
+    "for_groceries",
+    "for_transportation",
+    "allocates_groceries",
+    "allocates_transportation"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$500 - $1,000",
+   "labels": [
+    "allocates",
+    "for_debt_payments",
+    "for_debt_repayment",
+    "for_entertainment",
+    "allocates_debt_payments"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$1,000 - $1,500",
+   "labels": [
+    "allocates",
+    "for_down_payment_savings",
+    "allocates_down_payment_savings"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "User",
+   "target": "$200 - $500",
+   "labels": [
+    "allocates",
+    "for_travel",
+    "for_miscellaneous"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA Loans",
+   "target": "Federal Housing Administration",
+   "labels": [
+    "backed_by",
+    "regulated_by",
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA Loans",
+   "target": "conventional loans",
+   "labels": [
+    "compared_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "30th birthday",
+   "target": "college",
+   "labels": [
+    "reflects_on"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "VA Loans",
+   "target": "military veterans",
+   "labels": [
+    "available_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "USDA Loans",
+   "target": "rural areas",
+   "labels": [
+    "available_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "state and local programs",
+   "target": "first-time homebuyers",
+   "labels": [
+    "designed_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA loans",
+   "target": "New York City",
+   "labels": [
+    "loan_limits_in",
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA loans",
+   "target": "Los Angeles",
+   "labels": [
+    "loan_limits_in",
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA loans",
+   "target": "Chicago",
+   "labels": [
+    "loan_limits_in",
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA loans",
+   "target": "Houston",
+   "labels": [
+    "loan_limits_in",
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "FHA loans",
+   "target": "Phoenix",
+   "labels": [
+    "loan_limits_in",
+    "located_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

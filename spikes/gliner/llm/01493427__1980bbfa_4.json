@@ -1,0 +1,461 @@
+{
+ "id": "01493427__1980bbfa_4",
+ "chars": 14283,
+ "seconds": 598.75,
+ "entities": [
+  {
+   "name": "Philips Hue",
+   "type": "org"
+  },
+  {
+   "name": "LIFX",
+   "type": "org"
+  },
+  {
+   "name": "Belkin Wemo",
+   "type": "org"
+  },
+  {
+   "name": "IKEA Tradfri",
+   "type": "org"
+  },
+  {
+   "name": "GE Smart Bulbs",
+   "type": "org"
+  },
+  {
+   "name": "Sylvania Smart+",
+   "type": "org"
+  },
+  {
+   "name": "Eufy Lumos",
+   "type": "org"
+  },
+  {
+   "name": "Philips Hue White Starter Kit",
+   "type": "work"
+  },
+  {
+   "name": "Philips Hue Dimmer Switch",
+   "type": "work"
+  },
+  {
+   "name": "Philips Hue Bulb Types",
+   "type": "concept"
+  },
+  {
+   "name": "Philips Hue White Ambiance Starter Kit",
+   "type": "work"
+  },
+  {
+   "name": "Philips Hue Color Starter Kit",
+   "type": "work"
+  },
+  {
+   "name": "Philips Hue Smart Button",
+   "type": "work"
+  },
+  {
+   "name": "Philips Hue Bridge",
+   "type": "work"
+  }
+ ],
+ "tags": [
+  "energy consumption",
+  "smart lighting",
+  "home optimization",
+  "lighting setup",
+  "energy-efficient bulbs",
+  "lighting efficiency",
+  "home automation",
+  "energy savings",
+  "smart home",
+  "sustainable living",
+  "Philips Hue",
+  "energy efficiency",
+  "lighting solutions",
+  "lighting types",
+  "starter kits",
+  "smart home integration",
+  "user tips",
+  "home lighting",
+  "cost-effective",
+  "lighting control",
+  "home improvement",
+  "lighting technology"
+ ],
+ "relations": [
+  {
+   "source": "Philips Hue",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "LIFX",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Belkin Wemo",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "IKEA Tradfri",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "GE Smart Bulbs",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Sylvania Smart+",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Eufy Lumos",
+   "target": "energy-efficient bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue",
+   "target": "Amazon Alexa",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue",
+   "target": "Google Assistant",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue",
+   "target": "Apple HomeKit",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "LIFX",
+   "target": "Amazon Alexa",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "LIFX",
+   "target": "Google Assistant",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "LIFX",
+   "target": "Apple HomeKit",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Belkin Wemo",
+   "target": "Amazon Alexa",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Belkin Wemo",
+   "target": "Google Assistant",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "IKEA Tradfri",
+   "target": "Amazon Alexa",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "IKEA Tradfri",
+   "target": "Google Assistant",
+   "labels": [
+    "works_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White Starter Kit",
+   "target": "Philips Hue",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue Dimmer Switch",
+   "target": "Philips Hue",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White Starter Kit",
+   "target": "Philips Hue Bridge",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White Starter Kit",
+   "target": "Philips Hue White bulbs",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White and Color Starter Kit",
+   "target": "Philips Hue Bridge",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White and Color Starter Kit",
+   "target": "Philips Hue White and Color bulbs",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White Ambiance Starter Kit",
+   "target": "Philips Hue Bridge",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue White Ambiance Starter Kit",
+   "target": "Philips Hue White Ambiance bulbs",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue Color Starter Kit",
+   "target": "Philips Hue Bridge",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue Color Starter Kit",
+   "target": "Philips Hue Color bulbs",
+   "labels": [
+    "includes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue Smart Button",
+   "target": "Philips Hue",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue Bridge",
+   "target": "Philips Hue",
+   "labels": [
+    "part_of"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue",
+   "target": "smart bulbs",
+   "labels": [
+    "offers"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Philips Hue",
+   "target": "smart lighting",
+   "labels": [
+    "related_to"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}

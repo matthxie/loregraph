@@ -1,0 +1,222 @@
+{
+ "id": "0e5e2d1a__sharegpt_CnhRZxj_0",
+ "chars": 11634,
+ "seconds": 191.0,
+ "entities": [
+  {
+   "name": "NOVA LU",
+   "type": "person"
+  },
+  {
+   "name": "Goldman Sachs",
+   "type": "org"
+  },
+  {
+   "name": "University of Wisconsin Madison",
+   "type": "org"
+  },
+  {
+   "name": "Los Angeles",
+   "type": "place"
+  },
+  {
+   "name": "Bachelor of Business Administration",
+   "type": "work"
+  },
+  {
+   "name": "May 2013",
+   "type": "date"
+  },
+  {
+   "name": "apparel business",
+   "type": "org"
+  },
+  {
+   "name": "social media",
+   "type": "concept"
+  },
+  {
+   "name": "influencer partnerships",
+   "type": "concept"
+  },
+  {
+   "name": "content marketing",
+   "type": "concept"
+  },
+  {
+   "name": "email marketing",
+   "type": "concept"
+  }
+ ],
+ "tags": [
+  "apparel business",
+  "startup",
+  "business plan",
+  "fashion",
+  "entrepreneurship",
+  "consulting",
+  "market research",
+  "product strategy",
+  "sales and marketing",
+  "operations plan",
+  "financial plan",
+  "financial planning",
+  "sales strategy",
+  "marketing strategy",
+  "apparel industry",
+  "business planning",
+  "target market",
+  "competitor analysis",
+  "industry trends",
+  "branding"
+ ],
+ "relations": [
+  {
+   "source": "NOVA LU",
+   "target": "Goldman Sachs",
+   "labels": [
+    "worked_for"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "ended",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "NOVA LU",
+   "target": "University of Wisconsin Madison",
+   "labels": [
+    "graduated_from"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "2013-05-01",
+   "valid_to": ""
+  },
+  {
+   "source": "NOVA LU",
+   "target": "Los Angeles",
+   "labels": [
+    "wants_to_start_business_in"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "NOVA LU",
+   "target": "Bachelor of Business Administration",
+   "labels": [
+    "graduated_with"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "Bachelor of Business Administration",
+   "target": "University of Wisconsin Madison",
+   "labels": [
+    "awarded_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "market research",
+   "labels": [
+    "conducts",
+    "informed_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "financial plan",
+   "labels": [
+    "creates",
+    "developed_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "sales and marketing plan",
+   "labels": [
+    "creates",
+    "created_by"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "social media",
+   "labels": [
+    "utilizes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "influencer partnerships",
+   "labels": [
+    "utilizes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "content marketing",
+   "labels": [
+    "utilizes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  },
+  {
+   "source": "apparel business",
+   "target": "email marketing",
+   "labels": [
+    "utilizes"
+   ],
+   "provenance": "EXTRACTED",
+   "confidence": 0.8,
+   "status": "asserted",
+   "valid_from": "",
+   "valid_to": ""
+  }
+ ]
+}
