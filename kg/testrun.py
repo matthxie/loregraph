@@ -361,17 +361,32 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
 
 # --------------------------------------------------------------------------- #
 # Failure triage — pinpoint the EARLIEST broken pipeline link for each failed
-# question, from data already captured at answer time. Buckets (first match wins):
-#   judge_suspect — answer contains the reference verbatim but was judged wrong
-#   extract_miss  — extraction yielded no entities/facts from any gold session
-#   seed_miss     — no query seed lands within 2 hops of a gold episode
-#   rank_structural / rank_out — gold never entered the PPR pool / entered but
-#                   ranked below the context cut
-#   join_miss     — multi-gold question with only part of the gold in context
-#   truncated     — evidence present in the full gold episode, cut by the per-
-#                   episode char cap before the reader saw it
-#   diluted       — gold in context intact but the reader claimed not-in-context
-#   reader        — everything was in front of the model; it still answered wrong
+# question, from data already captured at answer time. Buckets (first match wins),
+# ordered by pipeline stage so each bucket owns exactly one stage's failure mode:
+#   judge_suspect    — answer contains the reference verbatim but was judged wrong
+#   extract_miss     — extraction yielded no entities/facts from any gold session
+#   seed_miss        — no query seed lands within 2 hops of a gold episode
+#   rank_structural  — gold never entered the PPR candidate pool at all
+#   rank_out         — gold entered the pool but none of it survived the context cut
+#   join_miss        — multi-gold question where the pool itself never gathered ALL
+#                      gold sessions (a retrieval/join failure, upstream of context
+#                      assembly) — some gold reached context, but not because all of
+#                      it was even candidate-pooled
+#   partial_evidence — multi-gold question where every gold session DID reach the
+#                      pool, but context assembly (the per-episode char cap / top-k
+#                      cut) still dropped some of it before the reader saw it
+#   truncated        — evidence present in the full gold episode, cut by the per-
+#                      episode char cap before the reader saw it
+#   diluted          — gold in context intact but the reader claimed not-in-context
+#   reader           — everything was in front of the model; it still answered wrong
+#
+# join_miss vs. partial_evidence both describe "not all gold made it to context" for
+# multi-gold questions, but at different stages: join_miss = the pool never had it to
+# give; partial_evidence = the pool had it and context assembly still lost some of it.
+# Both are counted via DISTINCT gold ids (gold_in_pool_count / gold_in_context_count),
+# not raw episode counts — a gold session can be chunked into several episodes that
+# all land in context, which would otherwise inflate a raw count past n_gold and mask
+# a different gold id being completely absent.
 # --------------------------------------------------------------------------- #
 _WS = re.compile(r"\s+")
 _ABSTAIN = re.compile(
@@ -460,6 +475,8 @@ def _diagnose(q: dict, ans, store, cfg: Config, kk: int, gold_art: set[str]) -> 
             break
     pool_top = round(float(pool[0][1]), 6) if pool else None
     pool_at_k = round(float(pool[kk - 1][1]), 6) if len(pool) >= kk else None
+    pool_art = {_article(oid) for oid, _sc in pool}
+    gold_in_pool_ids = sorted(a for a in gold_art if a in pool_art)
     # -- context forensics: per-episode kept/total chars + evidence coverage
     ctx = list(getattr(ans, "context_episodes", []) or [])
     cap = cfg.rag_episode_chars
@@ -471,7 +488,8 @@ def _diagnose(q: dict, ans, store, cfg: Config, kk: int, gold_art: set[str]) -> 
         flat = _flat_text(n) if n else ""
         is_gold = _article(eid) in gold_art
         d = {"id": eid, "gold": is_gold, "pos": pos,
-             "chars": len(flat), "kept": min(len(flat), cap)}
+             "chars": len(flat), "kept": min(len(flat), cap),
+             "created_at": getattr(n, "created_at", None) if n else None}
         if is_gold:
             kf = _evidence_frac(expected, flat[:cap])
             ff = _evidence_frac(expected, flat)
@@ -481,7 +499,12 @@ def _diagnose(q: dict, ans, store, cfg: Config, kk: int, gold_art: set[str]) -> 
             if ff is not None:
                 ev_full = ff if ev_full is None else max(ev_full, ff)
         ctx_detail.append(d)
-    gold_in_ctx = sum(1 for d in ctx_detail if d["gold"])
+    gold_in_ctx = sum(1 for d in ctx_detail if d["gold"])  # raw episode count (chunking
+    # can put several episodes of the SAME gold id in context) — kept only for the
+    # context_precision "gold density" ratio below; triage/join_miss/partial_evidence
+    # use the DISTINCT-id counts beneath, which chunking cannot inflate.
+    ctx_art = {_article(d["id"]) for d in ctx_detail}
+    gold_in_ctx_ids = sorted(a for a in gold_art if a in ctx_art)
     return {
         "gold_yield": _gold_yields(store, gold_art),
         "seed_gold_dist": _seed_gold_dist(store, cfg, list(ans.seeds),
@@ -489,8 +512,11 @@ def _diagnose(q: dict, ans, store, cfg: Config, kk: int, gold_art: set[str]) -> 
         "gold_pool_rank": gold_pool_rank, "gold_pool_score": gold_pool_score,
         "pool_top_score": pool_top, "pool_score_at_k": pool_at_k,
         "pool_size": len(pool),
+        "gold_in_pool_ids": gold_in_pool_ids, "gold_in_pool_count": len(gold_in_pool_ids),
         "context": ctx_detail,
         "gold_in_context": gold_in_ctx, "n_gold": len(gold_art),
+        "gold_in_context_ids": gold_in_ctx_ids,
+        "gold_in_context_count": len(gold_in_ctx_ids),
         "context_precision": (round(gold_in_ctx / len(ctx_detail), 3)
                               if ctx_detail else None),
         "evidence_kept": ev_kept, "evidence_full": ev_full,
@@ -525,15 +551,21 @@ def _triage(rec: dict, diag: dict) -> tuple[str, str]:
         return "seed_miss", "no seed reaches any gold episode within 6 hops"
     if d > 2:
         return "seed_miss", f"nearest seed is {d} hops from the closest gold episode"
-    if diag["gold_pool_rank"] is None:
+    gold_in_pool = diag.get("gold_in_pool_count", 0)
+    gold_in_ctx_n = diag.get("gold_in_context_count", diag["gold_in_context"])
+    if gold_in_pool == 0:
         return "rank_structural", ("seeds were near gold but it never entered the "
                                    "PPR candidate pool")
-    if diag["gold_in_context"] == 0:
+    if gold_in_ctx_n == 0:
         return "rank_out", (f"gold ranked #{diag['gold_pool_rank']} in the pool but "
                             "fell outside the context cut")
-    if n_gold >= 2 and diag["gold_in_context"] < n_gold:
-        return "join_miss", (f"only {diag['gold_in_context']}/{n_gold} gold sessions "
-                             "made it into the context")
+    if n_gold >= 2 and gold_in_pool < n_gold:
+        return "join_miss", (f"only {gold_in_pool}/{n_gold} gold sessions ever reached "
+                             "the PPR candidate pool")
+    if n_gold >= 2 and gold_in_ctx_n < n_gold:
+        return "partial_evidence", (f"all {n_gold} gold sessions reached the pool but "
+                                    f"only {gold_in_ctx_n}/{n_gold} made it into the "
+                                    "final context")
     ek, ef = diag["evidence_kept"], diag["evidence_full"]
     if ek is not None and ef is not None and ef - ek >= 0.4:
         return "truncated", (f"evidence tokens {ef:.0%} present in the full gold episode "
@@ -614,6 +646,18 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
     proxy = _response_proxy(ans.answer, q.get("answer", ""))
     jres = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter) if jclient else None
     diag = _diagnose(q, ans, store, cfg, kk, gold_art)
+    # evidence accounting for the dashboard: was each gold id actually in the reader's
+    # final context (not just the top-k retrieval list), and if missed, did retrieval
+    # at least seed on it (found, then dropped by context assembly) or never see it at all?
+    gold_ctx_art = set(diag["gold_in_context_ids"])
+    seed_art = {_article(s) for s in ans.seeds}
+    for m in gold_marks:
+        a = _article(m["id"])
+        m["in_context"] = a in gold_ctx_art
+        m["in_seeds"] = a in seed_art
+    episode_ids = set(ans.context_episodes) | set(ans.citations) | set(ans.dropped_citations)
+    episode_dates = {eid: getattr(store.get_node(eid), "created_at", None)
+                     for eid in episode_ids if store.get_node(eid) is not None}
     rec = {
         "id": q.get("id", ""), "query": q["query"], "kind": q.get("kind", ""),
         "difficulty": q.get("difficulty", ""), "gold": sorted(gold),
@@ -626,6 +670,7 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
         # what the reader actually saw — makes "was the evidence in the context?"
         # auditable post-hoc instead of unknowable (episode text is capped per config)
         "context_episodes": list(getattr(ans, "context_episodes", []) or []),
+        "episode_dates": episode_dates,
         "facts": list(getattr(ans, "facts", []) or []),
         "recall_at_k": round(recall, 3), "mrr": round(mrr, 3),
         "precision_at_k": precision, "gold_ranks": gold_ranks,
@@ -1143,11 +1188,20 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
     by_kind = {}
     for kind in kinds:
         rs = [r for r in qrecords if r["kind"] == kind]
+        # answer correctness per kind, from the same judge-or-proxy verdict _triage uses
+        # ("ok" = correct, "unscored" = no judge/proxy to grade against, anything else =
+        # a graded wrong answer) — so right/wrong counts always agree with the triage bar.
+        n_correct = sum(1 for r in rs if r.get("triage") == "ok")
+        n_unscored = sum(1 for r in rs if r.get("triage") == "unscored")
+        n_scored = len(rs) - n_unscored
+        n_incorrect = n_scored - n_correct
         by_kind[kind] = {
             "n": len(rs),
             "recall_at_k": round(sum(r["recall_at_k"] for r in rs) / len(rs), 3),
             "mrr": round(sum(r["mrr"] for r in rs) / len(rs), 3),
             "hit_rate": round(sum(1 for r in rs if r["hit"]) / len(rs), 3),
+            "n_correct": n_correct, "n_incorrect": n_incorrect, "n_unscored": n_unscored,
+            "accuracy": round(n_correct / n_scored, 3) if n_scored else None,
         }
     agent_tok = totals_of([])  # sum agent usage across records
     agent_cost = round(sum(r["cost_usd"] for r in qrecords), 6)
