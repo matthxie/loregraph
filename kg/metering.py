@@ -35,6 +35,10 @@ PRICING: dict[str, tuple[float, float, float, float]] = {
     # there is no cache-write surcharge.
     "gpt-4o-mini":               (0.15 / _M, 0.60 / _M, 0.075 / _M, 0.00),
     "gpt-4o-mini-2024-07-18":    (0.15 / _M, 0.60 / _M, 0.075 / _M, 0.00),
+    # gpt-5 family: cached input bills at 10% of input; no cache-write surcharge.
+    "gpt-5":                     (1.25 / _M, 10.00 / _M, 0.125 / _M, 0.00),
+    "gpt-5-mini":                (0.25 / _M, 2.00 / _M, 0.025 / _M, 0.00),
+    "gpt-5-nano":                (0.05 / _M, 0.40 / _M, 0.005 / _M, 0.00),
     "claude-haiku-4-5-20251001": (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-haiku-4-5":          (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-sonnet-4-6":         (3.00 / _M, 15.00 / _M, 0.30 / _M, 3.75 / _M),

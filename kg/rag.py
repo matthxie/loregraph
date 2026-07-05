@@ -341,19 +341,27 @@ class OpenAIAnswerer:
                          as_of=result.as_of, context_episodes=ep_ids,
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph))
+        # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
+        # and any non-default temperature; 4o-era models keep the old params. Getting this
+        # wrong would not crash loudly — the except below silently degrades every answer to
+        # the offline extractive path — so the split must live here.
+        kwargs: dict = {
+            "model": self.config.rag_model,
+            "messages": [
+                {"role": "system", "content": _RAG_SYS},
+                {"role": "user", "content": blob},
+            ],
+            "tools": [_ANSWER_TOOL],
+            "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
+        }
+        if self.config.rag_model.startswith(("gpt-5", "o1", "o3", "o4")):
+            kwargs["max_completion_tokens"] = self.config.rag_max_tokens
+        else:
+            kwargs["max_tokens"] = self.config.rag_max_tokens
+            kwargs["temperature"] = 0
         try:
             with prof_span("query.llm_answer"):
-                msg = call_with_backoff(lambda: self.client.chat.completions.create(
-                    model=self.config.rag_model,
-                    max_tokens=self.config.rag_max_tokens,
-                    temperature=0,
-                    messages=[
-                        {"role": "system", "content": _RAG_SYS},
-                        {"role": "user", "content": blob},
-                    ],
-                    tools=[_ANSWER_TOOL],
-                    tool_choice={"type": "function", "function": {"name": "submit_answer"}},
-                ))
+                msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
             self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
