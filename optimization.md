@@ -328,6 +328,26 @@ Compare on:
   `citation_grounding`, `response_accuracy`, `response_token_recall`.
 - **Cost + caching:** `ingest.totals.cost_usd`, `truncated`, `cache_read/write` (expect 0/0).
 
+**Ingest-store cache (per-instance mode, `kg/ingest_cache.py`, default ON):** extraction is ~93%
+of a run's cost, and it's pure waste to re-pay it when a lever change only touches query-side
+code (retrieval/rerank/context/reader/judge). Per instance, `run_per_instance` keys off a hash of
+`(instance id, session content, the ingest-relevant Config field slice, the extractor prompt
+text)` — see `INGEST_RELEVANT_FIELDS` in `kg/ingest_cache.py` for exactly which fields count (any
+query-side field, e.g. `top_k`/`rerank`/`judge_model`, is excluded and does NOT bust the cache).
+On a hit the store is copied in from cache and `g.ingest()` is skipped entirely; `run.json` reports
+this honestly via `ingest.totals.cached_instances`/`fresh_instances` and a per-instance
+`ingest_cached` flag, so a cached run is never misread as "ingest got cheaper" — it's zeroed
+because it didn't run.
+
+- Cached at: `store/cache/<instance_id>-<key12>.db` (next to whatever `--store` path the run uses).
+- Bypass it for one run: `kg testrun --no-ingest-cache` (always re-ingests, never reads or writes cache).
+- Clear it: no CLI for this by design (no auto-eviction) — `rm -rf store/cache` (everything),
+  `rm store/cache/<instance_id>-*.db` (one instance, all its cached config variants), or delete a
+  specific `<instance_id>-<key12>.db`.
+- There's no "pick a cache" flag — the key is computed from your *current* config, so whichever
+  cached entry matches wins automatically; changing an ingest-relevant field just misses and
+  re-ingests under a new key.
+
 ---
 
 ## Next steps — the funding blocker is gone; the eval is the gate  `[ACTIVE]`

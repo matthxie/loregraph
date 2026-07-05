@@ -61,12 +61,123 @@ results, BFS hops animated). `python -m kg serve` for live typed queries, or `py
 
 See [docs/ARCHITECTURE.md §0](docs/ARCHITECTURE.md) for the full decision table.
 
+## Getting started from scratch
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env               # then paste in your key: OPENAI_API_KEY=sk-...
+```
+
+`OPENAI_API_KEY` is optional. Without it, ingestion still runs (the default `cue_gated`
+extractor backend has a keyless local NLP floor), but escalation to gpt-4o-mini, the live
+`haiku`/`auto` extractor backends, and every `ask`/answer call are live-only and will raise
+without a key. `kg/__init__.py` auto-loads `.env` on import, so you never need to `export` it
+yourself; the file is gitignored.
+
+The toy `dataset/longmemeval/sample` tier ships committed so `python -m kg ingest` works with
+zero setup. Larger tiers must be built first:
+
+```bash
+python scripts/build_longmemeval.py                 # sample + small + med (downloads ~277 MB)
+python scripts/build_longmemeval.py --tier large     # heavier (~2.74 GB)
+python scripts/build_longmemeval.py --tier all       # everything
+```
+
+Every `kg` subcommand takes a top-level `--store <path>` (default `store/kg.db`) pointing at the
+SQLite graph file to read/write.
+
+### Unit tests
+
+```bash
+python -m pytest -q             # offline-safe: no API key needed, ~150 tests
+```
+
+### Running a benchmark (`kg testrun`)
+
+This is the harness for measuring cost/quality/latency changes on the LongMemEval dataset — the
+tool to reach for when you change extraction, chunking, canonicalization, retrieval, or reranking
+and want to know what it actually did to accuracy and $ cost.
+
+```bash
+python -m kg testrun --tier micro                        # quick live smoke test (3 instances, ~$0.02)
+python -m kg testrun --tier small --label my_change       # a real A/B data point
+python -m kg dashboard --out runs                         # browse every run at localhost:8050
+```
+
+Each run writes `runs/<run_id>/run.json` + a static `dashboard.html`, and registers itself in
+`runs/index.json`. `--label baseline` / `--label my_change` on two runs, then diff their
+`run.json`, is the standard A/B workflow (see `optimization.md`'s "A/B harness" section for what
+to compare on).
+
+**All `testrun` flags:**
+
+| flag | default | meaning |
+|---|---|---|
+| `--mode` | `per-instance` | `per-instance` = the dataset's native protocol, a fresh graph per question (no cross-persona pooling — the only mode whose accuracy is a real LongMemEval score). `shared` pools the whole tier into one graph (scale/structure smoke view + ingest cost/token metering only). |
+| `--tier` | `micro` | `micro` (3 instances, committed, for fast live smoke tests) / `sample` / `small` / `med` / `large` — see `dataset/longmemeval/README.md`. |
+| `--queries N` | all | cap the number of eval questions (= instances, in per-instance mode). |
+| `--limit N` | all | **shared mode only**: cap session episodes ingested (use `--queries` for per-instance). |
+| `--k N` | `8` | episodes retrieved per query (recall@k). |
+| `--backend auto` | live if key set | answerer backend for the query half. |
+| `--model ID` | — | override the LLM model id (extractor + L3 + answerer all at once). |
+| `--extractor {auto,haiku}` | `auto` | back-compat display switch; see `--extractor-backend` for the real knob. |
+| `--extractor-backend NAME` | `cue_gated` (config default) | extraction strategy: `cue_gated` (free local NLP floor + gpt-4o-mini only on cue-bearing entries), `haiku`/`auto` (full LLM on everything, paid), or an LLM-free NLP backend (`gliner2`, `gliner2_nounchunk`, `gliner_yake_cooccur`, …) — $0 ingest, runs locally. See `kg/nlp_extractors.py` `NLP_BACKENDS`. |
+| `--embedder {auto,st}` | `auto` | embedding backend (local `sentence-transformers`). |
+| `--long-doc-chars W` | `6000` | section size above which a doc is split for extraction; raises the per-call input cap to match. |
+| `--extract-max-chars C` | `12000` | per-call input cap inside `extract_text`; normally tracks `--long-doc-chars`. |
+| `--extract-max-tokens M` | `4000` | output cap on the extraction call; a section whose graph exceeds it is silently truncated (`run.json`'s `truncated` count finds the right value). |
+| `--chunking {none,turns,markdown,prose,code,auto}` | `none` | natural-boundary chunking: split one big entry into several small, retrieval-grained episodes (`turns` = chat turns/paragraphs + a SOURCE parent + `PART_OF`/`NEXT` edges; `auto` sniffs format per entry). |
+| `--l3` | off | enable the L3 LLM canonicalization tie-breaker. |
+| `--no-judge` | judge on | skip the LLM response-accuracy judge (keep the deterministic proxy score only — cheaper, no judge-model cost). |
+| `--no-completeness` | audit on | skip the tier-2 LLM occurrence-completeness audit (per-instance mode only; the $0 tier-1 regex capture-rate always runs). |
+| `--no-communities` | communities on | **shared mode only**: skip community detection after ingest (faster; per-instance mode never builds communities). |
+| `--no-ingest-cache` | cache on | **per-instance mode only**: bypass the ingest-store cache (see below) and always re-run extraction. |
+| `--label NAME` | timestamp | run id / label shown in the dashboard index. |
+| `--out DIR` | `runs` | directory dashboard runs are written to. |
+
+**The ingest-store cache** (per-instance mode, default ON): extraction is ~93% of a run's cost, so
+re-paying it when a change is query-side-only (retrieval/rerank/context/reader/judge) is pure
+waste. Each instance's ingested store is cached at `store/cache/<instance_id>-<key12>.db`, keyed
+off a hash of the instance's session content + every ingest-relevant config field (model,
+chunking, canonicalization thresholds, extractor prompt text — see `INGEST_RELEVANT_FIELDS` in
+`kg/ingest_cache.py`) — query-side fields never bust it. `run.json` reports
+`ingest.totals.cached_instances`/`fresh_instances` and a per-instance `ingest_cached` flag so a
+cached run is never misread as "ingest got cheaper" instead of "didn't run."
+
+- Force a fresh run: `--no-ingest-cache`.
+- Clear it: no CLI (no auto-eviction, by design) — `rm -rf store/cache` (everything) or
+  `rm store/cache/<instance_id>-*.db` (one instance).
+- There's no "pick a cache" flag: whichever entry matches your *current* config is used
+  automatically; an ingest-relevant config change just misses and re-ingests under a new key.
+
+### Other commands
+
+| command | what it does |
+|---|---|
+| `ingest [--tier T] [--question-id ID] [--synthetic] [--limit N] [--reset]` | build/extend the graph from a LongMemEval tier, or `--synthetic` for the deterministic Becky/Alex demo stream. |
+| `communities` | detect communities + summaries (global/breadth queries). |
+| `query TEXT [--mode {auto,ppr,bfs,vector,community}] [--k N] [--as-of DATE]` | algorithmic retrieval only — the LLM never traverses. |
+| `ask TEXT [--k N] [--as-of DATE] [--show-context]` | PPR retrieves a context, one LLM call answers, with citations. |
+| `demo [--personal]` | ingest the synthetic evolving stream; prints current-view vs as-of answers. |
+| `stats` | node/edge counts. |
+| `inspect NODE_ID` | dump one node + its neighbours (fact validity windows for `RELATED_TO`). |
+| `viz [--out FILE] [--query TEXT] [--mode {bfs,ppr,vector}]` | write a self-contained HTML graph viewer. |
+| `serve [--port N]` | live browser viewer: watch the graph build + trace queries. |
+| `eval [--k N] [--modes ppr,bfs,vector] [--single N] [--cross N] [--questions FILE]` | recall@k / MRR ablation across retrieval modes. |
+| `extract-dump [--tier T] [--limit N] [--out FILE]` | dump per-item extractions for one extractor/model, no graph build (for inspecting extraction quality directly). |
+| `eval-canon [--l3]` | canonicalization gate: synonyms must merge, antonyms/inverses must not. |
+
+Run `python -m kg <command> --help` for any command's exact flags (the table above is the
+practical subset — `--help` is always the source of truth).
+
 ## Docs
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the design: graph model, tag-drift control,
   embeddings, traversal/retrieval, ingestion pipeline, storage choice, phased build plan.
 - [docs/LITERATURE.md](docs/LITERATURE.md) — per-source notes (GraphRAG, HippoRAG, RAPTOR,
   A-MEM, Graphify, TnT-LLM, Chain-of-Layer, TaxoGen, TaxoCom, Leiden).
+- [optimization.md](optimization.md) — the A/B benchmark harness: what's been tried, what moved
+  the needle, and the full ingest-cache rationale.
 
 ## Core design bets (from the literature)
 
