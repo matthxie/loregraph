@@ -45,6 +45,8 @@ from .config import Config
 from .corpus import load_evidence_sessions, load_longmemeval
 from .evaluate import _mrr, _recall_at_k
 from .graph import KnowledgeGraph
+from .ingest import IngestReport
+from .ingest_cache import ingest_cache_key, save as save_ingest_cache, try_restore as try_restore_ingest_cache
 from .metering import UsageMeter, totals_of
 from .models import EdgeType, NodeType
 from .profiler import Profiler, activate as prof_activate, compact, \
@@ -846,7 +848,8 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                      judge: bool = True, label: str | None = None,
                      out_dir: str = DEFAULT_OUT, config: Config | None = None,
                      agent_client=None, judge_client=None, completeness_client=None,
-                     communities: bool = False, progress=None) -> dict:
+                     communities: bool = False, ingest_cache: bool = True,
+                     progress=None) -> dict:
     """Per-instance LongMemEval eval — the dataset's NATIVE protocol: each question is
     answered against a FRESH graph built from ONLY its own haystack, so the 500 first-person
     personas never share one memory (no cross-user entity collisions). Each instance *is* the
@@ -898,6 +901,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     ingest_cr = ingest_cw = 0          # prompt-cache read/write rollup (caching signal)
     ingest_trunc = 0                   # # extract calls that hit max_tokens (silent payload cut)
     total_sessions = 0
+    cached_instances = 0
     rep_graph: dict | None = None
     rep_nodes = -1
     backends_seen: dict | None = None
@@ -910,13 +914,26 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
 
     for i, (q, sessions) in enumerate(instances):
         total_sessions += len(sessions)
+        cache_key = ingest_cache_key(q["id"], sessions, cfg) if ingest_cache else None
         if os.path.exists(store_path):
             os.remove(store_path)
+        t_ingest = time.time()
+        cache_hit = bool(cache_key) and try_restore_ingest_cache(store_path, q["id"], cache_key)
         g = KnowledgeGraph.open(store_path, cfg)          # fresh memory per instance
         g.extractor.meter.drain()
         g.canon.meter.drain()
-        rep = g.ingest(sessions)                          # only THIS instance's haystack
-        recs = g.extractor.meter.drain() + g.canon.meter.drain()
+        if cache_hit:
+            # store already holds this instance's ingested graph (byte-identical inputs +
+            # ingest-relevant config + extractor prompt) — skip extraction entirely.
+            cached_instances += 1
+            rep = IngestReport(skipped=len(sessions), extractor=g.extractor.name,
+                               embedder=g.embedder.name, seconds=round(time.time() - t_ingest, 3))
+            recs = []
+        else:
+            rep = g.ingest(sessions)                      # only THIS instance's haystack
+            recs = g.extractor.meter.drain() + g.canon.meter.drain()
+            if cache_key:
+                save_ingest_cache(store_path, q["id"], cache_key)
         tok = totals_of(recs)
         _acc_site_records(cost_by_site, recs)
         if communities:
@@ -975,6 +992,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)
         rec["lane"] = getattr(ans, "lane", "")
+        rec["ingest_cached"] = cache_hit
         # this instance's own graph is torn down before the next iteration, so the
         # dashboard's "full graph" query mode needs its own copy per query — unlike
         # shared-graph mode, there is no single persistent graph to point back at.
@@ -1008,6 +1026,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                           "question": q["query"], "answer": q.get("answer", ""),
                           "tags": [], "entities": [], "rel_tags": []},
             "tag_df": [],
+            "ingest_cached": cache_hit,
         })
         if stats["nodes"] > rep_nodes:                         # richest graph = the visual
             rep_nodes = stats["nodes"]
@@ -1057,6 +1076,12 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "cache_read": ingest_cr, "cache_write": ingest_cw,
         "truncated": ingest_trunc,
         "tokens": ingest_tokens, "cost_usd": round(ingest_cost, 6),
+        # ingest-store cache (kg/ingest_cache.py): instances whose extraction was skipped
+        # because a byte-identical store already existed under store/cache/. cost/tokens/
+        # llm_calls above are REAL for this run (zero for cached instances) — this count is
+        # what makes that legible instead of silently reading as "ingest got N% cheaper".
+        "cached_instances": cached_instances,
+        "fresh_instances": len(instances) - cached_instances,
     }
     query_totals = _query_totals(qrecords, judge_meter, kk)
 
@@ -1076,6 +1101,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "config": {"k": kk, "agent_backend": cfg.rag_backend, "answerer": "ppr-rag",
                    "mode": "per-instance", "reflexion": cfg.reflexion,
                    "l3_enabled": cfg.l3_enabled, "communities": communities,
+                   "ingest_cache": ingest_cache,
                    "match": "session-level (gold evidence sessions vs ingested episodes)",
                    "note": "fresh graph per question (no cross-instance pooling); the Input "
                            "graph is a representative single instance"},
@@ -1221,6 +1247,9 @@ def summarize(run: dict) -> str:
     fb = qt.get("failure_buckets") or {}
     if fb:
         lines.insert(3, "  TRIAGE " + "  ".join(f"{k}={v}" for k, v in fb.items()))
+    if "cached_instances" in it:
+        lines.insert(2, f"  CACHE  {it['cached_instances']} cached / "
+                        f"{it['fresh_instances']} fresh instance(s)")
     completeness = run.get("completeness") or {}
     t1, t2 = completeness.get("tier1"), completeness.get("tier2")
     if t1 or (t2 and t2.get("n")):

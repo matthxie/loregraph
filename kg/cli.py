@@ -288,7 +288,8 @@ def cmd_testrun(args):
         run = run_per_instance(
             tier=args.tier, store_path=store_path, n_queries=args.queries,
             backend=args.backend, k=args.k, judge=not args.no_judge,
-            communities=False, label=args.label, out_dir=args.out,
+            communities=False, ingest_cache=not args.no_ingest_cache,
+            label=args.label, out_dir=args.out,
             config=cfg, progress=print)
     else:
         # shared graph: pools the whole tier into one memory (scale/structure smoke view)
@@ -471,6 +472,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "mode only; tier-1 regex capture-rate always runs, $0)")
     pt.add_argument("--no-communities", action="store_true",
                     help="skip community detection after ingest (faster)")
+    pt.add_argument("--no-ingest-cache", action="store_true",
+                    help="per-instance mode only: bypass the ingest-store cache "
+                         "(store/cache/<instance>-<key12>.db) and always re-run extraction, "
+                         "even when a byte-identical cached store exists")
     pt.add_argument("--label", default=None, help="run id / label (default: timestamp)")
     pt.add_argument("--out", default="runs", help="directory of dashboard runs")
     pt.set_defaults(func=cmd_testrun)
