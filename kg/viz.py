@@ -29,6 +29,38 @@ _OBJ_EDGES = {EdgeType.SHARED_TAG.value, EdgeType.SHARED_ENTITY.value,
 # --------------------------------------------------------------------------- #
 # layout helpers
 # --------------------------------------------------------------------------- #
+def _resolve_overlaps(pos: dict, min_dist: float = 0.09, iterations: int = 60) -> dict:
+    """Spring layout happily lets edge-weighted attraction pull unrelated nodes on top of
+    each other (common in focused subgraphs: many episodes sharing one hub collapse to
+    ~the same point). Nudge apart any pair closer than min_dist, cheaply (O(n^2), fine for
+    the dozens-of-nodes graphs this runs on) — a plain relaxation pass, not a physics sim."""
+    ids = list(pos.keys())
+    n = len(ids)
+    if n < 2:
+        return pos
+    xy = {i: list(pos[i]) for i in ids}
+    for _ in range(iterations):
+        moved = False
+        for a in range(n):
+            ia = ids[a]
+            for b in range(a + 1, n):
+                ib = ids[b]
+                dx = xy[ia][0] - xy[ib][0]
+                dy = xy[ia][1] - xy[ib][1]
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist < min_dist:
+                    moved = True
+                    if dist < 1e-9:
+                        dx, dy, dist = 1e-3, 0.0, 1e-3
+                    push = (min_dist - dist) / 2
+                    ux, uy = dx / dist, dy / dist
+                    xy[ia][0] += ux * push; xy[ia][1] += uy * push
+                    xy[ib][0] -= ux * push; xy[ib][1] -= uy * push
+        if not moved:
+            break
+    return xy
+
+
 def _layout(graph: nx.Graph, seed: int = 42, k_scale: float = 1.2) -> dict:
     if graph.number_of_nodes() == 0:
         return {}
@@ -41,8 +73,11 @@ def _layout(graph: nx.Graph, seed: int = 42, k_scale: float = 1.2) -> dict:
     sx = (maxx - minx) or 1.0
     sy = (maxy - miny) or 1.0
     # normalise to [0,1] with a small margin
-    return {n: [0.04 + 0.92 * (p[0] - minx) / sx, 0.04 + 0.92 * (p[1] - miny) / sy]
-            for n, p in pos.items()}
+    pos = {n: [0.04 + 0.92 * (p[0] - minx) / sx, 0.04 + 0.92 * (p[1] - miny) / sy]
+           for n, p in pos.items()}
+    if graph.number_of_nodes() <= 200:
+        pos = _resolve_overlaps(pos)
+    return pos
 
 
 # titles that are really just ids (hex/underscore session hashes) — not human-readable

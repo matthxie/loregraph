@@ -217,6 +217,7 @@ function makeGraph(stage, tip){
     let h=`<b>${esc(n.label||n.id)}</b><br><span class="mut">${n.type}${n.modality?(" · "+n.modality):""}</span>`;
     if(n.rank)h+=`<br>rank #${n.rank}${n.score!=null&&n.score!==""?(" · "+n.score):""}`;
     const roles=n.roles||[];
+    if(roles.includes("seed"))h+=`<br><span style="color:var(--seed)">seed (retrieval started here)</span>`;
     if(roles.includes("cited"))h+=`<br><span style="color:var(--cited)">✓ cited in the answer</span>`;
     else if(roles.includes("context"))h+=`<br><span class="mut">in the reader's context</span>`;
     else if(roles.includes("result"))h+=`<br><span class="mut">retrieved, but cut before the reader (rag_context_episodes)</span>`;
@@ -253,15 +254,20 @@ function makeGraph(stage, tip){
       c.addEventListener("mousemove",ev=>showTip(ev,n)); c.addEventListener("mouseleave",hideTip);
       c.addEventListener("click",()=>focus(n.id)); gN.appendChild(c); elN[n.id]=c;
       const roles=n.roles||[];
-      if(roles.includes("seed")||roles.includes("result")){const ring=document.createElementNS(NS,"circle");
-        // consumption > retrieval: an episode's ring shows what the READER did with it
-        // (cited > in-context > truncated-away) before falling back to plain seed/result.
-        const cls=roles.includes("cited")?"ringcite"
-          :roles.includes("context")?"ringres"
-          :roles.includes("result")?"ringtrunc"
-          :"ringseed";
-        ring.setAttribute("class",cls);
+      // seed and a consumption outcome (cited/context/cut) can both be true at once — draw
+      // both rings (seed inner, outcome outer) instead of picking just one. cited/context/cut
+      // are mutually exclusive outcomes for the same node, so only one of those ever shows.
+      const isSeed=roles.includes("seed");
+      const outcomeCls=roles.includes("cited")?"ringcite"
+        :roles.includes("context")?"ringres"
+        :roles.includes("result")?"ringtrunc"
+        :null;
+      if(isSeed){const ring=document.createElementNS(NS,"circle");
+        ring.setAttribute("class","ringseed");
         ring.setAttribute("cx",x);ring.setAttribute("cy",y);ring.setAttribute("r",radius(n)+3.5);gR.appendChild(ring);}
+      if(outcomeCls){const ring=document.createElementNS(NS,"circle");
+        ring.setAttribute("class",outcomeCls);
+        ring.setAttribute("cx",x);ring.setAttribute("cy",y);ring.setAttribute("r",radius(n)+(isSeed?7:3.5));gR.appendChild(ring);}
       if(n.rank){const t=document.createElementNS(NS,"text");t.setAttribute("class","rank");
         t.setAttribute("x",x);t.setAttribute("y",y);t.textContent=n.rank;gT.appendChild(t);}
       else if(opts.labels&&labelOwner[(n.label||n.id)]===n.id){
@@ -447,13 +453,16 @@ function makeForce(stage, tip, h){
       ctx.beginPath(); ctx.arc(x,y,r,0,6.2832);
       ctx.fillStyle=n.raw?(dim?"rgba(46,194,126,0.16)":"#2ec27e"):(dim?"rgba(79,142,247,0.16)":"#4f8ef7"); ctx.fill();
       if(n===sel){ ctx.strokeStyle="#ffd24d"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.stroke(); } }
-    // query-highlight overlay: ring the nodes this query touched, colored by what the
-    // reader did with them (cited > in-context > seed > merely touched — see ROLE_COLOR)
+    // query-highlight overlay: ring the nodes this query touched. seed and an outcome
+    // (cited/context/touched, mutually exclusive) can both be true at once, so draw both
+    // rings (seed inner, outcome outer) instead of picking just one — see ROLE_COLOR.
     if(hiSet){ for(const n of revN){ if(!hiSet.has(n.id))continue; const [x,y]=S(n.x,n.y), r=Math.max(2.5,n.rad*scale);
-      const role=hiRole[n.id]||"touched", col=ROLE_COLOR[role]||ROLE_COLOR.touched;
-      ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.strokeStyle=col; ctx.lineWidth=role==="cited"?3:2;
-      if(role==="touched") ctx.setLineDash([2,2]);
-      ctx.stroke(); ctx.setLineDash([]); } }
+      const info=hiRole[n.id]||{}, outcome=info.outcome||"touched";
+      if(info.seed){ ctx.beginPath(); ctx.arc(x,y,r+3,0,6.2832); ctx.strokeStyle=ROLE_COLOR.seed; ctx.lineWidth=2; ctx.stroke(); }
+      { const or=r+(info.seed?6:3);
+        ctx.beginPath(); ctx.arc(x,y,or,0,6.2832); ctx.strokeStyle=ROLE_COLOR[outcome]||ROLE_COLOR.touched;
+        ctx.lineWidth=outcome==="cited"?3:2; if(outcome==="touched") ctx.setLineDash([2,2]);
+        ctx.stroke(); ctx.setLineDash([]); } } }
     // edge labels: ALL of a selected node's connections (focus), plus relations on zoom.
     // Multiple relationships between the SAME pair (e.g. "hosts" + "hosted by", or several
     // parallel rel_tags) are GROUPED by node-pair and STACKED vertically around the midpoint
@@ -490,10 +499,11 @@ function makeForce(stage, tip, h){
     else { const n=nodeAt(sx,sy); cv.style.cursor=n?"pointer":"grab"; if(n!==hover){ hover=n;
       if(n&&tip){ tip.style.display="block"; tip.style.left=(r.left+sx+14+window.scrollX)+"px"; tip.style.top=(r.top+sy+14+window.scrollY)+"px";
         let th="<b>"+esc(n.label||n.id)+"</b><br><span class='mut'>"+n.type+(n.raw?" · raw entry":" · created")+" · "+(n.indeg||0)+" in / deg "+(n.deg||0)+"</span>";
-        if(hiSet&&hiSet.has(n.id)){ const role=hiRole[n.id]||"touched",
-            txt={seed:"seed (retrieval started here)",cited:"cited in the answer",
-                 context:"in the reader's context",touched:"touched, not in the final context"}[role];
-          th+="<br><span style='color:"+ROLE_COLOR[role]+"'>"+txt+"</span>"; }
+        if(hiSet&&hiSet.has(n.id)){ const info=hiRole[n.id]||{}, outcome=info.outcome||"touched",
+            txt={cited:"cited in the answer",context:"in the reader's context",
+                 touched:"touched, not in the final context"}[outcome];
+          if(info.seed)th+="<br><span style='color:"+ROLE_COLOR.seed+"'>seed (retrieval started here)</span>";
+          th+="<br><span style='color:"+ROLE_COLOR[outcome]+"'>"+txt+"</span>"; }
         const snip=(n.meta&&n.meta.snippet)||""; if(snip)th+="<div style='margin-top:5px;white-space:normal;font-size:11px;color:#c9d1d9;line-height:1.4'>"+esc(snip.slice(0,220))+(snip.length>220?"…":"")+"</div>";
         tip.innerHTML=th; }
       else if(tip) tip.style.display="none"; } } });
@@ -925,6 +935,7 @@ const Query=(function(){
             <span><i class="dot" style="background:transparent;border:2px solid #2ec27e"></i>ring = cited in the answer</span>
             <span><i class="dot" style="background:transparent;border:2px solid #ff5d8f"></i>ring = in the reader's context (number = rank in Simplified)</span>
             <span><i class="dot" style="background:transparent;border:2px dashed #8b949e"></i>ring = retrieved, cut before the reader</span>
+            <span class="mut">a seed node shows both an inner seed ring and an outer ring for its outcome, if any</span>
             <span class="mut">hover a node for its text · click to highlight connections · drag to pan · scroll/pinch to zoom in for labels · dbl-click to reset</span>
             <span class="mut">Full graph = this query laid over the whole ingest graph (like the Input tab), untouched nodes faded · nodes aren't draggable · click a node for its full tags/entities/text, same as the Input tab</span>
           </div>
@@ -1006,10 +1017,11 @@ const Query=(function(){
     const g=q.graph||ING.graph, key=q.graph?("q:"+(q.id||"")):"shared";
     if(key!==forceKey){ force.load(g.nodes||[], g.edges||[]); forceKey=key; hideNodeDetail("q-node-detail"); }
     const roleOf={};
-    (q.touched||[]).forEach(id=>roleOf[id]="touched");
-    (q.seeds||[]).forEach(id=>roleOf[id]="seed");
-    (q.context_episodes||[]).forEach(id=>roleOf[id]="context");
-    (q.citations||[]).forEach(id=>roleOf[id]="cited");
+    const of=id=>roleOf[id]||(roleOf[id]={});
+    (q.touched||[]).forEach(id=>{ of(id).outcome="touched"; });
+    (q.context_episodes||[]).forEach(id=>{ of(id).outcome="context"; });
+    (q.citations||[]).forEach(id=>{ of(id).outcome="cited"; });
+    (q.seeds||[]).forEach(id=>{ of(id).seed=true; });
     force.highlight(Object.keys(roleOf), roleOf);
   }
   function select(i){ sel=i; const q=qs[i];
