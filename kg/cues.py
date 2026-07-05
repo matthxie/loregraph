@@ -48,7 +48,28 @@ _IDENTITY = re.compile(
     r"roommate|flatmate|doctor|therapist|teacher|professor|mentor|"
     r"client|employer|company|team|friend|neighbou?r)\b", re.IGNORECASE)
 
-_KINDS = (("termination", _TERMINATION), ("rel_date", _REL_DATE), ("identity", _IDENTITY))
+# Money amounts and explicit numeral + measurement units — the signal a SUM/total question
+# needs, which the local NLP floor doesn't extract as a typed, summable fact. Deliberately
+# narrow: a currency symbol or an explicit unit word must be attached to the digits, so bare
+# numbers, years ("in 1995"), clock times ("at 5pm"), and ordinals never match — those are
+# cheap to mishandle (every one costs an escalation) and are covered, if at all, by
+# `_REL_DATE`. "3 of my friends" is a bare count with no unit and intentionally does NOT match.
+_CURRENCY_SYMBOL = r"[$€£¥₹]"
+_MONEY_WORD = r"dollars?|bucks|cents?|usd|euros?|quid"
+_MEASURE_UNIT = (
+    r"lbs?|pounds?|kilograms?|kg|grams?|ounces?|oz|"
+    r"miles?|kilometers?|km|meters?|feet|ft|inch(?:es)?|"
+    r"liters?|litres?|gallons?|quarts?|pints?|dozen(?:s)?"
+)
+_QUANTITY = re.compile(
+    r"(?:"
+    rf"{_CURRENCY_SYMBOL}\s?\d[\d,]*(?:\.\d+)?"          # $1,200 / $ 7.5
+    rf"|\b\d[\d,]*(?:\.\d+)?\s*(?:{_MONEY_WORD})\b"      # 1200 dollars / 20 bucks
+    rf"|\b\d[\d,]*(?:\.\d+)?\s*(?:{_MEASURE_UNIT})\b"    # 10 lbs / 3 miles / 2 dozen
+    r")", re.IGNORECASE)
+
+_KINDS = (("termination", _TERMINATION), ("rel_date", _REL_DATE), ("identity", _IDENTITY),
+          ("quantity", _QUANTITY))
 
 
 def cue_kinds(text: str) -> set[str]:
