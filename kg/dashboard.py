@@ -888,7 +888,8 @@ const Query=(function(){
           partial_evidence = every gold session reached the pool but context assembly (the char cap / top-k cut)
           still dropped some of it · truncated = evidence cut by the per-episode char cap · diluted = in context
           intact but the reader said "not in context" · reader = everything was in front of the model, it still
-          got it wrong · judge_suspect = answer contains the reference verbatim, grader disagreed.</div></div>
+          got it wrong · judge_suspect = answer asserts the reference value verbatim (or, for a bare-numeric
+          reference, states it as the first/asserted number, not just mentioned in passing), grader disagreed.</div></div>
         <div class="card panel chartbox" id="card-completeness" style="display:none"><h2>extraction completeness — aggregate ("how many"/"how much") questions</h2>
           <div class="statbar" id="cmpl-stats" style="margin-bottom:8px"></div>
           <div id="cmpl-chart"></div>

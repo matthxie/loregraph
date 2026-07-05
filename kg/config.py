@@ -153,6 +153,14 @@ class Config:
     # With chunking on, ranks 1..n can all be chunks of ONE source; cap how many context
     # slots a single source may occupy so the reader still sees other sessions. 0 = off.
     rag_chunks_per_source: int = 4
+    # Sibling-chunk expansion (query-side only, context-only — see spikes/queryside/REPORT.md):
+    # after top-n selection, pull in each selected chunk's #cNNN neighbours within this radius
+    # so a chunked session's answer-bearing sibling isn't left out of context even when it
+    # didn't rank into the top-n itself. 0 = off, byte-identical to pre-expansion behavior.
+    rag_parent_expand: int = 0
+    # Hard cap on total episode text after expansion; once hit, stop adding siblings (all
+    # originally selected chunks are always kept — only expansion siblings are capped).
+    rag_expand_budget_chars: int = 60000
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids
