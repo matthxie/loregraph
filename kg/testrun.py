@@ -37,8 +37,12 @@ import unicodedata
 from datetime import datetime, timezone
 
 from .backoff import call_with_backoff
+from .completeness import (classify_occurrences, enumerate_occurrences_llm,
+                           is_aggregate_question, question_shape,
+                           quantity_capture_for_question, summarize_tier1,
+                           summarize_tier2)
 from .config import Config
-from .corpus import load_longmemeval
+from .corpus import load_evidence_sessions, load_longmemeval
 from .evaluate import _mrr, _recall_at_k
 from .graph import KnowledgeGraph
 from .metering import UsageMeter, totals_of
@@ -841,7 +845,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                      backend: str | None = None, k: int | None = None,
                      judge: bool = True, label: str | None = None,
                      out_dir: str = DEFAULT_OUT, config: Config | None = None,
-                     agent_client=None, judge_client=None,
+                     agent_client=None, judge_client=None, completeness_client=None,
                      communities: bool = False, progress=None) -> dict:
     """Per-instance LongMemEval eval — the dataset's NATIVE protocol: each question is
     answered against a FRESH graph built from ONLY its own haystack, so the 500 first-person
@@ -870,6 +874,17 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     jclient = judge_client
     if judge and jclient is None and agent_client is None:
         jclient = _build_judge_client(cfg.judge_model)
+
+    # extraction-completeness audit (kg/completeness.py) — tier 1 (regex capture rate) is
+    # always on and free; tier 2 (LLM occurrence audit) is behind cfg.completeness_tier2 and
+    # only fires for aggregate-shaped questions that carry gold-evidence-session annotations.
+    evidence_sessions = load_evidence_sessions(tier)
+    completeness_meter = UsageMeter()
+    tier2_client = completeness_client
+    if cfg.completeness_tier2 and evidence_sessions and tier2_client is None:
+        tier2_client = _build_judge_client(cfg.completeness_tier2_model)
+    tier1_records: list[dict] = []
+    tier2_by_question: dict[str, tuple[str, list[dict]]] = {}
 
     qrecords: list[dict] = []
     steps: list[dict] = []
@@ -921,6 +936,25 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         v = _vocab(stats)
         for key in cum_vocab:
             cum_vocab[key] += v.get(key, 0)
+
+        # extraction-completeness audit — only for aggregate-shaped questions this dataset
+        # annotated gold-evidence sessions for (see kg/completeness.py).
+        qid, qtext = q["id"], q["query"]
+        evidence = evidence_sessions.get(qid) or []
+        if evidence and is_aggregate_question(qtext):
+            evidence_text = "\n".join(s["text"] for s in evidence)
+            tier1 = quantity_capture_for_question(qid, qtext, evidence_text, g.store)
+            if tier1 is not None:
+                tier1_records.append(tier1)
+            if tier2_client is not None:
+                occs = enumerate_occurrences_llm(
+                    tier2_client, cfg.completeness_tier2_model, qid, qtext, evidence,
+                    meter=completeness_meter)
+                if occs:
+                    shape = question_shape(qtext)
+                    classified = classify_occurrences(g.store, qid, occs, shape)
+                    tier2_by_question[qid] = (shape, classified)
+
         ingest_cost += tok["cost_usd"]
         ingest_tokens += tok["tokens"]
         ingest_llm += tok["llm_calls"]
@@ -992,8 +1026,19 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
     jt = judge_meter.totals()
     if jt["llm_calls"]:
         _acc_site(cost_by_site, "judge", jt["llm_calls"], jt["tokens"], jt["cost_usd"])
+    ct = completeness_meter.totals()
+    if ct["llm_calls"]:
+        _acc_site(cost_by_site, "audit.completeness", ct["llm_calls"], ct["tokens"],
+                  ct["cost_usd"])
     if os.path.exists(store_path):
         os.remove(store_path)
+
+    tier2_summary = summarize_tier2(tier2_by_question)
+    completeness = {
+        "tier1": summarize_tier1(tier1_records),
+        "tier2": {"enabled": cfg.completeness_tier2, "cost_usd": ct["cost_usd"],
+                  **(tier2_summary or {"n": None})},
+    }
 
     n = max(1, len(instances))
     ingest_totals = {
@@ -1042,6 +1087,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
                    "graph": rep_graph or {"nodes": [], "edges": [], "build_order": [],
                                           "stats": {}, "kind": "full"}},
         "query": {"totals": query_totals, "queries": qrecords},
+        "completeness": completeness,
     }
     return _write_run(run, out_dir, log)
 
@@ -1139,6 +1185,13 @@ def _update_index(out_dir: str, run: dict) -> None:
         "response_accuracy": run["query"]["totals"].get("response_accuracy"),
         "avg_tags_per_object": run["ingest"]["totals"]["avg_tags_per_object"],
     }
+    completeness = run.get("completeness")
+    if completeness:
+        t1, t2 = completeness.get("tier1"), completeness.get("tier2")
+        summary["completeness_tier1_capture_rate"] = t1["capture_rate"] if t1 else None
+        summary["completeness_tier2_pct_captured"] = t2.get("pct_captured") if t2 else None
+        summary["completeness_tier2_pct_missing"] = t2.get("pct_missing") if t2 else None
+        summary["completeness_tier2_n"] = t2.get("n") if t2 else None
     runs = []
     if os.path.exists(idx_path):
         try:
@@ -1168,4 +1221,15 @@ def summarize(run: dict) -> str:
     fb = qt.get("failure_buckets") or {}
     if fb:
         lines.insert(3, "  TRIAGE " + "  ".join(f"{k}={v}" for k, v in fb.items()))
+    completeness = run.get("completeness") or {}
+    t1, t2 = completeness.get("tier1"), completeness.get("tier2")
+    if t1 or (t2 and t2.get("n")):
+        parts = []
+        if t1:
+            parts.append(f"tier1 capture_rate={t1['capture_rate']} "
+                         f"({t1['amounts_in_graph']}/{t1['amounts_in_text']} amounts)")
+        if t2 and t2.get("n"):
+            parts.append(f"tier2 captured={t2['pct_captured']} collapsed={t2['pct_collapsed']} "
+                         f"missing={t2['pct_missing']} (n={t2['n']})")
+        lines.append("  COMPLETENESS  " + "  ".join(parts))
     return "\n".join(lines)

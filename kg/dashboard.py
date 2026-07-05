@@ -544,6 +544,9 @@ runs.forEach(r=>{
   const acc=r.recall_at_k!=null?(r.recall_at_k*100).toFixed(0)+"%":"–";
   const ra=r.response_accuracy!=null?(r.response_accuracy*100).toFixed(0)+"%":"–";
   const tm=r.ingest_seconds!=null?fmtS(r.ingest_seconds)+(r.query_seconds?" + "+fmtS(r.query_seconds):""):"–";
+  const cmpl=r.completeness_tier1_capture_rate!=null
+    ?(r.completeness_tier1_capture_rate*100).toFixed(0)+"%"
+    :(r.completeness_tier2_pct_captured!=null?(r.completeness_tier2_pct_captured*100).toFixed(0)+"%":"–");
   const a=el("a",{href:"/run?id="+encodeURIComponent(r.run_id),class:"run card"});
   a.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline">
     <h1 style="font-size:15px">${esc(r.label||r.run_id)}</h1>
@@ -557,6 +560,7 @@ runs.forEach(r=>{
       <div class="stat"><div class="k">resp acc</div><div class="v num">${ra}</div></div>
       <div class="stat"><div class="k">queries</div><div class="v num">${r.n_queries||0}</div></div>
       <div class="stat"><div class="k">time (ingest + query)</div><div class="v num">${tm}</div></div>
+      <div class="stat"><div class="k">completeness</div><div class="v num">${cmpl}</div></div>
     </div>`;
   host.appendChild(a);
 });
@@ -603,7 +607,7 @@ const DATA=/*__DATA__*/;
 __GRAPHJS__
 __FORCEJS__
 const RUN=DATA.run, ING=RUN.ingest, QRY=RUN.query, PROF=RUN.profile||null,
-      tip=document.getElementById("tip");
+      CMPL=RUN.completeness||null, tip=document.getElementById("tip");
 
 // ---------- header ----------
 (function(){ const t=document.getElementById("top");
@@ -878,6 +882,12 @@ const Query=(function(){
             by the per-episode char cap · diluted = in context intact but the reader said "not in context" ·
             reader = everything was in front of the model, it still got it wrong · judge_suspect = answer contains
             the reference verbatim, grader disagreed.</div></div>
+          <div class="card panel chartbox" id="card-completeness" style="display:none"><h2>extraction completeness — aggregate ("how many"/"how much") questions</h2>
+            <div class="statbar" id="cmpl-stats" style="margin-bottom:8px"></div>
+            <div id="cmpl-chart"></div>
+            <div class="mut" style="font-size:10px;margin-top:4px">tier 1 = deterministic regex capture rate (does each $ amount / small count
+            mentioned in gold evidence also show up as a node?) · tier 2 = LLM-audited occurrence completeness: CAPTURED (a distinct edge exists) /
+            COLLAPSED (multiple true occurrences flattened into one edge) / MISSING (never extracted at all). See spikes/completeness/REPORT.md.</div></div>
           <div class="card panel chartbox" id="card-qprof" style="display:none"><h2>⏱ Query time by stage</h2><div id="q-prof"></div>
             <div class="mut" style="font-size:10px;margin-top:4px">totals across all queries. judge.llm is eval-only
             (not paid in production); everything else is the live ask() path.</div></div>
@@ -918,6 +928,18 @@ const Query=(function(){
     if(fb.length){ document.getElementById("card-triage").style.display="";
       barChart(document.getElementById("q-triage"),
         fb.map(([k,v])=>({k,v,c:TRIC[k]||"#8b949e"})), {fmt:v=>v}); }
+    const t1=CMPL&&CMPL.tier1, t2=CMPL&&CMPL.tier2&&CMPL.tier2.n?CMPL.tier2:null;
+    if(t1||t2){ const card=document.getElementById("card-completeness"); card.style.display="";
+      const sb=document.getElementById("cmpl-stats");
+      sb.innerHTML=(t1?statEl("tier1 capture",pct(t1.capture_rate),"",
+          `${t1.amounts_in_graph}/${t1.amounts_in_text} amounts across ${t1.n_questions} question(s) also landed as a node`):"")
+        +(t2?statEl("tier2 captured",pct(t2.pct_captured),"",`${t2.captured}/${t2.n} occurrences`)
+           +statEl("tier2 collapsed",pct(t2.pct_collapsed),"",`${t2.collapsed}/${t2.n} occurrences`)
+           +statEl("tier2 missing",pct(t2.pct_missing),"",`${t2.missing}/${t2.n} occurrences`):"");
+      wireStatTips(card);
+      if(t2){ const bars=[{k:"captured",v:t2.captured,c:"#2ec27e"},{k:"collapsed",v:t2.collapsed,c:"#f5a623"},
+        {k:"missing",v:t2.missing,c:"#ff5d8f"}];
+        barChart(document.getElementById("cmpl-chart"),bars,{fmt:v=>v}); } }
     if(PROF){ const qp=profItems(PROF.query);
       if(qp.length){ document.getElementById("card-qprof").style.display="";
         barChart(document.getElementById("q-prof"),qp,{fmt:fmtS}); } }

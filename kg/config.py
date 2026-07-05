@@ -73,6 +73,11 @@ class Config:
     # never used for extraction/canon/RAG, so bumping this doesn't touch prod cost) ----
     judge_model: str = "gpt-4o"
 
+    # ---- extraction-completeness audit (testrun/dashboard only — see kg/completeness.py
+    #      and spikes/completeness/REPORT.md; never used for extraction/canon/RAG) ----
+    completeness_tier2: bool = True   # LLM occurrence audit; tier 1 (regex) is always on
+    completeness_tier2_model: str = "gpt-4o-mini"
+
     # ---- derived edges (§2 / §6.5) ------------------------------------------
     episode_knn_k: int = 6            # SIMILAR_TO neighbours per episode
     episode_knn_floor: float = 0.55   # min cosine for an episode↔episode SIMILAR_TO edge

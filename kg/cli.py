@@ -57,6 +57,8 @@ def _config(args) -> Config:
         cfg.self_name = args.self
     elif getattr(args, "personal", False):    # demo --personal: enable with the default name
         cfg.self_entity = True
+    if getattr(args, "no_completeness", False):   # skip the tier-2 LLM occurrence audit
+        cfg.completeness_tier2 = False
     return cfg
 
 
@@ -464,6 +466,9 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
     pt.add_argument("--no-judge", action="store_true",
                     help="skip the LLM response-accuracy judge (deterministic proxy only)")
+    pt.add_argument("--no-completeness", action="store_true",
+                    help="skip the tier-2 LLM occurrence-completeness audit (per-instance "
+                         "mode only; tier-1 regex capture-rate always runs, $0)")
     pt.add_argument("--no-communities", action="store_true",
                     help="skip community detection after ingest (faster)")
     pt.add_argument("--label", default=None, help="run id / label (default: timestamp)")

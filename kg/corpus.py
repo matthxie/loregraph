@@ -91,6 +91,31 @@ def load_longmemeval_questions(tier: str = "sample", limit: int | None = None) -
     return out
 
 
+def load_evidence_sessions(tier: str = "sample") -> dict[str, list[dict]]:
+    """Per-question gold-evidence sessions (raw text, not yet ingested), keyed by
+    question_id: {"session_id", "date", "text"}, chronological. Mirrors
+    spikes/completeness/ground_truth.py's `load_evidence`, generalized to the whole tier
+    in one pass (used by the completeness metrics — kg/completeness.py — which need the
+    RAW session text a question's answer is grounded in, not the ingested graph).
+    Questions/tiers with no `is_evidence` annotations simply yield no entries."""
+    by_q: dict[str, list[dict]] = {}
+    path = os.path.join(_lme_tier_dir(tier), "episodes.jsonl")
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            if not r.get("is_evidence"):
+                continue
+            by_q.setdefault(r["question_id"], []).append(
+                {"session_id": r["session_id"], "date": r.get("date", ""),
+                 "text": r["text"], "created_at": r.get("created_at", "")})
+    for sessions in by_q.values():
+        sessions.sort(key=lambda s: s["created_at"])
+    return by_q
+
+
 def iter_lme_instances(tier: str = "sample", limit: int | None = None):
     """Yield (question, [session CorpusItems]) per instance — the correct LongMemEval
     protocol: each question is answered against ONLY its own haystack in a fresh graph,
