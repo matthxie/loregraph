@@ -62,10 +62,29 @@ class ExtractedRelation:
 
 
 @dataclass
+class ExtractedFact:
+    """A stated amount/count/measurement — the typed home for quantities (docs:
+    extraction-completeness fix). Kept OUT of entities[]/relations[] so it is exempt from
+    the entity salience filter ("do not pad") that was silently dropping every dollar
+    amount before this existed. One instance == one OCCURRENCE: two mentions of the same
+    subject/predicate/value/date are two facts, not one deduplicated relation."""
+    subject: str
+    predicate: str
+    value: float
+    unit: str = ""
+    date: str = ""
+
+    def dedup_key(self) -> tuple:
+        return (self.subject.strip().lower(), self.predicate.strip().lower(),
+                round(self.value, 6), self.unit.strip().lower(), self.date.strip())
+
+
+@dataclass
 class Extraction:
     entities: list[ExtractedEntity] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
+    facts: list[ExtractedFact] = field(default_factory=list)
     description: str | None = None  # images: the one-line VLM description
 
     def merge(self, other: "Extraction") -> "Extraction":
@@ -77,12 +96,15 @@ class Extraction:
         for t in other.tags:
             if t.lower() not in tagset:
                 self.tags.append(t); tagset.add(t.lower())
-        # merge by directed (source, target): union the label sets of duplicates
-        by_pair: dict[tuple[str, str], ExtractedRelation] = {}
+        # merge by directed (source, target, valid_from): union label sets of TRUE
+        # duplicates, but keep distinct-dated occurrences of the same pair/predicate
+        # separate (docs: per-occurrence events must not collapse across a reflexion/
+        # sectioning merge just because they share a source/target).
+        by_pair: dict[tuple[str, str, str], ExtractedRelation] = {}
         for r in self.relations:
-            by_pair[(r.source.lower(), r.target.lower())] = r
+            by_pair[(r.source.lower(), r.target.lower(), r.valid_from)] = r
         for r in other.relations:
-            kk = (r.source.lower(), r.target.lower())
+            kk = (r.source.lower(), r.target.lower(), r.valid_from)
             if kk in by_pair:
                 have = by_pair[kk]
                 for lab in r.labels:
@@ -91,6 +113,12 @@ class Extraction:
             else:
                 by_pair[kk] = r
                 self.relations.append(r)
+        # facts are per-occurrence: dedupe only EXACT repeats (e.g. reflexion re-stating
+        # something the first pass already found), never distinct occurrences.
+        factset = {f.dedup_key() for f in self.facts}
+        for f in other.facts:
+            if f.dedup_key() not in factset:
+                self.facts.append(f); factset.add(f.dedup_key())
         return self
 
 
@@ -160,6 +188,25 @@ GRAPH_TOOL = {
                         "required": ["source", "target", "labels"],
                     },
                 },
+                "facts": {
+                    "type": "array",
+                    "description": "EVERY stated amount/count/measurement, always — "
+                    "exempt from the entities[] salience filter. subject: who/what it "
+                    "belongs to. predicate: short verb (earned/spent/paid/weighed/ran). "
+                    "value: bare number. unit: currency/unit, else empty. date: ISO "
+                    "date if stated, else empty.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subject": {"type": "string"},
+                            "predicate": {"type": "string"},
+                            "value": {"type": "number"},
+                            "unit": {"type": "string"},
+                            "date": {"type": "string"},
+                        },
+                        "required": ["subject", "predicate", "value"],
+                    },
+                },
                 "description": {"type": "string",
                                 "description": "One-line description (images only)."},
             },
@@ -197,6 +244,30 @@ def _normalize_termination(labels: list[str]) -> tuple[list[str], bool]:
     return list(dict.fromkeys(l for l in out if l)), ended
 
 
+_WEEKDAY_RE = re.compile(
+    r"^(mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?s?$", re.I)
+_NUMERIC_RE = re.compile(r"^\$?[\d][\d,.]*%?$")
+_COMPOUND_SPLIT_RE = re.compile(r"\s*,\s*|\s+and\s+", re.I)
+
+
+def _split_compound(value: str) -> list[str]:
+    """Split an object/subject string naming a LIST of distinct items ("Tuesdays and
+    Thursdays", "$200 and $50") into its parts, so a single compound mention doesn't
+    flatten N true occurrences into 1 edge/fact. Conservative on purpose: only splits
+    when every resulting part is short, DISTINCT, and looks like a list item (a weekday
+    or a number) — this is what stops "Bed and Breakfast" or "Johnson and Johnson" (a
+    single proper name that happens to contain "and") from being wrongly split."""
+    parts = [p.strip() for p in _COMPOUND_SPLIT_RE.split(value.strip()) if p.strip()]
+    if len(parts) < 2:
+        return [value]
+    if len(parts) != len({p.lower() for p in parts}):
+        return [value]           # duplicate parts → a proper name ("Johnson and Johnson")
+    if all(len(p.split()) <= 2 and (_WEEKDAY_RE.match(p) or _NUMERIC_RE.match(p))
+           for p in parts):
+        return parts
+    return [value]
+
+
 def _parse_tool_payload(payload: dict) -> Extraction:
     ents = []
     for e in payload.get("entities", []) or []:
@@ -216,14 +287,30 @@ def _parse_tool_payload(payload: dict) -> Extraction:
         if not s or not t or not labels:
             continue
         status = "ended" if (ended or str(r.get("status", "")).lower() == "ended") else "asserted"
-        rels.append(ExtractedRelation(
-            source=s, target=t, labels=labels,
-            provenance=Provenance.EXTRACTED,
-            confidence=float(r.get("confidence", 0.8)),
-            status=status, valid_from=str(r.get("valid_from", "") or ""),
-            valid_to=str(r.get("valid_to", "") or ""),
-        ))
-    return Extraction(entities=ents, tags=tags, relations=rels,
+        for target_part in _split_compound(t):
+            rels.append(ExtractedRelation(
+                source=s, target=target_part, labels=labels,
+                provenance=Provenance.EXTRACTED,
+                confidence=float(r.get("confidence", 0.8)),
+                status=status, valid_from=str(r.get("valid_from", "") or ""),
+                valid_to=str(r.get("valid_to", "") or ""),
+            ))
+    facts = []
+    for f in payload.get("facts", []) or []:
+        subj = (f.get("subject") or "").strip()
+        pred = (f.get("predicate") or "").strip()
+        if not subj or not pred or f.get("value") is None:
+            continue
+        try:
+            value = float(f["value"])
+        except (TypeError, ValueError):
+            continue
+        unit = str(f.get("unit", "") or "").strip()
+        date = str(f.get("date", "") or "").strip()
+        for subj_part in _split_compound(subj):
+            facts.append(ExtractedFact(subject=subj_part, predicate=pred, value=value,
+                                       unit=unit, date=date))
+    return Extraction(entities=ents, tags=tags, relations=rels, facts=facts,
                       description=(payload.get("description") or None))
 
 
@@ -273,6 +360,9 @@ class OpenAIExtractor:
         "'ex_*'. Set valid_from/valid_to ONLY when the text states a date; otherwise leave "
         "them empty (it defaults to 'as of this content'). Do not guess dates.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
+        "4) FACTS. Extract EVERY stated amount/count/measurement into facts[], no "
+        "salience filter. One per OCCURRENCE — a repeat (2nd purchase/visit/class) or "
+        "list (\"$200 and $50\") is 2 facts, not 1.\n\n"
         "Call emit_graph exactly once."
     )
 
@@ -326,15 +416,21 @@ class OpenAIExtractor:
             return first
         tags = ", ".join(first.tags) or "(none)"
         ents = ", ".join(e.name for e in first.entities) or "(none)"
+        facts_found = ", ".join(
+            f"{f.subject} {f.predicate} {f.value}{f.unit}" for f in first.facts) or "(none)"
         prompt = (
             f"Content:\n{text[:4000]}\n\n"
             f"First pass found these tags: {tags}\n"
-            f"and these entities: {ents}.\n\n"
+            f"and these entities: {ents}\n"
+            f"and these facts (amounts/counts/measurements): {facts_found}.\n\n"
             "Now do a focused recall check. List ONLY items you OMITTED:\n"
             "- any salient entity in the content missing above (with its type),\n"
             "- any important topical tag not already emitted,\n"
             "- any clearly-stated directed relationship between entities you missed "
-            "(source and target must be named entities; labels read source→target).\n\n"
+            "(source and target must be named entities; labels read source→target),\n"
+            "- any amount/count/measurement missing from the facts list above (not "
+            "salience-filtered — emit it), including a collapsed repeat occurrence or "
+            "multi-value mention (\"$200 and $50\" is two facts).\n\n"
             "Do not repeat anything already found. If you omitted nothing, return empty "
             "arrays. Call emit_graph exactly once with only the missed items."
         )

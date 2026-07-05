@@ -59,9 +59,16 @@ def apply_fact(store: GraphStore, *, src: str, dst: str, rel_tag: str, status: s
                 data["invalid_at"] = start
                 store.touch_edge(src, v, gkey)
 
-    # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate.
+    # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate. BUT: if
+    # this occurrence carries an explicit date that matches NONE of the existing open
+    # occurrences' dates, it is a genuinely new, separately-dated occurrence of a
+    # repeatable predicate (a 2nd visit/purchase/class), not a restatement of the first —
+    # fall through to OPEN instead of collapsing it (docs: per-occurrence events).
     open_existing = list(store.find_facts(src, dst, rel_tag, open_only=True))
-    if open_existing:
+    new_dated_occurrence = bool(valid_from) and open_existing and all(
+        data.get("valid_at") and data.get("valid_at") != valid_from
+        for _v, _gkey, data in open_existing)
+    if open_existing and not new_dated_occurrence:
         for _v, gkey, data in open_existing:
             old_valid = data.get("valid_at", "")
             data["confidence"] = max(float(data.get("confidence", 0.0)), confidence)

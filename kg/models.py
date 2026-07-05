@@ -62,6 +62,7 @@ class EntityType(str, Enum):
     WORK = "work"
     EVENT = "event"
     DATE = "date"
+    QUANTITY = "quantity"   # a stated amount/count/measurement (kg/extractors.py facts[])
     OTHER = "other"
 
 
@@ -136,6 +137,15 @@ class Node:
     # ---- Community ----
     members: list[str] = field(default_factory=list)
     summary: str | None = None
+
+    # ---- Quantity (a typed amount/count/measurement; entity_type == QUANTITY) ----
+    # Numeric home for stated amounts (docs: extraction-completeness fix) so SUM/COUNT
+    # over a subject never needs to regex-parse a node name. Always minted fresh per
+    # occurrence — NEVER routed through canonicalizer merge logic — so distinct amounts
+    # ($250 vs $2,500) can never alias-merge, and repeated occurrences of the same
+    # amount/date stay separate nodes/edges instead of collapsing into one.
+    value: float | None = None
+    unit: str | None = None
 
     def to_payload(self) -> str:
         d = asdict(self)
@@ -241,6 +251,16 @@ def relation_tag_node(node_id: str, *, canonical: str, ts: str,
     supersedes the old; `symmetric` predicates (works_with) store one orientation only."""
     return Node(id=node_id, ntype=NodeType.RELATION, name=canonical,
                 functional=functional, symmetric=symmetric,
+                created_at=ts, last_modified=ts)
+
+
+def quantity_node(node_id: str, *, display: str, value: float, unit: str, ts: str) -> Node:
+    """A single stated amount/count/measurement occurrence. Deliberately minted directly
+    (never through Canonicalizer.resolve_entity) so it never enters the L1/L2/L3 merge
+    machinery — two occurrences of "$250" stay two distinct nodes/edges, and "$250" can
+    never alias-merge with "$2,500"."""
+    return Node(id=node_id, ntype=NodeType.ENTITY, name=display,
+                entity_type=EntityType.QUANTITY, value=value, unit=unit,
                 created_at=ts, last_modified=ts)
 
 
