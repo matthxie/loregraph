@@ -28,7 +28,7 @@ from .corpus import CorpusItem
 from .embedders import Embedder
 from .extractors import Extraction, Extractor, extract_text_sectioned
 from .models import (Edge, EdgeType, EntityType, Modality, NodeType, Provenance,
-                     episode_node, mention_node, source_node)
+                     episode_node, mention_node, quantity_node, source_node)
 from .profiler import span as prof_span
 from .store import GraphStore, now_iso
 from .temporal import apply_fact
@@ -41,6 +41,7 @@ class IngestReport:
     failed: int = 0
     mentions: int = 0
     facts: int = 0              # fact-edge actions (open/close/supersede/confirm)
+    quantity_facts: int = 0     # typed amount/count/measurement occurrences written
     extraction_failures: int = 0
     seconds: float = 0.0
     extractor: str = ""
@@ -51,6 +52,7 @@ class IngestReport:
         warn = (f"  ⚠ {self.extraction_failures} extraction failures"
                 if self.extraction_failures else "")
         return (f"episodes={self.ingested} mentions={self.mentions} facts={self.facts} "
+                f"quantities={self.quantity_facts} "
                 f"skipped={self.skipped} failed={self.failed} in {self.seconds:.1f}s  "
                 f"(extractor={self.extractor}, embedder={self.embedder}){warn}")
 
@@ -73,6 +75,9 @@ class Ingestor:
         # mention ids are globally unique + stable across ingests
         self._mention_seq = sum(1 for n in store.nodes.values()
                                 if n.ntype == NodeType.MENTION)
+        # quantity-fact node ids: globally unique, never reused/merged (see quantity_node)
+        self._fact_seq = sum(1 for n in store.nodes.values()
+                             if n.ntype == NodeType.ENTITY and n.entity_type == EntityType.QUANTITY)
 
     # ------------------------------------------------------------------ public
     def ingest(self, items: list[CorpusItem]) -> IngestReport:
@@ -133,6 +138,8 @@ class Ingestor:
                 ment_surfaces.append(e.name)
             for r in ext.relations:
                 canon_surfaces.extend([r.source, r.target, *r.labels])
+            for qf in ext.facts:
+                canon_surfaces.extend([qf.subject, qf.predicate])
         with prof_span("ingest.embed_canon_prime"):
             self.canon.prime_embeddings(canon_surfaces)
 
@@ -149,11 +156,12 @@ class Ingestor:
             for i, ((item, h, ep_id), ext, vec) in enumerate(
                     zip(pending, extractions, ep_vecs)):
                 try:
-                    m, f = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
+                    m, f, qf = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
                     new_eps.append(ep_id)
                     report.ingested += 1
                     report.mentions += m
                     report.facts += f
+                    report.quantity_facts += qf
                 except Exception as e:  # noqa: BLE001
                     report.failed += 1
                     report.notes.append(f"{item.id}: {e!r}")
@@ -258,7 +266,7 @@ class Ingestor:
 
     # ------------------------------------------------------------------- write
     def _write_episode(self, item: CorpusItem, h: str, ep_id: str,
-                       ext: Extraction, vec, ment_vecs: dict) -> tuple[int, int]:
+                       ext: Extraction, vec, ment_vecs: dict) -> tuple[int, int, int]:
         ts = item.created_at or now_iso()
         modality = Modality.IMAGE if item.modality == "image" else Modality.TEXT
         raw = None if item.modality == "image" else item.text
@@ -333,7 +341,31 @@ class Ingestor:
                                     confidence=r.confidence, episode_id=ep_id)
                 if action != "skip":
                     n_facts += 1
-        return n_mentions, n_facts
+
+        # quantities → a fresh QUANTITY node per OCCURRENCE + one edge from its subject.
+        # Deliberately bypasses canon.resolve_entity/apply_fact: every occurrence is a new
+        # node/edge, never merged or confirm-collapsed, so distinct amounts and repeated
+        # occurrences both stay distinct and summable without regex-parsing names.
+        n_quantity = 0
+        for qf in ext.facts:
+            sid = ent_map.get(qf.subject.lower()) or self.canon.resolve_entity(
+                qf.subject, EntityType.OTHER)
+            if not sid:
+                continue
+            rid = self.canon.resolve_relation(qf.predicate)
+            if not rid:
+                continue
+            qid = f"qty_{self._fact_seq:06d}"
+            self._fact_seq += 1
+            display = f"{qf.value:g}{(' ' + qf.unit) if qf.unit else ''}"
+            self.store.add_node(quantity_node(qid, display=display, value=qf.value,
+                                              unit=qf.unit, ts=qf.date or ts))
+            self.store.add_edge(Edge(src=sid, dst=qid, etype=EdgeType.RELATED_TO,
+                                    provenance=Provenance.EXTRACTED, confidence=0.8,
+                                    weight=0.8, rel_tag=rid, valid_at=qf.date or ts,
+                                    episode_id=ep_id, created_at=ts))
+            n_quantity += 1
+        return n_mentions, n_facts, n_quantity
 
     @staticmethod
     def _char_span(text: str | None, surface: str) -> list[int] | None:
