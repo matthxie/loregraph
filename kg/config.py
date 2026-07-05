@@ -145,7 +145,7 @@ class Config:
     rag_backend: str = "openai"        # "openai" | "auto" (both = live OpenAI)
     rag_model: str = "gpt-4o-mini"
     rag_max_tokens: int = 1024        # answer output cap
-    rag_context_episodes: int = 8     # episodes whose text enters the context blob (== top_k,
+    rag_context_episodes: int = 5     # episodes whose text enters the context blob (== top_k,
                                        # so nothing recall@k=8 finds gets truncated before the
                                        # reader sees it; was 6 — see optimization.md baseline)
     rag_episode_chars: int = 20000    # per-episode text budget in the context
