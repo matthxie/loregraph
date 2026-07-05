@@ -38,7 +38,7 @@ class Config:
     gliner2_relation_threshold: float = 0.5  # higher = cleaner, fewer spurious edges
 
     # ---- ingestion (§6) ------------------------------------------------------
-    semaphore_limit: int = 5          # bounded LLM concurrency (graphiti SEMAPHORE_LIMIT)
+    semaphore_limit: int = 40         # bounded LLM concurrency (graphiti SEMAPHORE_LIMIT)
     reflexion: bool = True            # one extra recall pass after extraction
     long_doc_chars: int = 6000        # above this, extract section-by-section
     # Per-call input cap inside Extractor.extract_text. MUST be >= long_doc_chars so a
