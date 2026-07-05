@@ -103,6 +103,29 @@ def test_extractor_prompt_change_invalidates_key(monkeypatch):
     assert ingest_cache_key("q1", SESSIONS, cfg) != base
 
 
+def test_cue_pattern_change_invalidates_key(monkeypatch):
+    """Editing kg/cues.py's regex patterns changes which text escalates to the paid
+    extractor, which changes what a fresh ingest would write — so it must bust the cache
+    even though no Config field or extractor prompt changed. `_extractor_prompt_digest`
+    hashes the module's source text (`inspect.getsource`), so we simulate an edit by
+    stubbing `getsource` for the `cues` module rather than mutating file content on disk."""
+    cfg = Config.default()
+    base = ingest_cache_key("q1", SESSIONS, cfg)
+
+    import inspect
+
+    from kg import cues
+    real_getsource = inspect.getsource
+
+    def fake_getsource(module):
+        if module is cues:
+            return real_getsource(module) + "\n# edited\n"
+        return real_getsource(module)
+
+    monkeypatch.setattr(inspect, "getsource", fake_getsource)
+    assert ingest_cache_key("q1", SESSIONS, cfg) != base
+
+
 def test_save_and_restore_round_trip():
     with tempfile.TemporaryDirectory() as d:
         store_path = os.path.join(d, "lme_instance.db")

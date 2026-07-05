@@ -45,16 +45,20 @@ INGEST_RELEVANT_FIELDS = (
 
 
 def _extractor_prompt_digest() -> str:
-    """Hash the extractor system-prompt text AND the emit_graph tool schema so either
-    editing the prompt OR changing the schema (e.g. adding a typed field) auto-invalidates
-    the cache even though no Config field changed."""
+    """Hash the extractor system-prompt text, the emit_graph tool schema, AND the
+    cue-gating regex source (kg/cues.py) so editing the prompt, changing the schema (e.g.
+    adding a typed field), or changing which text earns an escalation call all
+    auto-invalidate the cache even though no Config field changed."""
+    import inspect
     import json
 
+    from . import cues
     from .extractors import GRAPH_TOOL, OpenAIExtractor
     h = hashlib.sha256()
     h.update(OpenAIExtractor._SYS.encode("utf-8"))
     h.update(OpenAIExtractor._FIRST_PERSON_CLAUSE.encode("utf-8"))
     h.update(json.dumps(GRAPH_TOOL, sort_keys=True).encode("utf-8"))
+    h.update(inspect.getsource(cues).encode("utf-8"))
     return h.hexdigest()
 
 

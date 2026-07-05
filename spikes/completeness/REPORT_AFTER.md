@@ -147,3 +147,80 @@ decides whether the fixed extractor is ever invoked on a given slice of text at 
 closing that gap matters, the next lever is cue-gating policy or per-section escalation
 coverage — a different, follow-on piece of work from "fix the extractor's own
 prompt/schema" that this task was scoped to.
+
+## Follow-on: closing the cue-gating gap with a quantity cue
+
+Implements the lever named above. Added a fourth cue kind to `kg/cues.py` —
+`_QUANTITY` — that fires on a currency symbol/word attached to digits (`$1,200`, `20
+bucks`) or an explicit numeral attached to a measurement unit (`10 lbs`, `3 miles`, `2
+dozen`). Deliberately narrow: bare numbers, years (`in 1995`), clock times (`at 5pm`),
+ordinals (`3rd`), and unitless counts (`3 of my friends`) do **not** match — every match
+costs a paid escalation call, so the pattern requires an explicit currency/unit token,
+not just a digit. 5 unit tests in `tests/test_cues.py` cover the positive/negative cases.
+`extract_text_sectioned` needed no change: it re-invokes `extractor.extract_text` per
+section, and `CueGatedExtractor.extract_text` already calls `has_cue()` — the new kind
+is picked up automatically.
+
+**Cache correctness:** `kg/ingest_cache.py`'s `_extractor_prompt_digest()` hashed the
+extractor prompt/schema but not `kg/cues.py`, so this change would silently NOT have
+invalidated existing cached stores even though it changes what gets written. Fixed by
+hashing `inspect.getsource(kg.cues)` into the same digest, with a unit test
+(`test_cue_pattern_change_invalidates_key`) that stubs `inspect.getsource` to simulate an
+edit and asserts the cache key changes.
+
+**Escalation-rate impact** (measured directly with `has_cue`, no API, over the same 8
+target instances' sessions, sectioned at `long_doc_chars=6000`):
+
+| | sections | escalated |
+|---|---|---|
+| before (3 cue kinds) | 848 | 377 (44.5%) |
+| after (4 cue kinds) | 848 | 440 (51.9%) |
+| newly escalated by the quantity cue alone | | 63 (7.4 pts) |
+
+**Completeness re-audit** (`spikes/completeness/build_stores.py`, live, ~8 min ingest,
+stores rebuilt into `spikes/completeness/stores`; prior stores preserved under
+`stores_after_facts_fix/`):
+
+| id | question | gold amounts | captured BEFORE (facts fix only) | captured AFTER (+ quantity cue) |
+|---|---|---|---|---|
+| 2b8f3739 | $ earned selling at markets | 225, 150, 120 | 0/3 | **2/3** ($225 jam, $120 farmers' market now typed edges; the $150 herb-plant sale is present as unit price `$7.5` × quantity `20` but never combined into a literal `150` node — a multiplication the extractor doesn't do, not a cue-gating miss) |
+| 36b9f61e | $ spent on luxury items | 800, 1200, 500 | 2/3 | **3/3** ✅ (`$1,200` Gucci handbag now captured — this was the headline miss in the prior report) |
+| 129d1232 | $ raised via charity events | 250, 600, 5000 | 3/3 | **3/3** (unchanged, unaffected) |
+| **total** | | **9** | **5/9 (56%)** | **8/9 (89%)** ✅ target met (≥8/9) |
+
+`36b9f61e`'s $1,200 was the specific case root-caused in the prior report (section 0 of
+the Gucci session had no cue at all under the old 3-kind gate); it's captured now. The
+one remaining miss (`2b8f3739`'s $150) is a genuinely different problem — arithmetic
+composition of two already-captured facts, not a text the extractor never saw — and is
+out of scope for a cue-gating fix.
+
+**Full test suite:** 175/175 passed (162 previously + 13 new: 5 in `tests/test_cues.py`,
+1 in `tests/test_ingest_cache.py`; the `tests/test_facts.py` count from the prior report
+didn't change). Ran standalone in 287s; an earlier concurrent run (started alongside the
+live completeness rebuild) was killed after both jobs were observed thrashing the same
+GPU-resident local NER model — not a suite problem, just don't run them together.
+
+**Sample-tier smoke** (`kg testrun --tier sample --queries 8 --chunking turns --label
+quantity-cue-smoke`, live, vs. the facts-fix baseline `facts-fix-sample-smoke-v3`):
+
+| metric | facts-fix baseline | + quantity cue |
+|---|---|---|
+| recall@k / mrr / hit_rate | 1.0 / 1.0 / 1.0 | 1.0 / 1.0 / 1.0 (no regression) |
+| citation grounding | — | 0.958 |
+| judge accuracy | noisy 0.75–1.0 | 0.875 |
+| tier1 SUM capture (amounts_in_graph / in_text) | 0/37 (0%) | **22/37 (59.5%)** |
+| tier2 captured / collapsed / missing (n=15) | 6 / 7 / 2 | **7 / 8 / 0** (missing → 0) |
+| ingest llm_calls | 166 | 229 (+38%) |
+| ingest tokens | 288,103 | 414,520 |
+| **ingest token growth over facts-fix baseline** | — | **+43.9%** |
+
+**Not small — reported honestly.** The task expected a small cost delta; it isn't one.
+63 more Haiku calls (+38%) fire because more sections now carry a cue, and each call
+pays the same fixed `emit_graph` schema/prompt overhead as before (the facts-fix report
+already measured that overhead at ~210–240 tokens/call) on top of whatever additional
+content it actually extracts. This is the direct, expected cost of the tradeoff this task
+asked for: catching every dollar amount means escalating on every section that mentions
+one, and dollar amounts are common. If this growth needs to come down, the lever is
+tightening `_MEASURE_UNIT`/`_MONEY_WORD` further (e.g. dropping generic measurement units
+and keeping only currency, since the completeness gap that motivated this work was
+specifically about money) rather than anything in this change's own correctness.
