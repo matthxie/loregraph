@@ -387,3 +387,87 @@ def test_run_per_instance_isolated_and_reconciled(monkeypatch):
 def test_per_instance_queries_zero_means_none():
     from kg.corpus import iter_lme_instances
     assert list(iter_lme_instances("sample", limit=0)) == []
+
+
+# --------------------------------------------------------------------------- #
+# extraction-completeness wiring (kg/completeness.py; see spikes/completeness/REPORT.md)
+# --------------------------------------------------------------------------- #
+class _FakeOccurrenceClient:
+    """Fake chat.completions client for the tier-2 occurrence-enumeration call: always
+    reports zero occurrences, so tier 2 runs (cost/meter path exercised) without needing
+    the ScriptedExtractor's synthetic graph to resemble a real audit target."""
+
+    def __init__(self):
+        self.chat = self
+        self.completions = self
+        self.calls = []
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        message = types.SimpleNamespace(
+            content=json.dumps({"occurrences": [], "notes": "none found"}))
+        choice = types.SimpleNamespace(message=message)
+        usage = types.SimpleNamespace(prompt_tokens=50, completion_tokens=10)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
+
+
+def test_run_per_instance_completeness_tier1_only(monkeypatch):
+    """tier 1 (regex capture rate) runs for free on the sample tier's aggregate-shaped
+    questions even with tier 2 off; questions without a parseable quantity are skipped
+    (not counted as a misleading 0)."""
+    _patch_offline_extraction(monkeypatch)
+    tmp = tempfile.mkdtemp()
+    cfg = _cfg()
+    cfg.completeness_tier2 = False
+    run = run_per_instance(tier="sample", store_path=os.path.join(tmp, "t.db"),
+                           n_queries=None, backend=None, judge=False, communities=False,
+                           label="c1", out_dir=os.path.join(tmp, "runs"), config=cfg,
+                           agent_client=_FakeAnthropic(answer="An answer.", citations=[]))
+    cmpl = run["completeness"]
+    assert cmpl["tier2"]["enabled"] is False and cmpl["tier2"]["n"] is None
+    # the sample tier's "$ coffee mug" question (0100672e) has evidence-text amounts, so
+    # tier 1 should have produced at least one per-question record.
+    t1 = cmpl["tier1"]
+    assert t1 is not None
+    assert t1["n_questions"] >= 1
+    assert 0.0 <= t1["capture_rate"] <= 1.0
+    ids = {r["question_id"] for r in t1["per_question"]}
+    assert "0100672e" in ids
+    # index.json carries the headline number for the cross-run trend
+    idx = json.load(open(os.path.join(tmp, "runs", "index.json"), encoding="utf-8"))
+    assert idx[0]["completeness_tier1_capture_rate"] == t1["capture_rate"]
+    # dashboard renders without error either way
+    html = dashboard.render_run_html(run)
+    assert "extraction completeness" in html
+
+
+def test_run_per_instance_completeness_tier2_runs_and_meters(monkeypatch):
+    """tier 2 fires its LLM call for aggregate questions with gold evidence and records
+    cost under the 'audit.completeness' site, even when it finds zero occurrences."""
+    _patch_offline_extraction(monkeypatch)
+    tmp = tempfile.mkdtemp()
+    cfg = _cfg()
+    cfg.completeness_tier2 = True
+    fake_audit = _FakeOccurrenceClient()
+    run = run_per_instance(tier="sample", store_path=os.path.join(tmp, "t.db"),
+                           n_queries=None, backend=None, judge=False, communities=False,
+                           label="c2", out_dir=os.path.join(tmp, "runs"), config=cfg,
+                           agent_client=_FakeAnthropic(answer="An answer.", citations=[]),
+                           completeness_client=fake_audit)
+    assert len(fake_audit.calls) >= 1                       # one per aggregate question
+    assert run["profile"]["cost_by_site"]["audit.completeness"]["llm_calls"] >= 1
+    assert run["completeness"]["tier2"]["enabled"] is True
+
+
+def test_completeness_none_when_no_aggregate_questions(monkeypatch):
+    """A tier with no aggregate-shaped questions (or none with gold evidence) must show
+    n/a (None), never a misleading 0 — exercised here via a --limit that starves the
+    per-instance loop of any instance at all."""
+    _patch_offline_extraction(monkeypatch)
+    tmp = tempfile.mkdtemp()
+    run = run_per_instance(tier="sample", store_path=os.path.join(tmp, "t.db"),
+                           n_queries=0, backend=None, judge=False, communities=False,
+                           label="c3", out_dir=os.path.join(tmp, "runs"), config=_cfg(),
+                           agent_client=_FakeAnthropic(answer="An answer.", citations=[]))
+    assert run["completeness"]["tier1"] is None
+    assert run["completeness"]["tier2"]["n"] is None
