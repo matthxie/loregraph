@@ -30,7 +30,7 @@ from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation,
 from kg.metering import UsageMeter, empty_totals, price, totals_of
 from kg.models import EntityType, Provenance
 from kg.rag import RagAnswerer
-from kg.testrun import _article, _dedup, run_per_instance, run_testrun
+from kg.testrun import _article, _dedup, _query_totals, _triage, run_per_instance, run_testrun
 
 
 def _cfg() -> Config:
@@ -248,6 +248,115 @@ def test_article_collapse_and_recall():
     assert _recall_at_k(ranked_art, gold, 8) == 1.0
     assert _mrr(ranked_art, gold) == 1.0
     assert _recall_at_k(_dedup(_article(o) for o in ["ep_wiki_099#p0"]), gold, 8) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# failure triage classifier (kg.testrun._triage) — synthetic rec/diag inputs so each
+# pipeline-stage bucket can be exercised in isolation, without an actual graph/answer.
+# --------------------------------------------------------------------------- #
+def _rec(**over):
+    r = {"judge": {"correct": False}, "response_contains": False, "abstention": False}
+    r.update(over)
+    return r
+
+
+def _diag(n_gold, gold_in_pool_count, gold_in_context_count, *, gold_pool_rank=1,
+          seed_gold_dist=1, found=True, ek=1.0, ef=1.0, answer_abstains=False, **over):
+    d = {
+        "n_gold": n_gold,
+        "gold_yield": [{"found": found, "entities": 1, "facts": 1}] if found else [],
+        "seed_gold_dist": seed_gold_dist,
+        "gold_pool_rank": gold_pool_rank,
+        "gold_in_pool_count": gold_in_pool_count,
+        "gold_in_context": gold_in_context_count,        # raw count == distinct here
+        "gold_in_context_count": gold_in_context_count,
+        "evidence_kept": ek, "evidence_full": ef,
+        "context_precision": 1.0,
+    }
+    d.update(over)
+    return d
+
+
+def test_triage_all_gold_hit_is_reader():
+    # 2 gold ids, both reached the pool AND the final context -> everything the reader
+    # needed was in front of it; a wrong answer is a genuine reader failure.
+    diag = _diag(n_gold=2, gold_in_pool_count=2, gold_in_context_count=2)
+    label, _ = _triage(_rec(), diag)
+    assert label == "reader"
+
+
+def test_triage_some_gold_hit_in_context_is_partial_evidence():
+    # both gold ids reached the pool (retrieval/join worked), but only 1 of 2 survived
+    # into the final context -> context assembly dropped it, NOT the reader's fault.
+    diag = _diag(n_gold=2, gold_in_pool_count=2, gold_in_context_count=1)
+    label, reason = _triage(_rec(), diag)
+    assert label == "partial_evidence"
+    assert "1/2" in reason
+
+
+def test_triage_none_gold_hit_is_retrieval_bucket_unchanged():
+    # nothing reached the pool at all -> rank_structural (upstream of context assembly,
+    # unaffected by the partial_evidence change).
+    diag = _diag(n_gold=2, gold_in_pool_count=0, gold_in_context_count=0)
+    label, _ = _triage(_rec(), diag)
+    assert label == "rank_structural"
+    # something reached the pool, but none of it survived into context -> rank_out.
+    diag = _diag(n_gold=2, gold_in_pool_count=1, gold_in_context_count=0)
+    label, _ = _triage(_rec(), diag)
+    assert label == "rank_out"
+
+
+def test_triage_join_miss_when_pool_never_gathered_all_gold():
+    # only 1 of 2 gold sessions ever reached the candidate pool -> a retrieval/join
+    # failure upstream of context assembly, distinct from partial_evidence (which
+    # requires the pool to have had ALL gold already).
+    diag = _diag(n_gold=2, gold_in_pool_count=1, gold_in_context_count=1)
+    label, reason = _triage(_rec(), diag)
+    assert label == "join_miss"
+    assert "1/2" in reason
+
+
+# --------------------------------------------------------------------------- #
+# per-question-kind accuracy breakdown (kg.testrun._query_totals -> by_kind)
+# --------------------------------------------------------------------------- #
+def _qrec(kind, triage, hit=True, recall_at_k=1.0):
+    return {"kind": kind, "triage": triage, "hit": hit, "recall_at_k": recall_at_k,
+            "mrr": 1.0, "citation_grounding": 1.0, "steps": 1, "n_touched": 0,
+            "response_token_recall": None, "cost_usd": 0.0, "tokens": 0,
+            "llm_calls": 0, "input_tokens": 0, "output_tokens": 0, "judge": None}
+
+
+def test_by_kind_accuracy_counts_right_wrong_and_unscored():
+    qrecords = [
+        _qrec("single-session", "ok"),
+        _qrec("single-session", "ok"),
+        _qrec("single-session", "reader", hit=False),
+        _qrec("temporal-reasoning", "ok"),
+        _qrec("temporal-reasoning", "unscored"),
+    ]
+    totals = _query_totals(qrecords, UsageMeter(), k=8)
+    ss = totals["by_kind"]["single-session"]
+    assert (ss["n"], ss["n_correct"], ss["n_incorrect"], ss["n_unscored"]) == (3, 2, 1, 0)
+    assert ss["accuracy"] == round(2 / 3, 3)
+    tr = totals["by_kind"]["temporal-reasoning"]
+    # the unscored question doesn't count as wrong and is excluded from the denominator
+    assert (tr["n"], tr["n_correct"], tr["n_incorrect"], tr["n_unscored"]) == (2, 1, 0, 1)
+    assert tr["accuracy"] == 1.0
+
+
+def test_by_kind_accuracy_none_when_kind_entirely_unscored():
+    qrecords = [_qrec("aggregation", "unscored")]
+    totals = _query_totals(qrecords, UsageMeter(), k=8)
+    agg = totals["by_kind"]["aggregation"]
+    assert agg["n_correct"] == 0 and agg["n_unscored"] == 1
+    assert agg["accuracy"] is None
+
+
+def test_triage_single_gold_unaffected_by_partial_evidence():
+    # n_gold == 1 can never be "partial" -> falls through to reader as before.
+    diag = _diag(n_gold=1, gold_in_pool_count=1, gold_in_context_count=1)
+    label, _ = _triage(_rec(), diag)
+    assert label == "reader"
 
 
 # --------------------------------------------------------------------------- #

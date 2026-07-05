@@ -586,7 +586,8 @@ _RUN_TEMPLATE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 .panel{padding:12px 14px}
 .chartbox{margin-bottom:12px} .chartbox h2{margin-bottom:4px}
 .controls{display:flex;align-items:center;gap:10px;margin:10px 0}
-.qlayout{display:grid;grid-template-columns:340px 1.4fr;gap:14px;align-items:start}
+.qcharts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:16px}
+.qlayout{display:grid;grid-template-columns:360px 1.4fr;gap:14px;align-items:start}
 @media(max-width:980px){.qlayout{grid-template-columns:1fr}}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px}
 .kv .mut{white-space:nowrap}
@@ -850,8 +851,9 @@ const Query=(function(){
   const qs=QRY.queries, T=QRY.totals; let built=false, graph=null, sel=null;
   // failure-triage bucket colors (rough severity gradient: red = broke earliest/deepest)
   const TRIC={extract_miss:"#ff5d8f",seed_miss:"#f5a623",rank_structural:"#e05d5d",
-    rank_out:"#e08d4d",join_miss:"#b06ff0",truncated:"#4f8ef7",diluted:"#6fc3f0",
-    reader:"#e6cf5a",judge_suspect:"#8b949e",abstention:"#8b949e",unscored:"#8b949e"};
+    rank_out:"#e08d4d",join_miss:"#b06ff0",partial_evidence:"#c77dff",truncated:"#4f8ef7",
+    diluted:"#6fc3f0",reader:"#e6cf5a",judge_suspect:"#8b949e",abstention:"#8b949e",
+    unscored:"#8b949e"};
   function avgLat(){ const xs=qs.map(q=>q.seconds).filter(v=>v!=null);
     return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null; }
   function build(){
@@ -871,30 +873,36 @@ const Query=(function(){
         ${statEl("query cost (prod)",fmtUSD(T.agent_cost_usd ?? T.cost_usd),"","Production USD: the single PPR→RAG answer call per query, summed across all queries. Excludes the eval-only judge — this is what production actually pays.")}
         ${statEl("eval judge",fmtUSD(T.judge_cost_usd ?? 0),"eval-only","Eval-only USD: the LLM grader that certifies answer correctness during testing. Runs every test round but is NOT paid in production.")}
       </div>
+      <div class="qcharts">
+        <div class="card panel chartbox"><h2>recall@k by question kind</h2><div id="q-kinds"></div></div>
+        <div class="card panel chartbox" id="card-accuracy" style="display:none"><h2>answer accuracy by question kind</h2><div id="q-acc-chart"></div>
+          <table class="tracetbl" style="margin-top:6px"><thead><tr><th>kind</th><th class="num">n</th><th class="num" style="color:var(--ok)">right</th><th class="num" style="color:var(--bad)">wrong</th><th class="num">unscored</th><th class="num">accuracy</th></tr></thead>
+          <tbody id="q-acc-table"></tbody></table>
+          <div class="mut" style="font-size:10px;margin-top:4px">right/wrong = the judge-or-proxy verdict (same one that stamps the triage bucket): right = triage "ok",
+          wrong = any failure bucket, unscored = no judge and no reference-string proxy to grade against (excluded from the accuracy %).</div></div>
+        <div class="card panel chartbox" id="card-triage" style="display:none"><h2>failure triage — earliest broken link</h2><div id="q-triage"></div>
+          <div class="mut" style="font-size:10px;margin-top:4px">every FAILED question is stamped with the first
+          pipeline stage that broke for it: extract_miss = gold session yielded no entities/facts ·
+          seed_miss = no seed lands near gold · rank_structural/rank_out = gold missing from / ranked out of the
+          PPR pool · join_miss = multi-session gold where the pool itself never gathered ALL sessions ·
+          partial_evidence = every gold session reached the pool but context assembly (the char cap / top-k cut)
+          still dropped some of it · truncated = evidence cut by the per-episode char cap · diluted = in context
+          intact but the reader said "not in context" · reader = everything was in front of the model, it still
+          got it wrong · judge_suspect = answer contains the reference verbatim, grader disagreed.</div></div>
+        <div class="card panel chartbox" id="card-completeness" style="display:none"><h2>extraction completeness — aggregate ("how many"/"how much") questions</h2>
+          <div class="statbar" id="cmpl-stats" style="margin-bottom:8px"></div>
+          <div id="cmpl-chart"></div>
+          <div class="mut" style="font-size:10px;margin-top:4px">tier 1 = deterministic regex capture rate (does each $ amount / small count
+          mentioned in gold evidence also show up as a node?) · tier 2 = LLM-audited occurrence completeness: CAPTURED (a distinct edge exists) /
+          COLLAPSED (multiple true occurrences flattened into one edge) / MISSING (never extracted at all). See spikes/completeness/REPORT.md.</div></div>
+        <div class="card panel chartbox" id="card-qprof" style="display:none"><h2>⏱ Query time by stage</h2><div id="q-prof"></div>
+          <div class="mut" style="font-size:10px;margin-top:4px">totals across all queries. judge.llm is eval-only
+          (not paid in production); everything else is the live ask() path.</div></div>
+      </div>
       <div class="qlayout">
-        <div>
-          <div class="card panel chartbox"><h2>recall@k by question kind</h2><div id="q-kinds"></div></div>
-          <div class="card panel chartbox" id="card-triage" style="display:none"><h2>failure triage — earliest broken link</h2><div id="q-triage"></div>
-            <div class="mut" style="font-size:10px;margin-top:4px">every FAILED question is stamped with the first
-            pipeline stage that broke for it: extract_miss = gold session yielded no entities/facts ·
-            seed_miss = no seed lands near gold · rank_structural/rank_out = gold missing from / ranked out of the
-            PPR pool · join_miss = only part of multi-session gold reached the context · truncated = evidence cut
-            by the per-episode char cap · diluted = in context intact but the reader said "not in context" ·
-            reader = everything was in front of the model, it still got it wrong · judge_suspect = answer contains
-            the reference verbatim, grader disagreed.</div></div>
-          <div class="card panel chartbox" id="card-completeness" style="display:none"><h2>extraction completeness — aggregate ("how many"/"how much") questions</h2>
-            <div class="statbar" id="cmpl-stats" style="margin-bottom:8px"></div>
-            <div id="cmpl-chart"></div>
-            <div class="mut" style="font-size:10px;margin-top:4px">tier 1 = deterministic regex capture rate (does each $ amount / small count
-            mentioned in gold evidence also show up as a node?) · tier 2 = LLM-audited occurrence completeness: CAPTURED (a distinct edge exists) /
-            COLLAPSED (multiple true occurrences flattened into one edge) / MISSING (never extracted at all). See spikes/completeness/REPORT.md.</div></div>
-          <div class="card panel chartbox" id="card-qprof" style="display:none"><h2>⏱ Query time by stage</h2><div id="q-prof"></div>
-            <div class="mut" style="font-size:10px;margin-top:4px">totals across all queries. judge.llm is eval-only
-            (not paid in production); everything else is the live ask() path.</div></div>
-          <div class="card scroll" style="max-height:62vh">
-            <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th title="failure triage — the earliest pipeline stage that broke for this question (blank = passed)">why</th><th class="num">$</th></tr></thead>
-            <tbody id="q-list"></tbody></table>
-          </div>
+        <div class="card scroll hh">
+          <table><thead><tr><th>id</th><th>kind</th><th title="recall@k — fraction of gold evidence retrieved in the top-k">rec</th><th title="answer correct? green ●=judge correct, red ●=judge incorrect, ◑=gold retrieved (unjudged), ○=miss">ok</th><th title="failure triage — the earliest pipeline stage that broke for this question (blank = passed)">why</th><th class="num">$</th></tr></thead>
+          <tbody id="q-list"></tbody></table>
         </div>
         <div>
           <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -919,11 +927,23 @@ const Query=(function(){
             <span class="mut">hover a node for its text · click to highlight connections · drag to pan · scroll/pinch to zoom in for labels · dbl-click to reset</span>
             <span class="mut">Full graph = this query laid over the whole ingest graph (like the Input tab), untouched nodes faded · nodes aren't draggable · click a node for its full tags/entities/text, same as the Input tab</span>
           </div>
-          <div class="card panel" id="q-detail" style="margin-top:12px"><span class="mut">Select a query to replay its traversal.</span></div>
         </div>
-      </div>`;
+      </div>
+      <div class="card panel" id="q-detail" style="margin-top:14px"><span class="mut">Select a query to replay its traversal.</span></div>`;
     wireStatTips(host);
     barChart(document.getElementById("q-kinds"), kinds, {fmt:pct});
+    const byKind=Object.entries(T.by_kind||{});
+    if(byKind.some(([,v])=>v.accuracy!=null)){
+      document.getElementById("card-accuracy").style.display="";
+      barChart(document.getElementById("q-acc-chart"),
+        byKind.filter(([,v])=>v.accuracy!=null).map(([k,v])=>({k,v:v.accuracy,c:"#2ec27e"})), {fmt:pct});
+      document.getElementById("q-acc-table").innerHTML=byKind.map(([k,v])=>`<tr>
+        <td class="mut">${esc(k)}</td><td class="num">${v.n}</td>
+        <td class="num" style="color:var(--ok)">${v.n_correct}</td>
+        <td class="num" style="color:var(--bad)">${v.n_incorrect}</td>
+        <td class="num mut">${v.n_unscored}</td>
+        <td class="num">${v.accuracy!=null?pct(v.accuracy):"–"}</td></tr>`).join("");
+    }
     const fb=Object.entries(T.failure_buckets||{});
     if(fb.length){ document.getElementById("card-triage").style.display="";
       barChart(document.getElementById("q-triage"),
@@ -1003,13 +1023,41 @@ const Query=(function(){
       (function step(){ if(h>=sg.hops.length)return; sg.hops[h].forEach(id=>shown.add(id));
         graph.undim(shown); h++; setTimeout(step,420); })(); }
   }
+  function shortDate(v){ return v?esc(String(v).slice(0,10)):""; }
+  // mirrors kg.testrun._article: collapse a chunk id to its source article/session id
+  // (strip the #chunk suffix, then the ep_/obj_ node prefix) so ids from different
+  // pipeline stages (gold/context/seeds) compare equal regardless of prefix or chunking.
+  function articleOf(id){ let base=String(id).split("#")[0];
+    if(base.startsWith("ep_")) base=base.slice(3);
+    else if(base.startsWith("obj_")) base=base.slice(4);
+    return base; }
+  function epChip(id,borderColor){ const d=(q_epd&&q_epd[id])||null;
+    const style=borderColor?` style="border-color:${borderColor}"`:"";
+    return `<span class="tag"${style} title="${d?esc(String(d)):""}">${esc(id)}${d?` <span class="mut" style="font-size:9px">${shortDate(d)}</span>`:""}</span>`; }
+  let q_epd=null;
   function drawDetail(q){ const j=q.judge;
+    q_epd=q.episode_dates||{};
     let verdict="";
     if(j&&!j.error){ const cls=j.correct?"v-ok":(j.score>=0.5?"v-mid":"v-bad");
       verdict=`<span class="verdict ${cls}">judge: ${j.correct?"correct":"incorrect"} (${j.score})</span>`; }
-    const cites=(q.citations||[]).map(c=>`<span class="tag">${esc(c)}</span>`).join("")||'<span class="mut">none</span>';
+    const cites=(q.citations||[]).map(c=>epChip(c)).join("")||'<span class="mut">none</span>';
     const marks=q.gold_marks||(q.gold||[]).map(id=>({id,hit:(q.object_ids||[]).indexOf(id)>=0}));
-    const gold=marks.map(m=>`<span class="tag" style="border-color:${m.hit?'#2ec27e':'#ff5d8f'}">${esc(m.id)}</span>`).join("");
+    // evidence accounting: in_context (green) = the reader actually saw it · seeded-but-dropped
+    // (bold red, the "retrieval found it, context assembly lost it" pattern) · never
+    // retrieved (grey) = seeding/ranking never surfaced it at all. Older runs.json without
+    // the in_context/in_seeds fields (pre-partial_evidence fix) fall back to deriving the
+    // same thing from context_episodes/seeds, so this still renders for historical runs.
+    const ctxArt=new Set((q.context_episodes||[]).map(articleOf));
+    const seedArt=new Set((q.seeds||[]).map(articleOf));
+    const gold=marks.map(m=>{
+      const inCtx=m.in_context!==undefined?m.in_context:ctxArt.has(articleOf(m.id));
+      const inSeeds=m.in_seeds!==undefined?m.in_seeds:seedArt.has(articleOf(m.id));
+      const seededDropped=!inCtx&&inSeeds;
+      const color=inCtx?"#2ec27e":(seededDropped?"#ff3b5c":"#8b949e");
+      const label=inCtx?"in context":(seededDropped?"retrieved (seeded) but dropped before the reader saw it":"never retrieved");
+      const style=seededDropped?`border-color:${color};background:${color}2e;font-weight:700`:`border-color:${color}`;
+      return `<span class="tag" style="${style}" title="${esc(label)}">${esc(m.id)}${seededDropped?" ⚠":""}</span>`;
+    }).join("");
     const trace=(q.trace||[]).map(s=>`<tr><td class="mut">${s.step+1}</td><td>${esc(s.tool)}</td>
       <td class="mut">${esc(JSON.stringify(s.input).slice(0,80))}</td><td>${esc(s.result_summary||"")}</td></tr>`).join("");
     document.getElementById("q-detail").innerHTML=`
@@ -1017,7 +1065,8 @@ const Query=(function(){
         <h2 style="margin:0">${esc(q.id||"")} · ${esc(q.kind)} <span class="mut">(${esc(q.difficulty||"")})</span></h2>
         <span class="pill">${q.steps} steps · ${q.stopped} · ${fmtN(q.tokens||0)} tok · ${fmtUSD(q.cost_usd||0)}${q.seconds!=null?` · ${fmtS(q.seconds)}`:""}</span>
       </div>
-      <div style="font-weight:600;margin:6px 0">${esc(q.query)}</div>
+      <div style="font-weight:600;margin:6px 0">${esc(q.query)}
+        ${q.question_date?`<span class="pill" style="margin-left:8px" title="question_date — anchors relative dates like 'two months ago'">as of ${shortDate(q.question_date)}</span>`:""}</div>
       <div class="statbar" style="grid-template-columns:repeat(4,1fr);margin:8px 0">
         ${statEl("recall@k",pct(q.recall_at_k))}
         ${statEl("MRR",(q.mrr||0).toFixed(2))}
@@ -1030,9 +1079,9 @@ const Query=(function(){
         <span class="mut">answer</span><span>${esc(q.answer||"")}</span>
         ${q.answer_expected?`<span class="mut">expected</span><span class="mut">${esc(q.answer_expected)}</span>`:""}
       </div>
-      <div style="margin-top:8px"><span class="mut" style="font-size:11px">gold (green=retrieved)</span><br>${gold}</div>
+      <div style="margin-top:8px"><span class="mut" style="font-size:11px">gold evidence — green=in final context · red ⚠=retrieved (seeded) but dropped before context · grey=never retrieved</span><br>${gold}</div>
       <div style="margin-top:6px"><span class="mut" style="font-size:11px">citations</span><br>${cites}</div>
-      ${(q.context_episodes||[]).length?`<div style="margin-top:6px"><span class="mut" style="font-size:11px">context — what the reader actually saw (${q.context_episodes.length} episodes${(q.facts||[]).length?`, ${q.facts.length} facts`:""}${q.as_of?`, as-of ${esc(q.as_of.slice(0,10))}`:""})</span><br>${q.context_episodes.map(c=>`<span class="tag" style="border-color:${(q.gold||[]).some(g=>g.includes(c.replace(/^ep_/,'').split('#')[0]))?'#2ec27e':'var(--line)'}">${esc(c)}</span>`).join("")}</div>`:""}
+      ${(q.context_episodes||[]).length?`<div style="margin-top:6px"><span class="mut" style="font-size:11px">context — what the reader actually saw (${q.context_episodes.length} episodes${(q.facts||[]).length?`, ${q.facts.length} facts`:""}${q.as_of?`, as-of ${esc(q.as_of.slice(0,10))}`:""})</span><br>${q.context_episodes.map(c=>epChip(c,(q.gold||[]).some(g=>g.includes(c.replace(/^ep_/,'').split('#')[0]))?"#2ec27e":"var(--line)")).join("")}</div>`:""}
       ${q.diag?diagHTML(q):""}
       ${q.profile?`<div style="margin-top:10px"><span class="mut" style="font-size:11px">⏱ this query, by stage (judge.llm is eval-only)</span><div id="qd-prof"></div></div>`:""}
       <div style="margin-top:10px"><span class="mut" style="font-size:11px">tool-call trace</span>
@@ -1049,22 +1098,28 @@ const Query=(function(){
       <td class="num${g.dated_facts?"":" mut"}">${g.dated_facts}</td></tr>`).join("");
     const cx=(D.context||[]).map(c=>`<tr${c.gold?' style="color:var(--ok)"':''}>
       <td>${esc(c.id)}</td><td class="num">${c.gold?"gold":""}</td>
+      <td class="mut">${shortDate(c.created_at)}</td>
       <td class="num">${fmtN(c.kept)}/${fmtN(c.chars)}${c.chars>c.kept?" ✂":""}</td>
       <td class="num">${c.evidence_kept!=null?`${(c.evidence_kept*100).toFixed(0)}%/${(c.evidence_full*100).toFixed(0)}%`:""}</td></tr>`).join("");
     const exp=v=>v==null?"–":Number(v).toExponential(1);
+    // gold_in_context_count/gold_in_pool_count are DISTINCT-gold-id counts (chunking can
+    // put several episodes of the same gold id in context, which would otherwise inflate
+    // a raw episode count past n_gold and hide a genuinely-missing gold id — see triage).
+    const ctxHit=D.gold_in_context_count!=null?D.gold_in_context_count:D.gold_in_context;
+    const poolHit=D.gold_in_pool_count;
     return `<div style="margin-top:10px"><span class="mut" style="font-size:11px">failure-attribution diagnostics</span>
       <div class="statbar" style="grid-template-columns:repeat(5,1fr);margin:6px 0">
         ${statEl("seed→gold",D.seed_gold_dist!=null?D.seed_gold_dist+" hop"+(D.seed_gold_dist===1?"":"s"):"∅","min hops","Minimum hop distance from any retrieval seed to a gold episode over the same graph projection PPR diffused on. ∅ = no seed reaches gold within 6 hops — a seeding failure, fix query-side matching.")}
-        ${statEl("gold pool rank",D.gold_pool_rank!=null?"#"+D.gold_pool_rank:"∅","of "+(D.pool_size||0),"Best gold rank in the raw PPR candidate pool BEFORE the lane rerank and context cut. ∅ = gold never surfaced in the pool at all.")}
+        ${statEl("gold in pool",poolHit!=null?`${poolHit}/${D.n_gold}`:"∅","of "+(D.pool_size||0)+" pooled","Distinct gold sessions (by id) that reached the raw PPR candidate pool BEFORE the lane rerank and context cut. < n_gold for a multi-gold question = join_miss territory: the pool never gathered every gold session.")}
         ${statEl("gold score",exp(D.gold_pool_score),"top "+exp(D.pool_top_score),"Gold's raw PPR score vs the pool's top score. A thin gap = near miss (rerank/k can fix); orders of magnitude = structural miss (the graph doesn't connect question language to that episode).")}
-        ${statEl("gold in ctx",`${D.gold_in_context}/${D.n_gold}`,D.context_precision!=null?("ctx prec "+(D.context_precision*100).toFixed(0)+"%"):"","How many of this question's gold evidence sessions made it into the reader's context, and what fraction of the context is gold (low = the reader wades through noise).")}
+        ${statEl("gold in ctx",`${ctxHit}/${D.n_gold}`,D.context_precision!=null?("ctx prec "+(D.context_precision*100).toFixed(0)+"%"):"","Distinct gold sessions (by id) that made it into the reader's final context, and what fraction of the context is gold (low = the reader wades through noise). < n_gold with all gold pooled = partial_evidence: context assembly dropped some of it.")}
         ${statEl("evidence kept",D.evidence_kept!=null?(D.evidence_kept*100).toFixed(0)+"%":"–",D.evidence_full!=null?("full "+(D.evidence_full*100).toFixed(0)+"%"):"","Reference-answer tokens present in the gold episode text AFTER the per-episode char cap vs in the full text. A big gap = the cap physically cut the evidence before the reader saw it.")}
       </div>
       <div class="row wrap" style="gap:14px;align-items:flex-start">
         <div><span class="mut" style="font-size:10px">gold extraction yield (what ingest pulled from each gold session)</span>
           <table class="tracetbl"><thead><tr><th>session</th><th>in graph</th><th>ents</th><th>facts</th><th>dated</th></tr></thead><tbody>${gy}</tbody></table></div>
         ${cx?`<div><span class="mut" style="font-size:10px">context episodes (kept/total chars · gold evidence kept%/full%)</span>
-          <table class="tracetbl"><thead><tr><th>episode</th><th></th><th>chars</th><th>evid</th></tr></thead><tbody>${cx}</tbody></table></div>`:""}
+          <table class="tracetbl"><thead><tr><th>episode</th><th></th><th>session date</th><th>chars</th><th>evid</th></tr></thead><tbody>${cx}</tbody></table></div>`:""}
       </div></div>`;
   }
   function pct(v){ return v==null?"–":(v*100).toFixed(0)+"%"; }
