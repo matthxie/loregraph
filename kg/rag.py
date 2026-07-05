@@ -36,6 +36,7 @@ from .store import GraphStore, fact_active
 
 _WS = re.compile(r"\s+")
 _EP_ID = re.compile(r"\bep_[A-Za-z0-9_#]+\b")
+_CHUNK_ID = re.compile(r"^(.+)#c(\d+)$")
 
 
 
@@ -76,7 +77,16 @@ _RAG_SYS = (
     "Verify the exact subject of the question appears in the context. If the context only "
     "contains a similar but different item (e.g. asked about vintage films but the context "
     "only has vintage cameras), say you don't have that information instead of substituting "
-    "the similar item."
+    "the similar item. This applies especially to place names and dates: if asked about "
+    "city/venue X and the context only covers a different city/venue Y, say the information "
+    "is not available — do not answer about Y.\n"
+    "The FACTS lines are machine-extracted and may be wrong or mis-dated; the EPISODES text "
+    "is the ground truth — never state a date or place that appears only in a FACTS line "
+    "without confirming it in an episode.\n"
+    "When the same running total is restated at different dates ('I've added N since X', "
+    "'I now have N'), the most recent statement supersedes earlier ones — report the latest "
+    "total; never add restatements together. Only sum amounts that are explicitly separate "
+    "events."
 )
 
 _ANSWER_TOOL = {
@@ -180,17 +190,81 @@ class ContextBuilder:
                 break
         return out
 
+    def _expand_siblings(self, selected: list[str]) -> list[str]:
+        """Sibling-chunk expansion (rag_parent_expand): pull in each selected chunk's
+        #cNNN neighbours within the configured radius, so a chunked session's
+        answer-bearing sibling isn't dropped from context just because it didn't rank
+        into the top-n itself. Context-only — the caller's retrieval-metric bookkeeping
+        keys off the pre-expansion ranked list, not this. Inserted in document order
+        (contiguous by chunk index within a source) and capped by
+        rag_expand_budget_chars; sources are expanded in their original (rank) order, so
+        when the budget runs out it is the lowest-ranked source's siblings that get cut,
+        never an originally selected chunk."""
+        w = int(getattr(self.config, "rag_parent_expand", 0) or 0)
+        if w <= 0:
+            return selected
+
+        selected_set = set(selected)
+        groups_order: list[str] = []          # group key, in first-appearance (rank) order
+        base_idxs: dict[str, set[int]] = {}   # chunked group -> selected chunk indices
+        for eid in selected:
+            m = _CHUNK_ID.match(eid)
+            key = m.group(1) if m else eid
+            if key not in base_idxs and key not in groups_order:
+                groups_order.append(key)
+            if m:
+                base_idxs.setdefault(key, set()).add(int(m.group(2)))
+
+        def text_len(eid: str) -> int:
+            n = self.store.get_node(eid)
+            return len(self._snippet(n, self.config.rag_episode_chars)) if n else 0
+
+        used_chars = sum(text_len(eid) for eid in selected)
+        extra: dict[str, set[int]] = {base: set() for base in base_idxs}
+        budget = int(getattr(self.config, "rag_expand_budget_chars", 60000))
+        budget_hit = False
+        for base in groups_order:                 # best-ranked source expanded first
+            if budget_hit or base not in base_idxs:
+                continue
+            for idx in sorted(base_idxs[base]):
+                if budget_hit:
+                    break
+                for cand in range(idx - w, idx + w + 1):
+                    if cand < 0 or cand in base_idxs[base] or cand in extra[base]:
+                        continue
+                    cid = f"{base}#c{cand:03d}"
+                    if cid in selected_set:
+                        continue
+                    length = text_len(cid)
+                    if length == 0:               # sibling doesn't exist in the store
+                        continue
+                    if used_chars + length > budget:
+                        budget_hit = True
+                        break
+                    extra[base].add(cand)
+                    used_chars += length
+
+        out: list[str] = []
+        for key in groups_order:
+            if key in base_idxs:
+                idxs = sorted(base_idxs[key] | extra.get(key, set()))
+                out.extend(f"{key}#c{i:03d}" for i in idxs)
+            else:
+                out.append(key)
+        return out
+
     def build(self, result: RetrievalResult) -> tuple[list[str], list[FactLine], str]:
         """Return (episode_ids, fact_lines, context_blob)."""
         ep_ids = self._select_episodes(result.object_ids)
         ents = self.relevant_entities(result, ep_ids)
         facts = self.facts_for(ents, result.as_of)
+        ctx_ids = self._expand_siblings(ep_ids)
 
         lines = [f"QUESTION: {result.query}",
                  f"AS-OF: {result.as_of or 'now (current view)'}", ""]
         lines.append("EPISODES (evidence; cite by id):")
-        if ep_ids:
-            for eid in ep_ids:
+        if ctx_ids:
+            for eid in ctx_ids:
                 n = self.store.get_node(eid)
                 if not n:
                     continue
@@ -213,7 +287,7 @@ class ContextBuilder:
             if any(h.invalid_at for h in hist):
                 lines += ["", "HISTORY (includes ENDED facts; read the trajectory in time order):"]
                 lines += [f"- {h.render()}" for h in hist]
-        return ep_ids, facts, "\n".join(lines)
+        return ctx_ids, facts, "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #

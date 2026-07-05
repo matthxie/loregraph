@@ -59,7 +59,32 @@ def _config(args) -> Config:
         cfg.self_entity = True
     if getattr(args, "no_completeness", False):   # skip the tier-2 LLM occurrence audit
         cfg.completeness_tier2 = False
+    for raw in getattr(args, "set", None) or ():    # generic --set field=value override
+        _apply_config_override(cfg, raw)
     return cfg
+
+
+def _apply_config_override(cfg: Config, raw: str) -> None:
+    """Apply one `--set field=value` override, coercing `value` to the field's current
+    (default) type so e.g. `--set rag_parent_expand=2` lands as an int, not the string
+    "2". Query-side-only knob for A/B runs (kg/config.py rag_* fields etc.) — not a
+    replacement for the dedicated flags above."""
+    if "=" not in raw:
+        raise SystemExit(f"--set expects field=value, got: {raw!r}")
+    key, value = raw.split("=", 1)
+    key = key.strip()
+    if not hasattr(cfg, key):
+        raise SystemExit(f"--set: unknown Config field {key!r}")
+    current = getattr(cfg, key)
+    if isinstance(current, bool):
+        parsed = value.strip().lower() in ("1", "true", "yes", "on")
+    elif isinstance(current, int):
+        parsed = int(value)
+    elif isinstance(current, float):
+        parsed = float(value)
+    else:
+        parsed = value
+    setattr(cfg, key, parsed)
 
 
 def _open(args) -> KnowledgeGraph:
@@ -478,6 +503,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "even when a byte-identical cached store exists")
     pt.add_argument("--label", default=None, help="run id / label (default: timestamp)")
     pt.add_argument("--out", default="runs", help="directory of dashboard runs")
+    pt.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
+                    help="override any Config field not covered by a dedicated flag above "
+                         "(repeatable), e.g. --set rag_parent_expand=2 "
+                         "--set rag_chunks_per_source=2. Value is coerced to the field's "
+                         "existing type (bool/int/float/str).")
     pt.set_defaults(func=cmd_testrun)
 
     pdash = sub.add_parser("dashboard", help="serve the test-run dashboard (run index + "

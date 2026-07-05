@@ -277,9 +277,20 @@ def _norm(s: str) -> str:
     return " ".join(_WORD.findall((s or "").lower()))
 
 
+_NUM = re.compile(r"\d+(?:\.\d+)?")
+
+
 def _response_proxy(answer: str, expected) -> dict:
     """Key-free signals: does the short reference answer appear in the response, and
-    what fraction of the reference's content tokens does the response contain."""
+    what fraction of the reference's content tokens does the response contain.
+
+    For a bare-numeric reference (e.g. "25"), plain substring containment is too loose:
+    a wrong answer can mention the right number in passing while asserting a different
+    total (a cumulative-vs-increment miscount: "...50 new postcards...includes 17...and
+    25..." contains "25" as a token while asserting 50). In that case `contains` instead
+    checks that the reference IS the first number the answer states — its asserted
+    value — rather than merely appearing somewhere in the text. Non-numeric references
+    keep the original substring check."""
     expected = "" if expected is None else str(expected)   # some gold answers are ints
     answer = "" if answer is None else str(answer)
     if not expected:
@@ -290,7 +301,12 @@ def _response_proxy(answer: str, expected) -> dict:
         return {"contains": None, "token_recall": None}
     a_set = set(_WORD.findall(a_norm))
     present = sum(1 for t in set(e_toks) if t in a_set)
-    return {"contains": _norm(expected) in a_norm,
+    if len(e_toks) == 1 and e_toks[0].isdigit():
+        first_num = _NUM.search(answer)
+        contains = bool(first_num and float(first_num.group()) == float(e_toks[0]))
+    else:
+        contains = _norm(expected) in a_norm
+    return {"contains": contains,
             "token_recall": round(present / len(set(e_toks)), 3)}
 
 

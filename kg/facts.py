@@ -36,10 +36,15 @@ class FactLine:
 
     def render(self) -> str:
         win = []
-        if self.valid_at:
+        # `valid_at` on an open fact is usually just the asserting session's created_at,
+        # not a confirmed real-world start date — "since" overclaims precision the extractor
+        # never had. Only a CLOSED window (invalid_at present) is a real bi-temporal interval,
+        # so "since/until" is reserved for that; an open fact gets the honest "mentioned".
+        if self.valid_at and self.invalid_at:
             win.append(f"since {self.valid_at[:10]}")
-        if self.invalid_at:
             win.append(f"until {self.invalid_at[:10]}")
+        elif self.valid_at:
+            win.append(f"mentioned {self.valid_at[:10]}")
         w = f" ({'; '.join(win)})" if win else ""
         prov = f" [{self.episode_id}]" if self.episode_id else ""
         return f"{self.src} --{self.rel}--> {self.dst}{w}{prov}"

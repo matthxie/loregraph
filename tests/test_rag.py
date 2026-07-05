@@ -231,3 +231,98 @@ def test_answerer_without_client_or_key_raises(monkeypatch):
     # and the public entry point surfaces the same error
     with pytest.raises(RuntimeError):
         g.ask("Where does Becky live?")
+
+
+# --------------------------------------------------------------------------- #
+# sibling-chunk expansion (rag_parent_expand — queryside fix 1)
+# --------------------------------------------------------------------------- #
+def _chunk_node(store, source: str, idx: int, text: str):
+    from kg.models import Node, NodeType
+    n = Node(id=f"ep_{source}#c{idx:03d}", ntype=NodeType.EPISODE,
+             name=f"chunk {idx}", raw_text=text, created_at="2024-01-01")
+    store.add_node(n)
+    return n.id
+
+
+def test_parent_expand_off_is_noop():
+    """rag_parent_expand=0 (default) must return the selected list unchanged — the
+    no-op guarantee that keeps default-config context byte-identical."""
+    g = becky_graph()
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_a#c001", "ep_a#c003"]
+    assert builder._expand_siblings(selected) == selected
+
+
+def test_parent_expand_pulls_in_sibling_window():
+    g = becky_graph()
+    for i in range(5):
+        _chunk_node(g.store, "sess1", i, f"text of chunk {i}")
+    g.config.rag_parent_expand = 1
+    builder = ContextBuilder(g.store, g.config)
+    out = builder._expand_siblings(["ep_sess1#c002"])
+    # c001 and c003 (radius 1) pulled in, c000/c004 (radius 2) left out, contiguous order
+    assert out == ["ep_sess1#c001", "ep_sess1#c002", "ep_sess1#c003"]
+
+
+def test_parent_expand_respects_budget_and_keeps_selected():
+    g = becky_graph()
+    for i in range(5):
+        _chunk_node(g.store, "sess1", i, "x" * 100)
+    g.config.rag_parent_expand = 2
+    g.config.rag_expand_budget_chars = 150   # room for the selected chunk + ~1 sibling
+    builder = ContextBuilder(g.store, g.config)
+    out = builder._expand_siblings(["ep_sess1#c002"])
+    assert "ep_sess1#c002" in out            # originally selected chunk always kept
+    assert len(out) < 5                      # budget stopped full expansion
+
+
+def test_parent_expand_lowest_ranked_source_cut_first():
+    """When the budget forces a cut, the best-ranked (first-appearing) source's siblings
+    survive; the lower-ranked source's siblings are the ones dropped."""
+    g = becky_graph()
+    for i in range(3):
+        _chunk_node(g.store, "best", i, "x" * 50)
+        _chunk_node(g.store, "worst", i, "x" * 50)
+    g.config.rag_parent_expand = 1
+    # 2 selected chunks (50 each) + budget for exactly one more sibling (50 more)
+    g.config.rag_expand_budget_chars = 150
+    builder = ContextBuilder(g.store, g.config)
+    out = builder._expand_siblings(["ep_best#c001", "ep_worst#c001"])
+    assert any(e.startswith("ep_best#c0") and e != "ep_best#c001" for e in out)
+    assert not any(e.startswith("ep_worst#c0") and e != "ep_worst#c001" for e in out)
+
+
+# --------------------------------------------------------------------------- #
+# honest fact-date rendering (queryside fix 3a)
+# --------------------------------------------------------------------------- #
+def test_factline_render_mentioned_vs_since_until():
+    open_fact = FactLine(src="Becky", rel="lives_in", dst="Berlin", valid_at="2024-03-05")
+    assert "mentioned 2024-03-05" in open_fact.render()
+    assert "since" not in open_fact.render()
+
+    closed_fact = FactLine(src="Becky", rel="lived_in", dst="Toronto",
+                           valid_at="2022-01-01", invalid_at="2023-06-01")
+    rendered = closed_fact.render()
+    assert "since 2022-01-01" in rendered and "until 2023-06-01" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# numeric judge_suspect heuristic (queryside fix 5)
+# --------------------------------------------------------------------------- #
+def test_response_proxy_numeric_reference_requires_asserted_value():
+    from kg.testrun import _response_proxy
+    # cumulative-vs-increment miscount: answer mentions "25" while asserting 50
+    proxy = _response_proxy(
+        "You now have 50 new postcards total: it includes 17 from August and 25 from "
+        "November.", "25")
+    assert proxy["contains"] is False
+
+    proxy_correct = _response_proxy("You've added 25 new postcards since you restarted.",
+                                    "25")
+    assert proxy_correct["contains"] is True
+
+
+def test_response_proxy_non_numeric_reference_unchanged():
+    from kg.testrun import _response_proxy
+    proxy = _response_proxy("I stayed in a hostel in Tokyo.", "hostel in Tokyo")
+    assert proxy["contains"] is True
