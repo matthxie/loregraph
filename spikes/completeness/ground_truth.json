@@ -1,0 +1,207 @@
+{
+  "00ca467f": {
+    "occurrences": [
+      {
+        "session_id": "answer_39900a0a_3",
+        "quote": "I recently had a follow-up appointment with my orthopedic surgeon, Dr. Thompson, on March 20th.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_39900a0a_2",
+        "quote": "I had an appointment with my primary care physician, but the antibiotic didn't fully clear it up.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_39900a0a_1",
+        "quote": "I finally went to see my primary care physician, Dr. Smith, on March 3rd, and he diagnosed me with bronchitis.",
+        "amount": null
+      }
+    ],
+    "notes": "The appointments mentioned are past occurrences. The user has had three doctor's appointments in March: one on March 3rd, one on March 20th, and one unspecified appointment with a primary care physician."
+  },
+  "2788b940": {
+    "occurrences": [
+      {
+        "session_id": "answer_8f6b938d_1",
+        "quote": "I usually take Zumba classes on Tuesdays and Thursdays at 7:00 PM",
+        "amount": 2
+      },
+      {
+        "session_id": "answer_8f6b938d_1",
+        "quote": "I've recently started taking a BodyPump class on Mondays",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_8f6b938d_3",
+        "quote": "I try to mix up my workout routine by attending different classes like Zumba, Hip Hop Abs, yoga, and BodyPump.",
+        "amount": 4
+      },
+      {
+        "session_id": "answer_8f6b938d_4",
+        "quote": "I need something to motivate me during my weightlifting classes, like BodyPump on Mondays at 6:30 PM.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_8f6b938d_2",
+        "quote": "I'm thinking of trying out some new recipes to support my fitness goals.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_8f6b938d_2",
+        "quote": "I attend Hip Hop Abs on Saturdays at 10:00 AM.",
+        "amount": 1
+      }
+    ],
+    "notes": "The user mentioned attending Zumba classes twice a week, BodyPump once a week, and Hip Hop Abs once a week. The total number of fitness classes attended in a typical week is 4, but this may vary based on the user's schedule."
+  },
+  "2e6d26dc": {
+    "occurrences": [
+      {
+        "session_id": "answer_fa526fc0_4",
+        "quote": "I just heard that my friend from college, David, had a baby boy named Jasper a few weeks ago",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_4",
+        "quote": "I should also add my friends Mike and Emma's daughter Charlotte, who was born around the same time.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_4",
+        "quote": "let me not forget my aunt's twins, Ava and Lily, who were born in April.",
+        "amount": 2
+      },
+      {
+        "session_id": "answer_fa526fc0_1",
+        "quote": "my cousin Rachel just had a baby boy named Max in March",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_2",
+        "quote": "our friends Mike and Emma welcomed their first baby, a girl named Charlotte, a few weeks after Rachel's baby shower.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_2",
+        "quote": "David and his wife, they just had their third child, a baby boy named Jasper, a few weeks ago.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_2",
+        "quote": "I should also invite my aunt, she's been busy with her new twin girls, Ava and Lily",
+        "amount": 2
+      },
+      {
+        "session_id": "answer_fa526fc0_2",
+        "quote": "I just remembered that our friends Mike and Emma welcomed their first baby, a girl named Charlotte, a few weeks after Rachel's baby shower.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_fa526fc0_2",
+        "quote": "I should also add my friends Mike and Emma's daughter Charlotte, who was born around the same time.",
+        "amount": 1
+      }
+    ],
+    "notes": "The occurrences include both past and recent births. The twins' birth is counted as two distinct occurrences. Some mentions are repeated across sessions."
+  },
+  "2b8f3739": {
+    "occurrences": [
+      {
+        "session_id": "answer_23759615_2",
+        "quote": "I just sold 15 jars of my homemade jam at the Homemade and Handmade Market on May 29th, earning $225.",
+        "amount": 225
+      },
+      {
+        "session_id": "answer_23759615_3",
+        "quote": "I just sold 20 potted herb plants at the Summer Solstice Market for $7.5 each.",
+        "amount": 150
+      },
+      {
+        "session_id": "answer_23759615_1",
+        "quote": "I sold 12 bunches of fresh organic herbs from my backyard garden at the farmers' market on May 15th, earning a total of $120.",
+        "amount": 120
+      }
+    ],
+    "notes": "All occurrences are confirmed sales and amounts earned. The amounts are from completed transactions, not future or canceled events."
+  },
+  "36b9f61e": {
+    "occurrences": [
+      {
+        "session_id": "answer_ef74281f_2",
+        "quote": "I recently bought a luxury evening gown for a wedding. It was a big purchase, $800.",
+        "amount": 800
+      },
+      {
+        "session_id": "answer_ef74281f_1",
+        "quote": "I just got from Gucci for $1,200.",
+        "amount": 1200
+      },
+      {
+        "session_id": "answer_ef74281f_3",
+        "quote": "I recently bought a pack of graphic tees from H&M for $20, which is a steal. But I've also made some luxury purchases, like a pair of leather boots from a high-end Italian designer that I got for $500.",
+        "amount": 500
+      }
+    ],
+    "notes": "The amounts listed are distinct luxury purchases made by the user. The $20 graphic tees are not considered luxury items and are included for context. All occurrences are past purchases."
+  },
+  "129d1232": {
+    "occurrences": [
+      {
+        "session_id": "answer_1de862d6_1",
+        "quote": "I recently participated in a charity walk and managed to raise $250 through sponsors",
+        "amount": 250
+      },
+      {
+        "session_id": "answer_1de862d6_3",
+        "quote": "I just helped organize a charity yoga event that raised $600 for a local animal shelter.",
+        "amount": 600
+      },
+      {
+        "session_id": "answer_1de862d6_2",
+        "quote": "my team managed to raise $5,000! It was an amazing experience.",
+        "amount": 5000
+      }
+    ],
+    "notes": "All occurrences are confirmed as completed events with specific amounts raised. No future or cancelled events were mentioned."
+  },
+  "21d02d0d": {
+    "occurrences": [
+      {
+        "session_id": "answer_2c637141_2",
+        "quote": "I missed a few events, including a 5K fun run on March 26th.",
+        "amount": 1
+      },
+      {
+        "session_id": "answer_2c637141_1",
+        "quote": "except for the run on March 5th when I had to miss due to work commitments.",
+        "amount": 1
+      }
+    ],
+    "notes": "The user mentioned missing two fun runs in March: one on March 5th and another on March 26th. Both were due to work commitments."
+  },
+  "0a995998": {
+    "occurrences": [
+      {
+        "session_id": "answer_afa9873b_2",
+        "quote": "I still need to pick up my dry cleaning for the navy blue blazer I wore to a meeting a few weeks ago.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_afa9873b_2",
+        "quote": "I've got a bunch of clothes that I haven't worn in a while, including some winter clothes that I haven't touched since the holidays.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_afa9873b_2",
+        "quote": "I need to return some boots to Zara, actually. I got them on February 5th, but they were too small, so I exchanged them for a larger size.",
+        "amount": null
+      },
+      {
+        "session_id": "answer_afa9873b_3",
+        "quote": "I just exchanged a pair of boots I got from Zara on 2/5, and I still need to pick up the new pair.",
+        "amount": null
+      }
+    ],
+    "notes": "The occurrences include items that need to be picked up or returned. The dry cleaning and boots are mentioned as needing to be picked up, while the winter clothes are referenced as items to sort through. The boots from Zara were exchanged, indicating a return process."
+  }
+}
