@@ -178,6 +178,15 @@ class Config:
     # chunk isn't already present — displacing only the lowest-ranked expansion sibling
     # (never an originally selected chunk). Runs after sibling expansion.
     rag_provenance_promote: bool = False
+    # Structured enumeration in the answer tool (query-side only, reader-facing): on the
+    # configured lanes the submit_answer schema REQUIRES an `events` array (date +
+    # description + quantity) filled BEFORE the answer, turning "count in your head" into
+    # "fill the list, then count" — the reader's dominant failure on aggregation questions
+    # is stating a total without enumerating the events behind it. Same single LLM call,
+    # a few dozen extra output tokens. "off" (default) = schema byte-identical to today.
+    rag_answer_events: str = "off"     # "off" | "lanes" | "all"
+    rag_answer_events_lanes: tuple = ("multihop", "state")   # lanes that get the schema
+                                       # under "lanes" (aggregation + temporal/state)
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids

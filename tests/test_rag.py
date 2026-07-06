@@ -564,3 +564,69 @@ def test_response_proxy_non_numeric_reference_unchanged():
     from kg.testrun import _response_proxy
     proxy = _response_proxy("I stayed in a hostel in Tokyo.", "hostel in Tokyo")
     assert proxy["contains"] is True
+
+
+# --------------------------------------------------------------------------- #
+# structured events enumeration in the answer tool (rag_answer_events)
+# --------------------------------------------------------------------------- #
+class _FakeOpenAIEvents(_FakeOpenAI):
+    """Fake client whose submit_answer payload also carries an `events` enumeration."""
+
+    def __init__(self, answer="", citations=None, events=None):
+        super().__init__(answer, citations)
+        self._e = events or []
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        tc = types.SimpleNamespace(
+            id="call_0",
+            function=types.SimpleNamespace(
+                name="submit_answer",
+                arguments=json.dumps({"events": self._e, "answer": self._a,
+                                      "citations": self._c})))
+        message = types.SimpleNamespace(content=None, tool_calls=[tc])
+        choice = types.SimpleNamespace(message=message, finish_reason="tool_calls")
+        usage = types.SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
+
+
+def _sent_tool_required(client) -> list:
+    return client.calls[0]["tools"][0]["function"]["parameters"]["required"]
+
+
+def test_answer_events_off_schema_unchanged():
+    g = becky_graph()
+    client = _FakeOpenAI("Berlin.", [])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert "events" not in _sent_tool_required(client)
+    assert ans.events == []
+
+
+def test_answer_events_lanes_gates_by_routed_lane():
+    g = becky_graph()
+    g.config.rag_answer_events = "lanes"   # default lanes: multihop + state
+
+    # multi-session kind routes to the multihop lane -> events schema required
+    ev = [{"date": "2023-01-01", "description": "moved to Berlin", "quantity": ""}]
+    client = _FakeOpenAIEvents("Berlin.", [], events=ev)
+    ans = g.ask("Where does Becky live?", client=client, kind="multi-session")
+    assert "events" in _sent_tool_required(client)
+    assert ans.events == ev
+    assert len(client.calls) == 1          # still exactly ONE call — scaffold, not a loop
+
+    # single-session-user kind routes to the single lane -> plain schema
+    client2 = _FakeOpenAI("Berlin.", [])
+    ans2 = g.ask("Where does Becky live?", client=client2, kind="single-session-user")
+    assert "events" not in _sent_tool_required(client2)
+    assert ans2.events == []
+
+
+def test_answer_events_all_and_malformed_payload():
+    g = becky_graph()
+    g.config.rag_answer_events = "all"
+    # malformed events (not a list of dicts) must not crash the parse — dicts only survive
+    client = _FakeOpenAIEvents("Berlin.", [], events=["not-a-dict", {"date": "d",
+                                                                     "description": "x"}])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert "events" in _sent_tool_required(client)
+    assert ans.events == [{"date": "d", "description": "x"}]

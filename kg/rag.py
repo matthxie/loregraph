@@ -103,6 +103,7 @@ class RagAnswer:
     seeds: list[str] = field(default_factory=list)
     touched: list[str] = field(default_factory=list)           # every node in the PPR subgraph
     retargeted: list[dict] = field(default_factory=list)       # chunk-retarget swaps/promotions
+    events: list[dict] = field(default_factory=list)           # enumeration scaffold (rag_answer_events)
     usage: dict = field(default_factory=dict)                  # token/cost (empty offline)
     steps: int = 1            # retrieve-then-read = ONE answer call (no per-hop loop)
     stopped: str = "answered"
@@ -154,6 +155,53 @@ _ANSWER_TOOL = {
                               "description": "episode ids you used, e.g. ep_2"},
             },
             "required": ["answer", "citations"],
+        },
+    },
+}
+
+# Aggregation/temporal variant (config.rag_answer_events): identical call shape, but the
+# schema REQUIRES `events` — every question-relevant event enumerated with its date and
+# quantity — listed BEFORE the answer. The reader's dominant failure on "how many / how
+# much / how long" questions is emitting a total it never enumerated; a required list
+# field makes the enumeration the path of least resistance instead of an instruction the
+# model may skip. `events` is scaffolding: it is surfaced on RagAnswer.events for
+# inspection but never judged and never fed back into another call.
+_ANSWER_TOOL_EVENTS = {
+    "type": "function",
+    "function": {
+        "name": "submit_answer",
+        "description": ("Submit the final answer grounded in the provided context. FIRST "
+                        "fill `events` with EVERY event/statement in the context that "
+                        "matches the question (one entry per distinct event, with its "
+                        "date and any quantity), THEN derive the answer from that list "
+                        "alone — count/sum/compare the listed events, never a number you "
+                        "did not enumerate."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "description": ("every context event matching the question; leave "
+                                    "empty only if none exist"),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string",
+                                     "description": "when it happened (episode date if "
+                                                    "the text is relative)"},
+                            "description": {"type": "string"},
+                            "quantity": {"type": "string",
+                                         "description": "amount/count/duration if any"},
+                        },
+                        "required": ["date", "description"],
+                    },
+                },
+                "answer": {"type": "string",
+                           "description": "derived ONLY from the events listed above"},
+                "citations": {"type": "array", "items": {"type": "string"},
+                              "description": "episode ids you used, e.g. ep_2"},
+            },
+            "required": ["events", "answer", "citations"],
         },
     },
 }
@@ -564,16 +612,31 @@ class OpenAIAnswerer:
         self.meter = UsageMeter()
 
     @staticmethod
-    def _parse_message(msg) -> tuple[str, list]:
-        ans, raw = "", []
+    def _parse_message(msg) -> tuple[str, list, list]:
+        ans, raw, events = "", [], []
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "submit_answer":
             payload = json.loads(tc[0].function.arguments)
             ans = str(payload.get("answer", "")).strip()
             raw = payload.get("citations", [])
+            ev = payload.get("events", [])
+            events = [e for e in ev if isinstance(e, dict)] if isinstance(ev, list) else []
         elif msg.choices and msg.choices[0].message.content:
             ans = msg.choices[0].message.content.strip()
-        return ans, raw
+        return ans, raw, events
+
+    def _answer_tool(self, result: RetrievalResult) -> dict:
+        """The plain submit_answer schema, or the events-enumeration variant when
+        rag_answer_events covers this query's lane ("all", or "lanes" + a routed lane in
+        rag_answer_events_lanes). Default "off" keeps the schema byte-identical to today."""
+        mode = getattr(self.config, "rag_answer_events", "off")
+        if mode == "all":
+            return _ANSWER_TOOL_EVENTS
+        if mode == "lanes":
+            lanes = set(getattr(self.config, "rag_answer_events_lanes", ()))
+            if getattr(result, "lane", "single") in lanes:
+                return _ANSWER_TOOL_EVENTS
+        return _ANSWER_TOOL
 
     @staticmethod
     def _finish_reason(msg) -> str | None:
@@ -597,7 +660,7 @@ class OpenAIAnswerer:
                 {"role": "system", "content": _RAG_SYS},
                 {"role": "user", "content": blob},
             ],
-            "tools": [_ANSWER_TOOL],
+            "tools": [self._answer_tool(result)],
             "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
         }
         if self.config.rag_model.startswith(("gpt-5", "o1", "o3", "o4")):
@@ -617,7 +680,7 @@ class OpenAIAnswerer:
             base.notes.append(f"api error, used extractive fallback: {e!r}")
             return base
         base.usage = self.meter.totals()
-        ans, raw = self._parse_message(msg)
+        ans, raw, base.events = self._parse_message(msg)
         # A reasoning model can spend its ENTIRE completion budget on reasoning tokens and
         # never reach the submit_answer call — finish_reason="length" with no content/tool
         # call at all, not an API error, so the except above never sees it. One retry at
@@ -631,7 +694,7 @@ class OpenAIAnswerer:
                         lambda: self.client.chat.completions.create(**retry_kwargs))
                 self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
                 base.usage = self.meter.totals()
-                ans, raw = self._parse_message(msg)
+                ans, raw, base.events = self._parse_message(msg)
             except Exception as e:  # noqa: BLE001 — retry failed too, fall through below
                 base.notes.append(f"retry after empty/length response failed: {e!r}")
             if not ans:
