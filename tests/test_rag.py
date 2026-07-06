@@ -25,6 +25,7 @@ from kg import Config, KnowledgeGraph
 from kg.embedders import SentenceTransformerEmbedder, get_embedder
 from kg.extractors import ScriptedExtractor
 from kg.rag import (
+    _RAG_SYS,
     ContextBuilder,
     FactLine,
     RagAnswerer,
@@ -143,6 +144,13 @@ def test_openai_citation_validation():
     # citations not present in the retrieved context are dropped
     assert set(ans.citations) <= set(ans.context_episodes)
     assert "ep_nope" in ans.dropped_citations and "entity_0000" in ans.dropped_citations
+
+
+def test_sys_prompt_orders_timeframe_answer_first():
+    """07741c44: the reader led with the current state and the judge graded the first
+    clause, missing the earlier timeframe the question actually asked about."""
+    assert "timeframe" in _RAG_SYS.lower()
+    assert "state the answer for that timeframe first" in _RAG_SYS.lower()
 
 
 def test_validate_unit():
@@ -274,6 +282,236 @@ def test_parent_expand_respects_budget_and_keeps_selected():
     out = builder._expand_siblings(["ep_sess1#c002"])
     assert "ep_sess1#c002" in out            # originally selected chunk always kept
     assert len(out) < 5                      # budget stopped full expansion
+
+
+# ---- fake client that scripts a SEQUENCE of responses (retry-on-empty tests) ------- #
+class _SequencedFakeOpenAI:
+    """Like _FakeOpenAI but returns a different scripted response per call, so tests can
+    simulate a first call that comes back empty (finish_reason='length', no tool call —
+    e.g. a reasoning model burning its whole completion budget on reasoning tokens) and a
+    second (retry) call that succeeds."""
+
+    def __init__(self, responses: list[dict]):
+        self._responses = responses
+        self.chat = self
+        self.completions = self
+        self.calls: list[dict] = []
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        resp = self._responses[min(len(self.calls) - 1, len(self._responses) - 1)]
+        if resp.get("empty"):
+            message = types.SimpleNamespace(content=None, tool_calls=None)
+        else:
+            tc = types.SimpleNamespace(
+                id="call_0",
+                function=types.SimpleNamespace(
+                    name="submit_answer",
+                    arguments=json.dumps({"answer": resp.get("answer", ""),
+                                          "citations": resp.get("citations", [])})))
+            message = types.SimpleNamespace(content=None, tool_calls=[tc])
+        choice = types.SimpleNamespace(message=message,
+                                       finish_reason=resp.get("finish_reason", "tool_calls"))
+        usage = types.SimpleNamespace(prompt_tokens=0, completion_tokens=0)
+        return types.SimpleNamespace(choices=[choice], usage=usage)
+
+
+# --------------------------------------------------------------------------- #
+# empty-answer retry (reader5-queryside-both-retarget-smoke 06878be2: a reasoning model
+# can burn its whole completion budget on reasoning tokens and never emit submit_answer —
+# finish_reason="length" with no content/tool call, not an API error)
+# --------------------------------------------------------------------------- #
+def test_empty_length_response_retries_with_doubled_token_cap():
+    g = becky_graph()
+    client = _SequencedFakeOpenAI([
+        {"empty": True, "finish_reason": "length"},
+        {"answer": "Becky lives in Berlin.", "citations": ["ep_becky02"],
+         "finish_reason": "tool_calls"},
+    ])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert len(client.calls) == 2                         # exactly one retry
+    orig_cap = client.calls[0]["max_tokens"]
+    assert client.calls[1]["max_tokens"] == orig_cap * 2    # doubled on retry
+    assert "Berlin" in ans.answer
+    assert any("retried with doubled token cap" in n for n in ans.notes)
+
+
+def test_empty_length_response_still_empty_after_retry_falls_back():
+    g = becky_graph()
+    client = _SequencedFakeOpenAI([
+        {"empty": True, "finish_reason": "length"},
+        {"empty": True, "finish_reason": "length"},
+    ])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert len(client.calls) == 2                          # retried once, not looped forever
+    assert any("used extractive fallback" in n for n in ans.notes)
+    assert ans.answer and ans.answer != "(no answer produced)"
+
+
+def test_non_length_empty_response_does_not_retry():
+    """An empty answer NOT caused by hitting the length limit (e.g. the model just chose
+    not to call the tool) must not trigger the retry — only finish_reason='length' does."""
+    g = becky_graph()
+    client = _SequencedFakeOpenAI([{"empty": True, "finish_reason": "stop"}])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert len(client.calls) == 1
+    assert ans.answer == "(no answer produced)"
+
+
+# --------------------------------------------------------------------------- #
+# lexical retarget payload bonus (retarget smoke 0bb5a684: the lexical scorer picked a
+# question-echoing chunk with no dates over the chunks carrying the actual dates)
+# --------------------------------------------------------------------------- #
+def test_lex_payload_bonus_beats_question_echo():
+    g = becky_graph()
+    _chunk_node(g.store, "sess1", 0,
+               "I'm preparing for an upcoming meeting with my team about our schedule")
+    _chunk_node(g.store, "sess1", 1, "we met on 2024-03-05 to finalize the schedule")
+    g.config.rag_retarget = "seed+lex"
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000"]
+    # c000 (question-echo, no payload) wins on embedding seed score alone
+    result = _retrieval_result("when was our meeting about the schedule",
+                               selected,
+                               seed_scores={"ep_sess1#c000": 0.9, "ep_sess1#c001": 0.1})
+    out = builder._retarget_chunks(selected, result)
+    assert out == ["ep_sess1#c001"]                        # the dated chunk wins the seat
+
+
+def test_lex_payload_bonus_tie_keeps_incumbent():
+    """Two chunks with identical lex scores (overlap + payload) must not swap — ties keep
+    the incumbent, only a STRICT improvement displaces it."""
+    g = becky_graph()
+    _chunk_node(g.store, "sess1", 0, "the schedule meeting happened on 2024-03-05")
+    _chunk_node(g.store, "sess1", 1, "the schedule meeting happened on 2024-04-06")
+    g.config.rag_retarget = "seed+lex"
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000"]
+    result = _retrieval_result("when was the schedule meeting", selected,
+                               seed_scores={"ep_sess1#c000": 0.9, "ep_sess1#c001": 0.1})
+    out = builder._retarget_chunks(selected, result)
+    assert out == ["ep_sess1#c000"]                        # tie -> incumbent survives
+
+
+# --------------------------------------------------------------------------- #
+# extended payload lexicon (reader5-queryside-both-retarget-1: 3 P->F regressions where
+# the evicted evidence carried relative-date phrases with no digits — "a month ago",
+# "last week", "exactly two months ago" — that the digit/date-only payload bonus missed)
+# --------------------------------------------------------------------------- #
+def test_relative_date_phrase_counts_as_payload():
+    g = becky_graph()
+    builder = ContextBuilder(g.store, g.config)
+    for phrase in ("I switched teams last week", "that happened a month ago",
+                   "exactly two months ago I moved apartments",
+                   "we spoke yesterday", "I recently changed jobs"):
+        assert builder._payload_bonus(phrase) > 0, phrase
+
+
+def test_spelled_out_quantity_counts_as_payload():
+    g = becky_graph()
+    builder = ContextBuilder(g.store, g.config)
+    assert builder._payload_bonus("it took three months to finish") > 0
+    assert builder._payload_bonus("I paid twenty dollars for it") > 0
+
+
+def test_retarget_keeps_relative_date_evidence_over_question_echo():
+    """Reproduces the P->F signature: a question-echo chunk with no digits must not beat
+    a same-source chunk whose only payload is a relative-date phrase."""
+    g = becky_graph()
+    _chunk_node(g.store, "sess1", 0,
+               "I wanted to ask you about my job situation and how things changed")
+    _chunk_node(g.store, "sess1", 1, "I actually started that new job exactly two months ago")
+    g.config.rag_retarget = "seed+lex"
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000"]
+    result = _retrieval_result("when did I start my new job", selected,
+                               seed_scores={"ep_sess1#c000": 0.9, "ep_sess1#c001": 0.1})
+    out = builder._retarget_chunks(selected, result)
+    assert out == ["ep_sess1#c001"]
+
+
+# --------------------------------------------------------------------------- #
+# chunk-level retargeting (rag_retarget / rag_provenance_promote — query-side only)
+# --------------------------------------------------------------------------- #
+def _retrieval_result(query: str, object_ids: list[str], seed_scores: dict | None = None):
+    from kg.retrieval import RetrievalResult
+    return RetrievalResult(query=query, mode="ppr",
+                           objects=[(eid, 1.0) for eid in object_ids],
+                           seed_scores=seed_scores or {})
+
+
+def test_retarget_off_is_noop():
+    """rag_retarget='off' (default) must leave _select_episodes' output byte-identical —
+    the no-op guarantee that keeps default-config context unchanged."""
+    g = becky_graph()
+    for i in range(4):
+        _chunk_node(g.store, "sess1", i, f"text of chunk {i} UCLA university")
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000", "ep_sess1#c002"]
+    result = _retrieval_result("where is UCLA", selected,
+                               seed_scores={"ep_sess1#c000": 0.1, "ep_sess1#c003": 0.9})
+    assert builder._retarget_chunks(selected, result) == selected
+
+
+def test_retarget_seed_swaps_by_embedding_rank():
+    """rag_retarget='seed': refill a source's slots by embedding seed score instead of
+    PPR chunk order — the decisive chunk (c003, high seed score) replaces the weaker
+    non-incumbent selected chunk (c002, low seed score); the incumbent (c000) survives."""
+    g = becky_graph()
+    for i in range(4):
+        _chunk_node(g.store, "sess1", i, f"text of chunk {i}")
+    g.config.rag_retarget = "seed"
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000", "ep_sess1#c002"]
+    result = _retrieval_result(
+        "query", selected,
+        seed_scores={"ep_sess1#c000": 0.2, "ep_sess1#c001": 0.1,
+                    "ep_sess1#c002": 0.05, "ep_sess1#c003": 0.9})
+    out = builder._retarget_chunks(selected, result)
+    assert len(out) == len(selected)                 # swaps only, never additions
+    assert "ep_sess1#c000" in out                     # incumbent always survives
+    assert "ep_sess1#c003" in out                     # best embedding-seed chunk pulled in
+    assert "ep_sess1#c002" not in out                 # weakest non-incumbent displaced
+    assert builder.last_retargeted and builder.last_retargeted[0]["kind"] == "retarget"
+
+
+def test_retarget_lexical_swap_beats_seed_pick():
+    """rag_retarget='seed+lex': even after the seed pass, a same-source chunk that
+    strictly beats a selected one on question-term/digit overlap swaps in — e.g. the
+    chunk actually containing the '440 pages' answer beats a higher-seed-score chunk
+    that doesn't mention it."""
+    g = becky_graph()
+    _chunk_node(g.store, "book", 0, "we discussed the club schedule")
+    _chunk_node(g.store, "book", 1, "the novel has 440 pages total")
+    g.config.rag_retarget = "seed+lex"
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_book#c000"]
+    # c000 wins on embedding seed score despite not containing the numeric answer
+    result = _retrieval_result("how many pages",
+                               selected,
+                               seed_scores={"ep_book#c000": 0.9, "ep_book#c001": 0.1})
+    out = builder._retarget_chunks(selected, result)
+    assert out == ["ep_book#c001"]
+
+
+def test_provenance_promote_displaces_expansion_sibling_only():
+    """rag_provenance_promote: a fact's source chunk is pulled into context when its
+    src/dst overlap the question terms, displacing only a lowest-ranked expansion
+    sibling — never an originally selected chunk."""
+    g = becky_graph()
+    _chunk_node(g.store, "sess1", 0, "selected chunk text")
+    _chunk_node(g.store, "sess1", 1, "sibling chunk text")   # expansion sibling
+    _chunk_node(g.store, "sess1", 5, "UCLA campus visit details")  # not adjacent -> not pulled by expansion
+    g.config.rag_provenance_promote = True
+    builder = ContextBuilder(g.store, g.config)
+    selected = ["ep_sess1#c000"]
+    ctx_ids = ["ep_sess1#c000", "ep_sess1#c001"]   # as if expansion already added the sibling
+    facts = [FactLine(src="Becky", rel="visited", dst="UCLA", episode_id="ep_sess1#c005")]
+    out = builder._promote_provenance(ctx_ids, selected, facts, "tell me about UCLA")
+    assert "ep_sess1#c005" in out                 # promoted in
+    assert "ep_sess1#c000" in out                 # originally selected chunk never displaced
+    assert "ep_sess1#c001" not in out             # expansion sibling was the one displaced
+    assert len(out) == len(ctx_ids)               # displacement only, no growth
 
 
 def test_parent_expand_lowest_ranked_source_cut_first():

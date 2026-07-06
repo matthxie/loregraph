@@ -161,6 +161,23 @@ class Config:
     # Hard cap on total episode text after expansion; once hit, stop adding siblings (all
     # originally selected chunks are always kept — only expansion siblings are capped).
     rag_expand_budget_chars: int = 60000
+    # Chunk-level retargeting (query-side only — see spikes/retarget/REPORT.md): the right
+    # SOURCE can win a seat via _select_episodes while the wrong CHUNK of it gets picked
+    # (PPR ranks by diffused chunk score, not by which chunk actually answers the question).
+    # "off" (default) = byte-identical to pre-retargeting behavior.
+    #   seed     — within each source that won seats, refill its slots with that source's
+    #              best chunks by raw embedding seed rank (RetrievalResult.seed_scores)
+    #              instead of PPR chunk order. Same slot count per source, swaps only.
+    #   seed+lex — seed retarget, then a lexical-overlap swap pass: a same-source chunk NOT
+    #              selected may swap in for a selected one if it strictly beats it on
+    #              question content-word / digit-token overlap. The best-ranked (incumbent)
+    #              chunk of each source is never swapped out.
+    rag_retarget: str = "off"           # "off" | "seed" | "seed+lex"
+    # Provenance promotion: a FACT's episode_id (the chunk it was extracted from) is pulled
+    # into context if the fact's src/dst entity names overlap the question terms and that
+    # chunk isn't already present — displacing only the lowest-ranked expansion sibling
+    # (never an originally selected chunk). Runs after sibling expansion.
+    rag_provenance_promote: bool = False
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids

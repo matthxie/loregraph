@@ -44,6 +44,10 @@ class RetrievalResult:
     mode: str
     objects: list[tuple[str, float]] = field(default_factory=list)  # (episode_id, score)
     seeds: list[str] = field(default_factory=list)
+    # raw embedding+BM25+link seed mass per node id (query-side chunk retargeting reads
+    # this to rank a source's chunks by embedding relevance instead of PPR diffusion order —
+    # see ContextBuilder._retarget_chunks in kg/rag.py). Empty unless populated below.
+    seed_scores: dict = field(default_factory=dict)
     subgraph: set[str] = field(default_factory=set)   # every node touched (recall@k)
     as_of: str | None = None
 
@@ -308,7 +312,8 @@ class PPRRetriever:
             return RetrievalResult(query=query, mode=self.mode, as_of=as_of)
         with prof_span("query.seed"):
             seeds = self.seeder.seed(query)
-        res = RetrievalResult(query=query, mode=self.mode, seeds=list(seeds), as_of=as_of)
+        res = RetrievalResult(query=query, mode=self.mode, seeds=list(seeds),
+                              seed_scores=dict(seeds), as_of=as_of)
         if not seeds:
             return res
         with prof_span("query.project_graph"):
@@ -542,7 +547,7 @@ class HybridRetriever:
             ranked = cand_ids[:k]
 
         res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,
-                              seeds=list(base.seeds),
+                              seeds=list(base.seeds), seed_scores=dict(base.seed_scores),
                               subgraph=set(base.subgraph) | set(ranked))
         res.objects = [(ep, float(len(ranked) - i)) for i, ep in enumerate(ranked)]
         res.lane = lane            # type: ignore[attr-defined]

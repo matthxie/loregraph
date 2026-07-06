@@ -37,6 +37,53 @@ from .store import GraphStore, fact_active
 _WS = re.compile(r"\s+")
 _EP_ID = re.compile(r"\bep_[A-Za-z0-9_#]+\b")
 _CHUNK_ID = re.compile(r"^(.+)#c(\d+)$")
+_WORD = re.compile(r"[a-z0-9]+")
+# Payload signals for the lexical retarget scorer (rag_retarget="seed+lex"): a chunk that
+# actually carries a date/number/amount is preferred over one that merely echoes the
+# question's wording with none — the failure this guards is a chunk like "I'm preparing
+# for an upcoming meeting..." (high word overlap with the question, zero payload) beating
+# the chunks that carry the actual dates being asked about. Deliberately simple/generic
+# (reused verbatim in spirit from kg/cues.py's quantity screen, not imported — that
+# module's regexes are tuned for the ingest-time cue-gating decision, a different job).
+_PAYLOAD_DATE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b"
+    r"|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
+    re.IGNORECASE)
+_PAYLOAD_CURRENCY = re.compile(
+    r"[$€£¥₹]\s?\d[\d,]*(?:\.\d+)?"
+    r"|\b\d[\d,]*(?:\.\d+)?\s*(?:dollars?|bucks|cents?|usd|euros?|quid)\b",
+    re.IGNORECASE)
+_PAYLOAD_NUMBER = re.compile(r"\b\d[\d,]*(?:\.\d+)?%?\b")
+# Relative-date phrases carry no digits ("a month ago", "last week", "exactly two months
+# ago") so _PAYLOAD_DATE/_PAYLOAD_NUMBER miss them entirely — without this, evidence
+# chunks phrased this way scored as zero-payload and lost seats to question-echo chunks.
+_PAYLOAD_RELDATE = re.compile(
+    r"\b(?:last|next|this)\s+(?:week|month|year|weekend|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"spring|summer|fall|autumn|winter)\b"
+    r"|\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"few|couple(?:\s+of)?)\s+(?:day|week|month|year)s?\s+ago\b"
+    r"|\byesterday\b|\brecently\b|\bago\b",
+    re.IGNORECASE)
+# Spelled-out quantities ("three months", "twenty dollars") — same payload signal as
+# _PAYLOAD_NUMBER/_PAYLOAD_CURRENCY, just not digit-encoded.
+_NUM_WORD = (
+    r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+    r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|"
+    r"eighty|ninety|hundred|thousand"
+)
+_PAYLOAD_SPELLED_NUM = re.compile(
+    rf"\b(?:{_NUM_WORD})(?:[\s-]+(?:{_NUM_WORD}))*\s+"
+    r"(?:dollars?|bucks|cents?|euros?|pounds?|days?|weeks?|months?|years?|times?|percent|%)\b",
+    re.IGNORECASE)
+_RETARGET_STOP = {
+    "the", "a", "an", "of", "to", "in", "on", "and", "or", "for", "with", "from", "this",
+    "that", "what", "how", "many", "who", "when", "where", "why", "which", "whose", "is",
+    "are", "was", "were", "did", "does", "do", "i", "you", "he", "she", "it", "they", "we",
+    "my", "your", "his", "her", "their", "our", "at", "by", "as", "be", "been", "has",
+    "have", "had", "not", "no",
+}
 
 
 
@@ -55,6 +102,7 @@ class RagAnswer:
     ppr_pool: list = field(default_factory=list)               # (ep_id, raw PPR score) pool
     seeds: list[str] = field(default_factory=list)
     touched: list[str] = field(default_factory=list)           # every node in the PPR subgraph
+    retargeted: list[dict] = field(default_factory=list)       # chunk-retarget swaps/promotions
     usage: dict = field(default_factory=dict)                  # token/cost (empty offline)
     steps: int = 1            # retrieve-then-read = ONE answer call (no per-hop loop)
     stopped: str = "answered"
@@ -70,6 +118,10 @@ _RAG_SYS = (
     "is not currently true even if an episode once stated it (the graph tracks when facts "
     "end). Prefer the FACTS for state questions (who/where/what is X now). Cite the episode "
     "ids (e.g. ep_3) you relied on. If the context does not answer the question, say so.\n"
+    "For a question about a specific timeframe or ordering ('initially', 'at first', "
+    "'before X', 'when I started'): state the answer for THAT timeframe first, and only "
+    "then note any later change — never lead with the current/latest state when the "
+    "question asks about an earlier one.\n"
     "For questions asking how many, how long, or how many days between: first list every "
     "matching event from the context with its date, then derive the number from that list — "
     "never state a count without enumerating the events behind it. For date arithmetic, "
@@ -114,6 +166,7 @@ class ContextBuilder:
     def __init__(self, store: GraphStore, config: Config):
         self.store = store
         self.config = config
+        self.last_retargeted: list[dict] = []
 
     def _snippet(self, node, n: int) -> str:
         text = node.raw_text or node.description or node.summary or node.name or ""
@@ -190,6 +243,179 @@ class ContextBuilder:
                 break
         return out
 
+    def _source_chunks(self, base: str, known_idxs: set[int]) -> list[str]:
+        """Every chunk episode belonging to `base` (e.g. `ep_sess1`). Production stores
+        wire a `src_<item_id>` SOURCE parent with PART_OF edges from every chunk (see
+        kg/ingest.py._write_parents) — that's authoritative and O(chunks-of-source). Tests
+        (and any store without that parent) fall back to probing the `#cNNN` id space
+        directly, same technique _expand_siblings uses for sibling existence checks."""
+        item_id = base[len("ep_"):] if base.startswith("ep_") else base
+        parent = f"src_{item_id}"
+        kids = [nid for nid, _d in self.store.neighbors(parent, etypes={EdgeType.PART_OF},
+                                                         direction="in")]
+        if kids:
+            return kids
+        out: list[str] = []
+        hi = max(known_idxs, default=0) + 50
+        miss_streak = 0
+        for i in range(hi + 1):
+            cid = f"{base}#c{i:03d}"
+            if self.store.get_node(cid):
+                out.append(cid)
+                miss_streak = 0
+            else:
+                miss_streak += 1
+                if out and miss_streak > 10:
+                    break
+        return out
+
+    def _chunk_text(self, eid: str) -> str:
+        n = self.store.get_node(eid)
+        return (n.raw_text or "") if n else ""
+
+    def _payload_bonus(self, text: str) -> float:
+        """Reward a chunk for carrying dates/numbers/currency amounts REGARDLESS of
+        whether they overlap the question's own wording — a chunk that only restates the
+        question has zero payload and must not out-score one that has overlap AND payload."""
+        bonus = 0.0
+        if _PAYLOAD_DATE.search(text):
+            bonus += 4
+        if _PAYLOAD_CURRENCY.search(text):
+            bonus += 3
+        if _PAYLOAD_NUMBER.search(text):
+            bonus += 1
+        if _PAYLOAD_RELDATE.search(text):
+            bonus += 4
+        if _PAYLOAD_SPELLED_NUM.search(text):
+            bonus += 3
+        return bonus
+
+    def _lex_score(self, text: str, word_terms: set[str], digit_terms: set[str]) -> float:
+        toks = set(_WORD.findall(text.lower()))
+        return (len(toks & word_terms) + 3 * len(toks & digit_terms)
+                + self._payload_bonus(text))
+
+    def _retarget_source(self, cur: list[str], pool: list[str], seed_scores: dict,
+                         word_terms: set[str] | None, digit_terms: set[str] | None) -> list[str]:
+        """Refill one source's slots (len(cur) of them) by embedding seed rank, then
+        (if lexical terms were supplied) swap in any unselected chunk of the same source
+        that strictly beats a selected one on question-term overlap. The best-PPR-ranked
+        (incumbent) chunk of the source is never displaced. Same count in and out."""
+        n = len(cur)
+        incumbent = cur[0]
+        ranked = sorted(pool, key=lambda c: (-seed_scores.get(c, 0.0), c))
+        picked = ranked[:n]
+        if incumbent not in picked:
+            picked = picked[: max(n - 1, 0)] + [incumbent]
+
+        if word_terms is not None:
+            lex = {c: self._lex_score(self._chunk_text(c), word_terms, digit_terms) for c in pool}
+            picked_set = set(picked)
+            for cand in sorted((c for c in pool if c not in picked_set), key=lambda c: -lex[c]):
+                min_score = min(lex[c] for c in picked)
+                tied = [c for c in picked if lex[c] == min_score]
+                # a tie for worst protects the incumbent (it "survives ties"); if the
+                # incumbent is the sole minimum it can still be strictly outscored below
+                worst = (next(c for c in tied if c != incumbent)
+                        if incumbent in tied and len(tied) > 1 else tied[0])
+                if lex[cand] <= lex[worst]:
+                    break   # sorted descending — no later candidate can beat `worst` either
+                picked[picked.index(worst)] = cand
+                picked_set.discard(worst)
+                picked_set.add(cand)
+        return picked
+
+    def _retarget_chunks(self, selected: list[str], result: RetrievalResult) -> list[str]:
+        """Query-side chunk retargeting (rag_retarget): the right SOURCE can win seats in
+        _select_episodes while PPR's chunk-order picks the wrong CHUNK of it. Swaps only —
+        same sources, same per-source slot counts, never adds or removes a seat. Defaults to
+        a no-op (rag_retarget='off') so context stays byte-identical unless opted in."""
+        mode = getattr(self.config, "rag_retarget", "off")
+        if mode not in ("seed", "seed+lex"):
+            return selected
+
+        per_source: dict[str, list[str]] = {}
+        for eid in selected:
+            m = _CHUNK_ID.match(eid)
+            if m:
+                per_source.setdefault(m.group(1), []).append(eid)
+
+        seed_scores = dict(getattr(result, "seed_scores", None) or {})
+        word_terms = digit_terms = None
+        if mode == "seed+lex":
+            toks = _WORD.findall((result.query or "").lower())
+            word_terms = {t for t in toks if t not in _RETARGET_STOP and not t.isdigit()
+                          and len(t) > 2}
+            digit_terms = {t for t in toks if t.isdigit()}
+
+        picks: dict[str, list[str]] = {}
+        for base, cur in per_source.items():
+            idxs = {int(_CHUNK_ID.match(c).group(2)) for c in cur}
+            pool = self._source_chunks(base, idxs)
+            if len(pool) <= len(cur):
+                picks[base] = cur
+                continue
+            picked = self._retarget_source(cur, pool, seed_scores, word_terms, digit_terms)
+            picks[base] = picked
+            if set(picked) != set(cur):
+                self.last_retargeted.append({"kind": "retarget", "source": base,
+                                             "from": cur, "to": picked})
+
+        out: list[str] = []
+        emitted: set[str] = set()
+        for eid in selected:
+            m = _CHUNK_ID.match(eid)
+            if not m:
+                out.append(eid)
+                continue
+            base = m.group(1)
+            if base in emitted:
+                continue
+            emitted.add(base)
+            out.extend(sorted(picks[base], key=lambda c: int(_CHUNK_ID.match(c).group(2))))
+        return out
+
+    def _promote_provenance(self, ctx_ids: list[str], selected: list[str],
+                            facts: list[FactLine], query: str) -> list[str]:
+        """rag_provenance_promote: pull a fact's source chunk (FactLine.episode_id) into
+        context when the fact's src/dst entity names overlap the question terms, so the
+        chunk a decisive fact was extracted from isn't left out just because it wasn't a
+        sibling of a selected chunk. Only ever displaces the lowest-ranked expansion
+        sibling (never an originally selected chunk); if none is displaceable, skipped."""
+        if not getattr(self.config, "rag_provenance_promote", False):
+            return ctx_ids
+        toks = _WORD.findall((query or "").lower())
+        terms = {t for t in toks if t not in _RETARGET_STOP and len(t) > 2}
+        if not terms:
+            return ctx_ids
+
+        wanted: list[str] = []
+        seen_w: set[str] = set()
+        for f in facts:
+            if not f.episode_id or f.episode_id in seen_w:
+                continue
+            names = _WORD.findall(f"{f.src} {f.dst}".lower())
+            if set(names) & terms:
+                seen_w.add(f.episode_id)
+                wanted.append(f.episode_id)
+
+        selected_set = set(selected)
+        out = list(ctx_ids)
+        ctx_set = set(out)
+        for eid in wanted:
+            if eid in ctx_set or not self.store.get_node(eid):
+                continue
+            expansion_only = [c for c in out if c not in selected_set]
+            if not expansion_only:
+                break   # nothing displaceable left — never touch an originally selected chunk
+            victim = expansion_only[-1]
+            out[out.index(victim)] = eid
+            ctx_set.discard(victim)
+            ctx_set.add(eid)
+            self.last_retargeted.append({"kind": "provenance_promote",
+                                         "displaced": victim, "promoted": eid})
+        return out
+
     def _expand_siblings(self, selected: list[str]) -> list[str]:
         """Sibling-chunk expansion (rag_parent_expand): pull in each selected chunk's
         #cNNN neighbours within the configured radius, so a chunked session's
@@ -255,10 +481,13 @@ class ContextBuilder:
 
     def build(self, result: RetrievalResult) -> tuple[list[str], list[FactLine], str]:
         """Return (episode_ids, fact_lines, context_blob)."""
+        self.last_retargeted = []
         ep_ids = self._select_episodes(result.object_ids)
+        ep_ids = self._retarget_chunks(ep_ids, result)
         ents = self.relevant_entities(result, ep_ids)
         facts = self.facts_for(ents, result.as_of)
         ctx_ids = self._expand_siblings(ep_ids)
+        ctx_ids = self._promote_provenance(ctx_ids, ep_ids, facts, result.query)
 
         lines = [f"QUESTION: {result.query}",
                  f"AS-OF: {result.as_of or 'now (current view)'}", ""]
@@ -334,13 +563,30 @@ class OpenAIAnswerer:
         self.client = client
         self.meter = UsageMeter()
 
+    @staticmethod
+    def _parse_message(msg) -> tuple[str, list]:
+        ans, raw = "", []
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if tc and tc[0].function.name == "submit_answer":
+            payload = json.loads(tc[0].function.arguments)
+            ans = str(payload.get("answer", "")).strip()
+            raw = payload.get("citations", [])
+        elif msg.choices and msg.choices[0].message.content:
+            ans = msg.choices[0].message.content.strip()
+        return ans, raw
+
+    @staticmethod
+    def _finish_reason(msg) -> str | None:
+        return getattr(msg.choices[0], "finish_reason", None) if msg.choices else None
+
     def answer(self, result: RetrievalResult) -> RagAnswer:
         with prof_span("query.build_context"):
             ep_ids, facts, blob = self.builder.build(result)
         base = RagAnswer(query=result.query, answer="", backend=self.name,
                          as_of=result.as_of, context_episodes=ep_ids,
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
-                         seeds=result.seeds, touched=sorted(result.subgraph))
+                         seeds=result.seeds, touched=sorted(result.subgraph),
+                         retargeted=list(self.builder.last_retargeted))
         # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to
@@ -355,10 +601,11 @@ class OpenAIAnswerer:
             "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
         }
         if self.config.rag_model.startswith(("gpt-5", "o1", "o3", "o4")):
-            kwargs["max_completion_tokens"] = self.config.rag_max_tokens
+            token_key = "max_completion_tokens"
         else:
-            kwargs["max_tokens"] = self.config.rag_max_tokens
+            token_key = "max_tokens"
             kwargs["temperature"] = 0
+        kwargs[token_key] = self.config.rag_max_tokens
         try:
             with prof_span("query.llm_answer"):
                 msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
@@ -370,14 +617,34 @@ class OpenAIAnswerer:
             base.notes.append(f"api error, used extractive fallback: {e!r}")
             return base
         base.usage = self.meter.totals()
-        ans, raw = "", []
-        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
-        if tc and tc[0].function.name == "submit_answer":
-            payload = json.loads(tc[0].function.arguments)
-            ans = str(payload.get("answer", "")).strip()
-            raw = payload.get("citations", [])
-        elif msg.choices and msg.choices[0].message.content:
-            ans = msg.choices[0].message.content.strip()
+        ans, raw = self._parse_message(msg)
+        # A reasoning model can spend its ENTIRE completion budget on reasoning tokens and
+        # never reach the submit_answer call — finish_reason="length" with no content/tool
+        # call at all, not an API error, so the except above never sees it. One retry at
+        # double the token cap before degrading to the extractive fallback.
+        if not ans and self._finish_reason(msg) == "length":
+            retry_kwargs = dict(kwargs)
+            retry_kwargs[token_key] = kwargs[token_key] * 2
+            try:
+                with prof_span("query.llm_answer_retry"):
+                    msg = call_with_backoff(
+                        lambda: self.client.chat.completions.create(**retry_kwargs))
+                self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
+                base.usage = self.meter.totals()
+                ans, raw = self._parse_message(msg)
+            except Exception as e:  # noqa: BLE001 — retry failed too, fall through below
+                base.notes.append(f"retry after empty/length response failed: {e!r}")
+            if not ans:
+                base.answer = _extractive(self.store, result.query, ep_ids, facts)
+                base.citations = ep_ids
+                base.usage = self.meter.totals()
+                base.notes.append(
+                    f"empty answer after doubling token cap to {retry_kwargs[token_key]}, "
+                    "used extractive fallback")
+                return base
+            base.notes.append(
+                f"retried with doubled token cap ({retry_kwargs[token_key]}) after an empty "
+                "response truncated by the length limit")
         if not raw:
             raw = _EP_ID.findall(ans)
         kept, dropped = _validate(raw, ep_ids)
