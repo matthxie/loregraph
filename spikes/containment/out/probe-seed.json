@@ -1,0 +1,38 @@
+{
+  "label": "probe-seed",
+  "overrides": [
+    "seed_reserve=2"
+  ],
+  "records": [
+    {
+      "id": "0bc8ad93",
+      "kind": "temporal-reasoning",
+      "containment": 0.857,
+      "gold_coverage": 0.333,
+      "n_gold": 3,
+      "n_gold_covered": 1,
+      "context_chars": 37031,
+      "context_chunks": 19
+    },
+    {
+      "id": "2ebe6c92",
+      "kind": "temporal-reasoning",
+      "containment": 0.4,
+      "gold_coverage": 0.0,
+      "n_gold": 2,
+      "n_gold_covered": 0,
+      "context_chars": 32349,
+      "context_chunks": 19
+    },
+    {
+      "id": "71017277",
+      "kind": "temporal-reasoning",
+      "containment": 0.5,
+      "gold_coverage": 1.0,
+      "n_gold": 1,
+      "n_gold_covered": 1,
+      "context_chars": 29807,
+      "context_chunks": 15
+    }
+  ]
+}

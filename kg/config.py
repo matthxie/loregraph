@@ -136,6 +136,18 @@ class Config:
     # demote a gold the graph ranked #1 completely out of the context). 0 disables.
     rerank_keep_ppr_top: int = 3
     fact_lane_augment: bool = True    # surface fact-bearing episodes on state/evolution lanes
+    # Seed-rank reserved seats: up to N final top-k slots go to the highest raw-seed-score
+    # episodes (embedding+BM25, the Seeder's own ranking) whose SESSION won no slot from
+    # the PPR->MMR->CE pipeline — the containment eval showed 13/14 missing gold sessions
+    # were already in seeds and were ranked out downstream. Displaces only the tail of the
+    # final ranking; 0 (default) disables, byte-identical to today.
+    seed_reserve: int = 0
+    # Temporal date-window boost: resolve a relative-date phrase in the query ("last
+    # Saturday", "two months ago") against as_of, then reserve up to date_window_slots
+    # final slots for pool/seed episodes whose event date falls inside the resolved
+    # window and whose session is not already represented. Off by default.
+    date_window_boost: bool = False
+    date_window_slots: int = 2
 
     # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----
     # The query path is retrieve-then-read: PPR (or as-of-T PPR) assembles a context blob
@@ -172,7 +184,13 @@ class Config:
     #              selected may swap in for a selected one if it strictly beats it on
     #              question content-word / digit-token overlap. The best-ranked (incumbent)
     #              chunk of each source is never swapped out.
-    rag_retarget: str = "off"           # "off" | "seed" | "seed+lex"
+    #   ce       — within each source that won seats, rank its chunks by local
+    #              cross-encoder question<->chunk relevance (rerank_model, $0) instead of
+    #              seed/PPR order; falls back to seed order if the model can't load.
+    #   ce+seed  — blend: a source's slots split across the CE ranking and the seed
+    #              ranking (best-rank-of-either), since the two signals miss on
+    #              disjoint questions (CE: relevance != answer-bearing; seed: synonymy).
+    rag_retarget: str = "off"           # "off" | "seed" | "seed+lex" | "ce" | "ce+seed"
     # Provenance promotion: a FACT's episode_id (the chunk it was extracted from) is pulled
     # into context if the fact's src/dst entity names overlap the question terms and that
     # chunk isn't already present — displacing only the lowest-ranked expansion sibling

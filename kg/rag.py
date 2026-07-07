@@ -132,7 +132,19 @@ _RAG_SYS = (
     "only has vintage cameras), say you don't have that information instead of substituting "
     "the similar item. This applies especially to place names and dates: if asked about "
     "city/venue X and the context only covers a different city/venue Y, say the information "
-    "is not available — do not answer about Y.\n"
+    "is not available — do not answer about Y. EXCEPTION: when the context has an item of a "
+    "closely related category that matches the question's person and timeframe (asked about "
+    "jewelry; the context has a gift of a crystal ornament from the same person on the same "
+    "date), give it as the likely answer and note the wording differs — a category near-miss "
+    "with the right person and date is an answer, not a refusal.\n"
+    "Commit to the single best-supported answer. When the evidence is indirect (relative "
+    "dates to resolve, two statements to combine, an amount to derive), state your "
+    "assumption and answer anyway — do not refuse because the answer requires combining "
+    "statements. Say the information is unavailable ONLY when nothing in the context bears "
+    "on the question's subject.\n"
+    "For advice or recommendation questions, anchor every suggestion to the specific items, "
+    "purchases, plans, or preferences the user stated in the context episodes — build on "
+    "what they already have or said, never give generic advice a stranger could get.\n"
     "The FACTS lines are machine-extracted and may be wrong or mis-dated; the EPISODES text "
     "is the ground truth — never state a date or place that appears only in a FACTS line "
     "without confirming it in an episode.\n"
@@ -196,12 +208,17 @@ _ANSWER_TOOL_EVENTS = {
                         "required": ["date", "description"],
                     },
                 },
+                "calculation": {"type": "string",
+                                "description": ("the arithmetic, written out step by step "
+                                                "from the listed events (counts, sums, or "
+                                                "date differences as months+days); write "
+                                                "'none' if the answer needs no arithmetic")},
                 "answer": {"type": "string",
-                           "description": "derived ONLY from the events listed above"},
+                           "description": "derived ONLY from the events and calculation above"},
                 "citations": {"type": "array", "items": {"type": "string"},
                               "description": "episode ids you used, e.g. ep_2"},
             },
-            "required": ["events", "answer", "citations"],
+            "required": ["events", "calculation", "answer", "citations"],
         },
     },
 }
@@ -215,6 +232,21 @@ class ContextBuilder:
         self.store = store
         self.config = config
         self.last_retargeted: list[dict] = []
+        self._ce = None   # lazy cross-encoder for rag_retarget="ce" (local, $0)
+
+    def _ce_scores(self, query: str, chunk_ids: list[str]) -> dict[str, float] | None:
+        """Cross-encoder relevance of each chunk to the question (rag_retarget='ce').
+        Reuses the same local ms-marco model the retriever's rerank lane uses; returns
+        None when the model isn't available so the caller can fall back to seed order."""
+        if self._ce is None:
+            from .rerank import CrossEncoderReranker
+            self._ce = CrossEncoderReranker(self.config.rerank_model)
+        if not self._ce.available:
+            return None
+        pairs = [(cid, self._chunk_text(cid)[:1000]) for cid in chunk_ids]
+        ranked = self._ce.rerank(query, pairs, len(pairs))
+        # rerank returns ids in score order; encode order as descending pseudo-scores
+        return {cid: float(len(ranked) - i) for i, cid in enumerate(ranked)}
 
     def _snippet(self, node, n: int) -> str:
         text = node.raw_text or node.description or node.summary or node.name or ""
@@ -379,7 +411,7 @@ class ContextBuilder:
         same sources, same per-source slot counts, never adds or removes a seat. Defaults to
         a no-op (rag_retarget='off') so context stays byte-identical unless opted in."""
         mode = getattr(self.config, "rag_retarget", "off")
-        if mode not in ("seed", "seed+lex"):
+        if mode not in ("seed", "seed+lex", "ce", "ce+seed"):
             return selected
 
         per_source: dict[str, list[str]] = {}
@@ -403,7 +435,34 @@ class ContextBuilder:
             if len(pool) <= len(cur):
                 picks[base] = cur
                 continue
-            picked = self._retarget_source(cur, pool, seed_scores, word_terms, digit_terms)
+            scores = seed_scores
+            if mode == "ce+seed":
+                # Signal-diverse refill: CE, seed-embedding, and lexical question-overlap
+                # each find answer chunks the other two miss (sweep 2026-07-06: CE finds
+                # the cat-name chunk, lex finds the UCLA chunk, seed neither — and lex as
+                # a swap PASS evicts the CE pick, so it must live in the blend, not after
+                # it). Rank each chunk by its BEST rank across the three signals, ties
+                # broken toward the CE ordering.
+                toks = _WORD.findall((result.query or "").lower())
+                wt = {t for t in toks if t not in _RETARGET_STOP and not t.isdigit()
+                      and len(t) > 2}
+                dt = {t for t in toks if t.isdigit()}
+                lex = {c: self._lex_score(self._chunk_text(c), wt, dt) for c in pool}
+                ce = self._ce_scores(result.query, pool) or {}
+
+                def rank_of(sc):
+                    order = sorted(pool, key=lambda c: (-sc.get(c, 0.0), c))
+                    return {c: i for i, c in enumerate(order)}
+                rc, rs, rl = rank_of(ce), rank_of(seed_scores), rank_of(lex)
+                scores = {c: -min(rc[c], rs[c], rl[c]) - 0.001 * rc[c] for c in pool}
+            elif mode == "ce":
+                # question<->chunk relevance from the local cross-encoder — a direct
+                # "which chunk of this session answers THIS question" signal, stabler
+                # than PPR chunk order (which churns with any upstream ranking change —
+                # the cat/Luna failure) and than the payload regexes (which favour any
+                # digit-dense chunk). Falls back to seed order if the model can't load.
+                scores = self._ce_scores(result.query, pool) or seed_scores
+            picked = self._retarget_source(cur, pool, scores, word_terms, digit_terms)
             picks[base] = picked
             if set(picked) != set(cur):
                 self.last_retargeted.append({"kind": "retarget", "source": base,

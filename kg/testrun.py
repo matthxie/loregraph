@@ -645,8 +645,16 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
     # _article collapses obj_<id> (gold) and ep_<id> (ingested) to the same key
     gold_art = {_article(x) for x in gold}
     ranked_art = _dedup(_article(o) for o in ranked)
-    topk_art = set(ranked_art[:kk])
-    recall = _recall_at_k(ranked_art, gold_art, kk)
+    # Effective reader k: ContextBuilder._select_episodes only reads the top
+    # rag_context_episodes of the ranking, so with top_k=8 and rag_context_episodes=5
+    # ranked slots 6..8 never reach the reader — recall@8 over-reports what the answer
+    # call could actually see. Headline recall/hit/precision use the effective k;
+    # `recall_at_pool` keeps the full-pool depth for cross-run comparability.
+    ctx_n = int(getattr(cfg, "rag_context_episodes", 0) or 0)
+    kk_eff = min(kk, ctx_n) if ctx_n > 0 else kk
+    topk_art = set(ranked_art[:kk_eff])
+    recall = _recall_at_k(ranked_art, gold_art, kk_eff)
+    recall_pool = _recall_at_k(ranked_art, gold_art, kk)
     mrr = _mrr(ranked_art, gold_art)
     rank = next((idx + 1 for idx, a in enumerate(ranked_art) if a in gold_art), None)
     cited_art = {_article(c) for c in ans.citations}
@@ -655,7 +663,7 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
     gold_marks = [{"id": x, "hit": _article(x) in topk_art} for x in sorted(gold)]
     # precision@k: gold density of the top-k. NB the ceiling is n_gold/k (LongMemEval
     # questions carry ~2 gold sessions), so read it against that, not against 1.0.
-    topk_list = ranked_art[:kk]
+    topk_list = ranked_art[:kk_eff]
     precision = (round(sum(1 for a in topk_list if a in gold_art) / len(topk_list), 3)
                  if topk_list else 0.0)
     gold_ranks = [i + 1 for i, a in enumerate(ranked_art) if a in gold_art]
@@ -688,7 +696,9 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
         "context_episodes": list(getattr(ans, "context_episodes", []) or []),
         "episode_dates": episode_dates,
         "facts": list(getattr(ans, "facts", []) or []),
-        "recall_at_k": round(recall, 3), "mrr": round(mrr, 3),
+        "events": list(getattr(ans, "events", []) or []),  # enumeration scaffold (rag_answer_events)
+        "recall_at_k": round(recall, 3), "recall_at_pool": round(recall_pool, 3),
+        "k_effective": kk_eff, "mrr": round(mrr, 3),
         "precision_at_k": precision, "gold_ranks": gold_ranks,
         "hit": hit, "rank": rank,
         "citation_grounding": grounding,
@@ -1214,6 +1224,8 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
         by_kind[kind] = {
             "n": len(rs),
             "recall_at_k": round(sum(r["recall_at_k"] for r in rs) / len(rs), 3),
+            "recall_at_pool": round(sum(r.get("recall_at_pool", r["recall_at_k"])
+                                        for r in rs) / len(rs), 3),
             "mrr": round(sum(r["mrr"] for r in rs) / len(rs), 3),
             "hit_rate": round(sum(1 for r in rs if r["hit"]) / len(rs), 3),
             "n_correct": n_correct, "n_incorrect": n_incorrect, "n_unscored": n_unscored,
@@ -1225,7 +1237,10 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
     jt = judge_meter.totals()
     return {
         "n": n,
-        "recall_at_k": mean("recall_at_k"), "mrr": mean("mrr"),
+        "recall_at_k": mean("recall_at_k"),
+        "recall_at_pool": (round(sum(r.get("recall_at_pool", r["recall_at_k"])
+                                     for r in qrecords) / n, 3) if n else None),
+        "mrr": mean("mrr"),
         "precision_at_k": (round(sum(r.get("precision_at_k", 0) for r in qrecords) / n, 3)
                            if any("precision_at_k" in r for r in qrecords) else None),
         "hit_rate": round(sum(1 for r in qrecords if r["hit"]) / n, 3),

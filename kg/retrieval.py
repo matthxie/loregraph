@@ -37,6 +37,61 @@ from .store import GraphStore, fact_active
 _TOK = re.compile(r"[a-z0-9]+")
 _WSP = re.compile(r"\s+")
 
+# --------------------------------------------------------------------------- #
+# Relative-date window resolution (config.date_window_boost)
+# --------------------------------------------------------------------------- #
+_WEEKDAY_IDX = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                "friday": 4, "saturday": 5, "sunday": 6}
+_NUM_WORD_VAL = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                 "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+                 "twelve": 12, "couple": 2, "few": 3}
+_RE_LAST_WEEKDAY = re.compile(
+    r"\blast\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
+_RE_N_AGO = re.compile(
+    r"\b(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"couple|few)\s+(?:of\s+)?(day|week|month)s?\s+ago\b", re.I)
+_RE_LAST_UNIT = re.compile(r"\blast\s+(week|month|year)\b", re.I)
+
+
+def resolve_relative_window(query: str, as_of: str | None):
+    """Resolve one relative-date phrase in `query` against the `as_of` anchor date to an
+    inclusive (start, end) datetime.date window, widened by the phrase's natural
+    granularity ("two months ago" is fuzzier than "yesterday"). None when the query has
+    no such phrase or no usable anchor — callers treat None as boost-off."""
+    if not as_of:
+        return None
+    from datetime import date, timedelta
+    try:
+        anchor = date.fromisoformat(str(as_of)[:10])
+    except ValueError:
+        return None
+    q = query or ""
+    m = _RE_LAST_WEEKDAY.search(q)
+    if m:
+        back = (anchor.weekday() - _WEEKDAY_IDX[m.group(1).lower()]) % 7 or 7
+        t = anchor - timedelta(days=back)
+        return t - timedelta(days=1), t + timedelta(days=1)
+    m = _RE_N_AGO.search(q)
+    if m:
+        raw = m.group(1).lower()
+        n = int(raw) if raw.isdigit() else _NUM_WORD_VAL[raw]
+        unit = m.group(2).lower()
+        days = n * {"day": 1, "week": 7, "month": 30}[unit]
+        fuzz = {"day": 1, "week": 3, "month": 10}[unit]
+        t = anchor - timedelta(days=days)
+        return t - timedelta(days=fuzz), t + timedelta(days=fuzz)
+    if re.search(r"\byesterday\b", q, re.I):
+        t = anchor - timedelta(days=1)
+        return t, t
+    m = _RE_LAST_UNIT.search(q)
+    if m:
+        unit = m.group(1).lower()
+        days = {"week": 7, "month": 30, "year": 365}[unit]
+        fuzz = {"week": 4, "month": 12, "year": 45}[unit]
+        t = anchor - timedelta(days=days)
+        return t - timedelta(days=fuzz), t + timedelta(days=fuzz)
+    return None
+
 
 @dataclass
 class RetrievalResult:
@@ -505,6 +560,73 @@ class HybridRetriever:
         n = self.store.get_node(ep_id)
         return (n.created_at or n.ingested_at or "") if n else ""
 
+    def _valid_episode(self, eid: str) -> bool:
+        n = self.store.get_node(eid)
+        return bool(n and n.ntype == NodeType.EPISODE and n.valid)
+
+    def _reserve_slots(self, query: str, ranked: list[str], base: RetrievalResult,
+                       cand_ids: list[str], k: int, as_of: str | None) -> list[str]:
+        """Post-ranking slot reservations (both off by default, see config):
+
+        date_window_boost — when the query carries a relative-date phrase, episodes whose
+        event date falls in the resolved window get first claim on reserved slots.
+        seed_reserve — the Seeder's own top-scored episodes get slots when their session
+        won none from the PPR->MMR->CE pipeline (the dominant recall failure: gold in
+        seeds, ranked out downstream).
+
+        Both displace only the TAIL of the final ranking, never the head, and only for a
+        session not already represented — coverage additions, not reorderings."""
+        def sess(eid: str) -> str:
+            return eid.split("#", 1)[0]
+
+        out = list(ranked)
+        covered = {sess(e) for e in out}
+        picks: list[str] = []
+
+        def inject(cands, slots):
+            for eid in cands:
+                if slots <= 0:
+                    break
+                if sess(eid) in covered or eid in out or not self._valid_episode(eid):
+                    continue
+                picks.append(eid)
+                covered.add(sess(eid))
+                slots -= 1
+
+        d_slots = int(getattr(self.config, "date_window_slots", 2)) \
+            if getattr(self.config, "date_window_boost", False) else 0
+        if d_slots > 0:
+            win = resolve_relative_window(query, as_of)
+            if win is not None:
+                lo, hi = win
+
+                def in_window(eid: str) -> bool:
+                    t = self._event_time(eid)[:10]
+                    return bool(t) and str(lo) <= t <= str(hi)
+
+                pool = [ep for ep, _s in getattr(base, "objects", []) or []]
+                seed_eps = sorted((nid for nid in base.seed_scores
+                                   if self._valid_episode(nid)),
+                                  key=lambda nid: (-base.seed_scores[nid], nid))
+                inject([e for e in pool + seed_eps if in_window(e)], d_slots)
+
+        s_slots = int(getattr(self.config, "seed_reserve", 0))
+        if s_slots > 0:
+            seed_eps = sorted((nid for nid in base.seed_scores
+                               if self._valid_episode(nid)),
+                              key=lambda nid: (-base.seed_scores[nid], nid))
+            inject(seed_eps, s_slots)
+
+        if not picks:
+            return out
+        # Splice the reserved picks in at the END of the context-eligible prefix
+        # (rag_context_episodes), not the tail of k — ContextBuilder._select_episodes
+        # only reads the top-n of this ranking, so a tail-of-k injection would win a
+        # ranking slot but never reach the reader.
+        ctx_n = min(int(getattr(self.config, "rag_context_episodes", k)) or k, k)
+        cut = max(ctx_n - len(picks), 0)
+        return (out[:cut] + picks + out[cut:])[:k]
+
     def retrieve(self, query: str, k: int | None = None,
                  as_of: str | None = None, kind: str | None = None) -> RetrievalResult:
         k = k or self.config.top_k
@@ -545,6 +667,8 @@ class HybridRetriever:
                     ranked = ranked[: max(k - len(missing), 0)] + missing
         else:
             ranked = cand_ids[:k]
+
+        ranked = self._reserve_slots(query, ranked, base, cand_ids, k, as_of)
 
         res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,
                               seeds=list(base.seeds), seed_scores=dict(base.seed_scores),

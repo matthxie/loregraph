@@ -40,6 +40,29 @@ RUN_PATH = "runs/reader5-queryside-both-retarget-1/run.json"
 CACHE_DIR = "store/cache"
 OUT_DIR = "spikes/containment/out"
 _WORD = re.compile(r"[a-z0-9]+")
+# Chunk-level gold source: every run in which a question was judged correct recorded which
+# chunks its answer cited — those citations are known answer-bearing chunks. `retention`
+# (below) measures whether a config keeps them in context; session-level gold_coverage
+# cannot see this (the cat/Luna failure: session covered, #c007 cut).
+CITED_RUNS = (
+    "runs/reader5-queryside-both/run.json",
+    "runs/reader5-queryside-both-retarget-1/run.json",
+    "runs/reader5-mmr10-events-1/run.json",
+)
+
+
+def _cited_chunk_gold() -> dict[str, set]:
+    gold: dict[str, set] = {}
+    for path in CITED_RUNS:
+        try:
+            with open(path, encoding="utf-8") as f:
+                run = json.load(f)
+        except FileNotFoundError:
+            continue
+        for q in run["query"]["queries"]:
+            if (q.get("judge") or {}).get("correct") is True and q.get("citations"):
+                gold.setdefault(q["id"], set()).update(q["citations"])
+    return gold
 
 
 def _article(oid: str) -> str:
@@ -97,7 +120,7 @@ def _content_tokens(text: str) -> set[str]:
     return {t for t in _WORD.findall(text.lower()) if len(t) > 1}
 
 
-def _score(q: dict, cfg: Config) -> dict | None:
+def _score(q: dict, cfg: Config, cited_gold: dict[str, set] | None = None) -> dict | None:
     cache = _cache_path(q["id"])
     if cache is None:
         return {"id": q["id"], "kind": q.get("kind", ""), "error": "no cached store"}
@@ -118,9 +141,15 @@ def _score(q: dict, cfg: Config) -> dict | None:
     covered = sum(1 for s in gold_sessions if s in ctx_sessions)
     gold_coverage = round(covered / len(gold_sessions), 3) if gold_sessions else None
 
+    cited = (cited_gold or {}).get(q["id"], set())
+    ctx_set = set(ctx_ids)
+    retention = (round(sum(1 for c in cited if c in ctx_set) / len(cited), 3)
+                 if cited else None)
+
     return {"id": q["id"], "kind": q.get("kind", ""), "containment": containment,
             "gold_coverage": gold_coverage, "n_gold": len(gold_sessions),
-            "n_gold_covered": covered, "context_chars": len(blob),
+            "n_gold_covered": covered, "retention": retention,
+            "n_cited": len(cited), "context_chars": len(blob),
             "context_chunks": len(ctx_ids)}
 
 
@@ -133,19 +162,22 @@ def _print_summary(records: list[dict]) -> None:
     by_kind: dict[str, list[dict]] = {}
     for r in records:
         by_kind.setdefault(r["kind"], []).append(r)
-    hdr = f"{'kind':<28}{'n':>4}{'containment':>13}{'gold_cov':>10}{'chars':>12}{'chunks':>8}"
+    hdr = (f"{'kind':<28}{'n':>4}{'containment':>13}{'gold_cov':>10}{'retention':>11}"
+           f"{'chars':>12}{'chunks':>8}")
     print(hdr)
     print("-" * len(hdr))
     for kind in sorted(by_kind):
         rs = by_kind[kind]
         print(f"{kind:<28}{len(rs):>4}{_mean([r.get('containment') for r in rs]):>13}"
               f"{_mean([r.get('gold_coverage') for r in rs]):>10}"
+              f"{_mean([r.get('retention') for r in rs]):>11}"
               f"{_mean([r.get('context_chars') for r in rs]):>12}"
               f"{_mean([r.get('context_chunks') for r in rs]):>8}")
     print("-" * len(hdr))
     print(f"{'OVERALL':<28}{len(records):>4}"
           f"{_mean([r.get('containment') for r in records]):>13}"
           f"{_mean([r.get('gold_coverage') for r in records]):>10}"
+          f"{_mean([r.get('retention') for r in records]):>11}"
           f"{_mean([r.get('context_chars') for r in records]):>12}"
           f"{_mean([r.get('context_chunks') for r in records]):>8}")
 
@@ -174,7 +206,8 @@ def main() -> None:
         if missing:
             print(f"warning: qids not found in {args.run}: {sorted(missing)}")
 
-    records = [_score(q, cfg) for q in questions]
+    cited_gold = _cited_chunk_gold()
+    records = [_score(q, cfg, cited_gold) for q in questions]
     for r in records:
         print(json.dumps(r))
     _print_summary([r for r in records if "error" not in r])

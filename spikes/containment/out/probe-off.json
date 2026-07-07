@@ -1,0 +1,36 @@
+{
+  "label": "probe-off",
+  "overrides": [],
+  "records": [
+    {
+      "id": "0bc8ad93",
+      "kind": "temporal-reasoning",
+      "containment": 0.857,
+      "gold_coverage": 0.333,
+      "n_gold": 3,
+      "n_gold_covered": 1,
+      "context_chars": 32309,
+      "context_chunks": 17
+    },
+    {
+      "id": "2ebe6c92",
+      "kind": "temporal-reasoning",
+      "containment": 0.4,
+      "gold_coverage": 0.0,
+      "n_gold": 2,
+      "n_gold_covered": 0,
+      "context_chars": 36753,
+      "context_chunks": 21
+    },
+    {
+      "id": "71017277",
+      "kind": "temporal-reasoning",
+      "containment": 0.5,
+      "gold_coverage": 0.0,
+      "n_gold": 1,
+      "n_gold_covered": 0,
+      "context_chars": 29245,
+      "context_chunks": 15
+    }
+  ]
+}
