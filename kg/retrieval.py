@@ -249,10 +249,26 @@ def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = No
     return G
 
 
+def self_like_ids(store: GraphStore, config: Config) -> set[str]:
+    """Node ids the self-guard treats as the first-person hub: the canonical self anchor
+    (personal-web mode) PLUS any regular extracted narrator entity ('me'/self_name). The
+    extractor's USER ACTIONS rule mints 'me' as an ordinary entity when self_entity is
+    off, and on a single-user store that node ends up incident to most action fact
+    edges — exactly the PPR super-hub the guard exists for, under a different id."""
+    names = {"me", str(getattr(config, "self_name", "self")).strip().lower()}
+    ids = {SELF_ENTITY_ID}
+    for nid, n in store.nodes.items():
+        if (n.valid and n.ntype == NodeType.ENTITY
+                and (n.name or "").strip().lower() in names):
+            ids.add(nid)
+    return ids
+
+
 def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
                       exclude: set[str]) -> nx.Graph:
     self_guard = getattr(config, "self_guard", "none")
     self_cap = float(getattr(config, "self_guard_cap", 0.05))
+    self_ids = self_like_ids(store, config) if self_guard != "none" else {SELF_ENTITY_ID}
     # Deterministic construction (sorted nodes / sorted pair accumulation): the
     # projection — and everything downstream of it, PPR float sums included — is a
     # function of graph CONTENT, not of node/edge insertion or load order.
@@ -260,7 +276,7 @@ def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
     for nid in sorted(store.nodes):
         n = store.nodes[nid]
         if n.valid:
-            if self_guard == "exclude" and n.id == SELF_ENTITY_ID:
+            if self_guard == "exclude" and n.id in self_ids:
                 continue   # drop the self anchor entirely (it carries no discriminating signal)
             G.add_node(n.id)
     pair_w: dict[tuple, dict[str, float]] = {}
@@ -279,7 +295,7 @@ def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
             continue
         # Self-anchor hub guard: stop the single first-person node from being a
         # PPR super-hub that activation routes through (see config.self_guard).
-        incident_self = self_guard != "none" and (u == SELF_ENTITY_ID or v == SELF_ENTITY_ID)
+        incident_self = self_guard != "none" and (u in self_ids or v in self_ids)
         if self_guard == "exclude" and incident_self:
             continue                               # drop self + its RESOLVES_TO star
         w = max(1e-4, float(data["confidence"]) * float(data["weight"]))
@@ -374,9 +390,10 @@ class PPRRetriever:
         with prof_span("query.project_graph"):
             G = projected_graph(self.store, self.config, as_of=as_of)
         skip_self_seed = getattr(self.config, "self_guard", "none") in ("exclude", "seed")
+        self_ids = self_like_ids(self.store, self.config) if skip_self_seed else set()
         pers = {}
         for nid, s in seeds.items():
-            if skip_self_seed and nid == SELF_ENTITY_ID:
+            if skip_self_seed and nid in self_ids:
                 continue   # don't pour personalization mass into the self anchor
             if nid in G and s > 0:
                 pers[nid] = s * self.canon.idf_weight(nid)
@@ -564,6 +581,27 @@ class HybridRetriever:
         n = self.store.get_node(eid)
         return bool(n and n.ntype == NodeType.EPISODE and n.valid)
 
+    def _session_dedup(self, ranked: list[str], k: int) -> list[str]:
+        """config.rag_session_dedup: reorder so the context-eligible prefix
+        (rag_context_episodes) holds the FIRST chunk of each distinct session in rank
+        order; extra chunks of already-represented sessions follow. Pure reorder — no
+        episode enters or leaves the top-k, so recall_at_pool is untouched; only the
+        session mix the reader actually sees changes."""
+        if not getattr(self.config, "rag_session_dedup", False) or not ranked:
+            return ranked
+        ctx_n = min(int(getattr(self.config, "rag_context_episodes", k)) or k, k)
+        prefix: list[str] = []
+        rest: list[str] = []
+        seen: set[str] = set()
+        for eid in ranked:
+            s = eid.split("#", 1)[0]
+            if len(prefix) < ctx_n and s not in seen:
+                prefix.append(eid)
+                seen.add(s)
+            else:
+                rest.append(eid)
+        return (prefix + rest)[:k]
+
     def _reserve_slots(self, query: str, ranked: list[str], base: RetrievalResult,
                        cand_ids: list[str], k: int, as_of: str | None) -> list[str]:
         """Post-ranking slot reservations (both off by default, see config):
@@ -668,6 +706,7 @@ class HybridRetriever:
         else:
             ranked = cand_ids[:k]
 
+        ranked = self._session_dedup(ranked, k)
         ranked = self._reserve_slots(query, ranked, base, cand_ids, k, as_of)
 
         res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,

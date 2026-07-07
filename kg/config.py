@@ -148,6 +148,12 @@ class Config:
     # window and whose session is not already represented. Off by default.
     date_window_boost: bool = False
     date_window_slots: int = 2
+    # Session diversity in the context-eligible prefix: reorder the final ranking so the
+    # first rag_context_episodes slots hold chunks from DISTINCT sessions (first chunk of
+    # each new session in rank order; duplicates follow). With mmr_lambda=1.0 there is no
+    # diversity pressure at all, so 2 of 5 reader slots routinely go to a second chunk of
+    # a session already present while a gold session sits at rank 6. Off by default.
+    rag_session_dedup: bool = False
 
     # ---- RAG answer flow (§5) — PPR builds the context, the LLM does NOT traverse ----
     # The query path is retrieve-then-read: PPR (or as-of-T PPR) assembles a context blob

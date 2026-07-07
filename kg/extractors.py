@@ -39,6 +39,11 @@ from .profiler import span as prof_span
 class ExtractedEntity:
     name: str
     type: EntityType = EntityType.OTHER
+    # Lowercase hypernym ("magazine" for Architectural Digest, "fitness class" for a spin
+    # class). Ingest turns it into an extra episode tag, so episodes mentioning different
+    # instances of the same kind of thing share graph structure a category-worded query
+    # ("how many magazine subscriptions...") can reach. Empty = none stated/obvious.
+    category: str = ""
 
 
 @dataclass
@@ -88,10 +93,13 @@ class Extraction:
     description: str | None = None  # images: the one-line VLM description
 
     def merge(self, other: "Extraction") -> "Extraction":
-        names = {e.name.lower() for e in self.entities}
+        by_name = {e.name.lower(): e for e in self.entities}
         for e in other.entities:
-            if e.name.lower() not in names:
-                self.entities.append(e); names.add(e.name.lower())
+            have = by_name.get(e.name.lower())
+            if have is None:
+                self.entities.append(e); by_name[e.name.lower()] = e
+            elif not have.category and getattr(e, "category", ""):
+                have.category = e.category   # keep the base entity, adopt a missing category
         tagset = {t.lower() for t in self.tags}
         for t in other.tags:
             if t.lower() not in tagset:
@@ -149,6 +157,12 @@ GRAPH_TOOL = {
                         "properties": {
                             "name": {"type": "string"},
                             "type": {"type": "string", "enum": _ENTITY_ENUM},
+                            "category": {"type": "string",
+                                         "description": "lowercase generic kind-of noun "
+                                         "phrase for this entity, e.g. 'magazine' for "
+                                         "Architectural Digest, 'fitness class' for a spin "
+                                         "class, 'video game' for Zelda. Empty if the name "
+                                         "is already generic or no clear kind applies."},
                         },
                         "required": ["name", "type"],
                     },
@@ -278,7 +292,10 @@ def _parse_tool_payload(payload: dict) -> Extraction:
             etype = EntityType(e.get("type", "other"))
         except ValueError:
             etype = EntityType.OTHER
-        ents.append(ExtractedEntity(name=name, type=etype))
+        cat = str(e.get("category", "") or "").strip().lower()
+        if cat == name.lower():
+            cat = ""                          # a self-category adds no structure
+        ents.append(ExtractedEntity(name=name, type=etype, category=cat))
     tags = [t.strip() for t in (payload.get("tags") or []) if t and t.strip()]
     rels = []
     for r in payload.get("relations", []) or []:
@@ -335,7 +352,11 @@ class OpenAIExtractor:
         "   - event   — a time-bounded happening (a war, election, discovery, ceremony)\n"
         "   - other   — a real entity that fits none of the above\n"
         "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
-        "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
+        "Do not invent entities not in the content. A handful is fine; do not pad.\n"
+        "   Give each entity a `category`: a short lowercase generic kind-of noun phrase "
+        "(\"Architectural Digest\" → \"magazine\", a spin class → \"fitness class\", "
+        "\"Zelda\" → \"video game\", \"Dr. Patel\" → \"doctor\"). Leave it empty if the "
+        "name is already generic or no clear kind applies.\n\n"
         "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
         "(themes, not entities).\n\n"
         "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
@@ -359,6 +380,14 @@ class OpenAIExtractor:
         "until X), emit the BASE predicate with status 'ended' — never coin 'former_*' or "
         "'ex_*'. Set valid_from/valid_to ONLY when the text states a date; otherwise leave "
         "them empty (it defaults to 'as of this content'). Do not guess dates.\n"
+        "   - USER ACTIONS. In conversational content, when the text states the user "
+        "actually DID or currently DOES something (\"I subscribed to X\", \"I attend a "
+        "yoga class\", or an assistant turn restating it: \"you've booked Y\"), name the "
+        "object as an entity and emit a relation source \"me\" → object with the action "
+        "verb as label (subscribed_to, attended, bought, ordered, plays). Include the "
+        "narrator entity \"me\" (type person) when you do this. ONLY actions the text "
+        "asserts happened or hold — never suggestions, options, plans framed as maybes, "
+        "or hypotheticals. Set valid_from when the action's date is stated.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "4) FACTS. Extract EVERY stated amount/count/measurement into facts[], no "
         "salience filter. One per OCCURRENCE — a repeat (2nd purchase/visit/class) or "
