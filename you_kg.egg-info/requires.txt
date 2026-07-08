@@ -1,0 +1,15 @@
+networkx>=3.6
+numpy>=2.0
+rank-bm25>=0.2.2
+scikit-learn>=1.5
+openai>=1.0
+python-dotenv>=1.0
+sentence-transformers>=5.0
+torch>=2.6
+datasets>=2.18
+pillow>=10
+gliner>=0.2.27
+yake>=0.4.8
+spacy>=3.8
+keybert>=0.8
+rake-nltk>=1.0

@@ -68,6 +68,10 @@ pip install -r requirements.txt
 cp .env.example .env               # then paste in your key: OPENAI_API_KEY=sk-...
 ```
 
+The repo is also a pip-installable package (`pyproject.toml`, dist name `you-kg`), so a
+downstream project can depend on the engine by local path without copying anything:
+`pip install -e path/to/this/repo` → `import kg`, tracking your working tree live.
+
 `OPENAI_API_KEY` is optional. Without it, ingestion still runs (the default `cue_gated`
 extractor backend has a keyless local NLP floor), but escalation to gpt-4o-mini, the live
 `haiku`/`auto` extractor backends, and every `ask`/answer call are live-only and will raise
@@ -134,6 +138,15 @@ to compare on).
 | `--no-ingest-cache` | cache on | **per-instance mode only**: bypass the ingest-store cache (see below) and always re-run extraction. |
 | `--label NAME` | timestamp | run id / label shown in the dashboard index. |
 | `--out DIR` | `runs` | directory dashboard runs are written to. |
+| `--set FIELD=VALUE` | — | (repeatable) override any `Config` field without a dedicated flag, coerced to the field's type — e.g. `--set llm_nothink=true`, `--set rag_model=gpt-5-mini`, `--set rag_parent_expand=2`. |
+
+**Config fields commonly reached via `--set`:**
+
+| field | default | meaning |
+|---|---|---|
+| `llm_nothink` | `false` | append the Qwen3 `/no_think` soft switch to the extractor system prompt — reasoning models otherwise spend most of their generation budget thinking before a schema-forced tool call, which is pure latency. Part of the ingest-cache key, so think/no-think runs never share cached stores. No effect on models that ignore the marker. |
+| `rag_model` | `gpt-4o-mini` | answer-call model only (`--model` sets extractor + L3 + answerer together; `--set rag_model=…` splits them). |
+| `judge_model` | `gpt-4o` | LLM response-accuracy judge (eval-only, never used in the pipeline). |
 
 **The ingest-store cache** (per-instance mode, default ON): extraction is ~93% of a run's cost, so
 re-paying it when a change is query-side-only (retrieval/rerank/context/reader/judge) is pure
@@ -149,6 +162,31 @@ cached run is never misread as "ingest got cheaper" instead of "didn't run."
   `rm store/cache/<instance_id>-*.db` (one instance).
 - There's no "pick a cache" flag: whichever entry matches your *current* config is used
   automatically; an ingest-relevant config change just misses and re-ingests under a new key.
+
+### Running against a local model (Ollama / LM Studio / vLLM)
+
+Every LLM call goes through the OpenAI client, which honours the standard env vars — so a
+fully local run is just a base-URL redirect (the endpoint must support **forced tool calls**,
+`tool_choice`; Ollama does):
+
+```bash
+export OPENAI_BASE_URL=http://localhost:11434/v1   # Ollama's OpenAI-compatible endpoint
+export OPENAI_API_KEY=local                        # any non-empty value; local servers ignore it
+python -m kg testrun --tier micro --extractor-backend haiku \
+    --model qwen3:8b --set llm_nothink=true --label qwen3-8b-local
+```
+
+**Judge split-routing:** `OPENAI_BASE_URL` is process-wide, which would send the judge (and the
+tier-2 completeness audit) to the local endpoint too — the graded model must not grade itself.
+`JUDGE_BASE_URL` / `JUDGE_API_KEY` pin those eval-only calls back to the real API while
+extraction + answering stay local:
+
+```bash
+export JUDGE_BASE_URL=https://api.openai.com/v1
+export JUDGE_API_KEY=sk-...                        # a real key (falls back to OPENAI_API_KEY)
+```
+
+Unset, both fall back to the process-wide client exactly as before.
 
 ### Other commands
 

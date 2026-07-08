@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 class Config:
     # ---- models (ARCHITECTURE §0) -------------------------------------------
     llm_model: str = "gpt-4o-mini"
+    # Reasoning-model soft switch: append "/no_think" to the extractor system prompt
+    # (Qwen3 convention). For schema-forced extraction the thinking pass is mostly
+    # latency; local runs (engram) turn this on. No effect on models that ignore it.
+    llm_nothink: bool = False
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384  # bge-small / MiniLM both 384; hashing fallback matches
 

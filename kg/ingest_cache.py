@@ -30,7 +30,7 @@ from .corpus import CorpusItem
 # community_seed only affects build_communities which always runs fresh after a cache hit —
 # communities are never cached).
 INGEST_RELEVANT_FIELDS = (
-    "llm_model", "extractor_backend", "local_backend", "cue_escalate",
+    "llm_model", "llm_nothink", "extractor_backend", "local_backend", "cue_escalate",
     "gliner_model", "gliner_threshold",
     "gliner2_model", "gliner2_entity_threshold", "gliner2_relation_threshold",
     "embed_model", "embed_dim",

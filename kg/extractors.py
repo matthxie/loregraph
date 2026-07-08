@@ -385,11 +385,14 @@ class OpenAIExtractor:
     @property
     def _system(self) -> str:
         """Effective system prompt. OFF-path returns _SYS BYTE-FOR-BYTE; personal-web mode
-        appends the first-person clause so the base prompt never drifts when the feature
-        is off."""
+        appends the first-person clause, and llm_nothink appends the Qwen3 "/no_think"
+        soft switch, so the base prompt never drifts when the features are off."""
+        sys_prompt = self._SYS
         if self.config.self_entity:
-            return self._SYS + self._FIRST_PERSON_CLAUSE
-        return self._SYS
+            sys_prompt += self._FIRST_PERSON_CLAUSE
+        if getattr(self.config, "llm_nothink", False):
+            sys_prompt += "\n\n/no_think"
+        return sys_prompt
 
     def _call(self, content_blocks: list) -> Extraction:
         import json

@@ -624,11 +624,20 @@ def load_questions(path: str = QUESTIONS_PATH, limit: int | None = None) -> list
 
 
 def _build_judge_client(model: str):
-    """An OpenAI client for the response-accuracy judge, or None offline."""
-    if not os.environ.get("OPENAI_API_KEY"):
+    """An OpenAI client for the response-accuracy judge, or None offline.
+
+    JUDGE_BASE_URL / JUDGE_API_KEY (optional) override the process-wide OPENAI_*
+    env, so a run whose EXTRACTION targets a local endpoint (OPENAI_BASE_URL →
+    Ollama/vLLM) can keep the judge on the real API — grading quality must not
+    silently degrade to the model under test. Unset → prior behavior exactly."""
+    key = os.environ.get("JUDGE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not key:
         return None
     try:
         import openai
+        base = os.environ.get("JUDGE_BASE_URL")
+        if base:
+            return openai.OpenAI(base_url=base, api_key=key)
         return openai.OpenAI()
     except Exception:  # noqa: BLE001
         return None
