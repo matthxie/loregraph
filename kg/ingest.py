@@ -136,8 +136,6 @@ class Ingestor:
             for e in ext.entities:
                 canon_surfaces.append(e.name)
                 ment_surfaces.append(e.name)
-                if getattr(e, "category", ""):
-                    canon_surfaces.append(e.category)
             for r in ext.relations:
                 canon_surfaces.extend([r.source, r.target, *r.labels])
             for qf in ext.facts:
@@ -280,13 +278,9 @@ class Ingestor:
         self.store.vectors.add("episode", ep_id, vec)
         self.store.add_hash(h, ep_id)
 
-        # tags → TAGGED_AS (Episode → Tag). Entity categories ("magazine" for
-        # Architectural Digest) join the episode's tags so episodes mentioning different
-        # instances of one kind of thing share tag structure a category-worded query can
-        # reach — the extractor's salient-name entities alone don't connect them.
+        # tags → TAGGED_AS (Episode → Tag)
         seen_tags: set[str] = set()
-        cat_tags = [e.category for e in ext.entities if getattr(e, "category", "")]
-        for t in list(ext.tags) + cat_tags:
+        for t in ext.tags:
             tid = self.canon.resolve_tag(t)
             if not tid:
                 continue

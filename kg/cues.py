@@ -68,22 +68,8 @@ _QUANTITY = re.compile(
     rf"|\b\d[\d,]*(?:\.\d+)?\s*(?:{_MEASURE_UNIT})\b"    # 10 lbs / 3 miles / 2 dozen
     r")", re.IGNORECASE)
 
-# A first/second-person statement that the user DID something — the per-occurrence
-# evidence multi-session counting questions aggregate ("I subscribed to X", "you've
-# already booked Y"). The local floor names the object entity but never captures the
-# action as a typed relation or the object's category, so scattered occurrences of the
-# same activity stay unlinked in the graph. Second person is included because assistant
-# turns routinely restate user actions ("you've taken a great step by subscribing to...").
-_USER_ACTION = re.compile(
-    r"\b(i|i've|i'd|we|we've|you|you've)\s+"
-    r"(just\s+|recently\s+|already\s+|finally\s+|also\s+)?"
-    r"(subscrib\w+|attend\w+|bought|purchas\w+|order\w+|book\w+|sign\w*\s?up|"
-    r"join\w+|enroll\w+|visit\w+|went\s+to|finish\w+|complet\w+|host\w+|sold|"
-    r"earn\w+|paid|spent|invest\w+|receiv\w+|adopt\w+|took|taken|"
-    r"start\w+\s+(?:a|my|taking|going))\b", re.IGNORECASE)
-
 _KINDS = (("termination", _TERMINATION), ("rel_date", _REL_DATE), ("identity", _IDENTITY),
-          ("quantity", _QUANTITY), ("user_action", _USER_ACTION))
+          ("quantity", _QUANTITY))
 
 
 def cue_kinds(text: str) -> set[str]:
