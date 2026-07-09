@@ -841,7 +841,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
     for q in questions:
         t_ask = time.time()
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
-                    kind=q.get("kind"), as_of=q.get("question_date"))
+                    as_of=q.get("question_date"))
         ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["lane"] = getattr(ans, "lane", "")
@@ -1058,7 +1058,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         # bi-temporal path filters facts to that moment and the reader knows what "now"
         # means (temporal-arithmetic questions are unanswerable without it).
         ans = g.ask(q["query"], backend=backend, k=kk, client=agent_client,
-                    kind=q.get("kind"), as_of=q.get("question_date"))
+                    as_of=q.get("question_date"))
         ask_seconds = time.time() - t_ask
         rec = _score_query(q, ans, kk, g.store, jclient, cfg, judge_meter)
         rec["n_sessions"] = len(sessions)

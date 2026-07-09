@@ -666,9 +666,9 @@ class HybridRetriever:
         return (out[:cut] + picks + out[cut:])[:k]
 
     def retrieve(self, query: str, k: int | None = None,
-                 as_of: str | None = None, kind: str | None = None) -> RetrievalResult:
+                 as_of: str | None = None) -> RetrievalResult:
         k = k or self.config.top_k
-        lane = route(query, kind) if getattr(self.config, "route", True) else "single"
+        lane = route(query) if getattr(self.config, "route", True) else "single"
         base_pool = max(int(getattr(self.config, "rerank_pool", 32)), k * 3)
         pool = base_pool * 2 if lane == MULTIHOP else base_pool   # multihop widens the pool
 

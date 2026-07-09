@@ -83,12 +83,12 @@ class KnowledgeGraph:
 
     # ------------------------------------------------------------------- ask
     def ask(self, text: str, *, backend: str | None = None, k: int | None = None,
-            as_of: str | None = None, model: str | None = None, client=None,
-            kind: str | None = None) -> RagAnswer:
+            as_of: str | None = None, model: str | None = None, client=None) -> RagAnswer:
         """Graph-RAG answer (docs/ARCHITECTURE.md §5): the hybrid retriever routes the
         question, augments state/evolution lanes with fact-bearing episodes, and reranks the
         hard lanes, then ONE LLM call answers over the context with citations. The LLM never
-        traverses. `kind` is an optional question-type hint for the router. Live-only: needs
+        traverses. The router reads the question TEXT only (never benchmark metadata —
+        see tests/test_no_oracle.py). Live-only: needs
         OPENAI_API_KEY. `client=` injects a (fake) OpenAI client for tests."""
         cfg = self.config
         overrides = {kk: vv for kk, vv in
@@ -97,12 +97,12 @@ class KnowledgeGraph:
             cfg = replace(cfg, **overrides)
         if client is not None:   # injected (test) client → no caching, exact old semantics
             return get_answerer(self.store, self.embedder, self.canon, cfg,
-                                client=client).run(text, k=k, as_of=as_of, kind=kind)
+                                client=client).run(text, k=k, as_of=as_of)
         akey = (cfg.rag_backend, cfg.rag_model)
         if self._answerer is None or self._answerer_key != akey:
             self._answerer = get_answerer(self.store, self.embedder, self.canon, cfg)
             self._answerer_key = akey
-        return self._answerer.run(text, k=k, as_of=as_of, kind=kind)
+        return self._answerer.run(text, k=k, as_of=as_of)
 
     # ----------------------------------------------------------------- helpers
     def explain(self, result: RetrievalResult, max_objects: int = 5) -> str:

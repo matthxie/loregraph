@@ -907,13 +907,12 @@ class RagAnswerer:
             "Set the key (kg auto-reads a project-root .env), or "
             "inject a client: get_answerer(..., client=fake).")
 
-    def run(self, query: str, k: int | None = None, as_of: str | None = None,
-            kind: str | None = None) -> RagAnswer:
+    def run(self, query: str, k: int | None = None,
+            as_of: str | None = None) -> RagAnswer:
         if not query or not query.strip():
             return RagAnswer(query=query, answer="(empty query)",
                              backend=self._backend.name, as_of=as_of)
-        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
-                                         kind=kind)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
         ans = self._backend.answer(result)
         ans.ppr_pool = list(getattr(result, "ppr_pool", []) or [])
         ans.lane = getattr(result, "lane", "")            # surface the routed lane

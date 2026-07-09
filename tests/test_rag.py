@@ -606,17 +606,17 @@ def test_answer_events_lanes_gates_by_routed_lane():
     g = becky_graph()
     g.config.rag_answer_events = "lanes"   # default lanes: multihop + state
 
-    # multi-session kind routes to the multihop lane -> events schema required
+    # an aggregation question routes to the multihop lane -> events schema required
     ev = [{"date": "2023-01-01", "description": "moved to Berlin", "quantity": ""}]
     client = _FakeOpenAIEvents("Berlin.", [], events=ev)
-    ans = g.ask("Where does Becky live?", client=client, kind="multi-session")
+    ans = g.ask("How many times did Becky move?", client=client)
     assert "events" in _sent_tool_required(client)
     assert ans.events == ev
     assert len(client.calls) == 1          # still exactly ONE call — scaffold, not a loop
 
-    # single-session-user kind routes to the single lane -> plain schema
+    # a plain lookup question routes to the single lane -> plain schema
     client2 = _FakeOpenAI("Berlin.", [])
-    ans2 = g.ask("Where does Becky live?", client=client2, kind="single-session-user")
+    ans2 = g.ask("Which city does Becky call home?", client=client2)
     assert "events" not in _sent_tool_required(client2)
     assert ans2.events == []
 

@@ -633,9 +633,9 @@ def test_rerank_keeps_ppr_top_episodes():
             return ids[1:][:k]          # drop the PPR top-1 completely, keep the rest
 
     retr._reranker = _DemotingReranker()
-    # kind forces the STATE lane, which is in the default rerank_lanes
-    res = retr.retrieve("cryptography codebreaking at Bletchley", k=2,
-                        kind="knowledge-update")
+    # "currently" routes to the STATE lane, which is in the default rerank_lanes
+    res = retr.retrieve("who currently works on cryptography codebreaking at Bletchley",
+                        k=2)
     final_ids = [ep for ep, _ in res.objects]
     ppr_top1 = res.ppr_pool[0][0]
     assert ppr_top1 in final_ids, "PPR #1 was demoted out of the final top-k"

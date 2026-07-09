@@ -42,27 +42,37 @@ _MULTIHOP = re.compile(
     r"through whom|introduced (me|by)|"
     r"(everyone|anyone|people|all the .*) (i|who))\b", re.IGNORECASE)
 
+# Date-arithmetic questions ("how many days/months since/between/had passed", "how long
+# ago") need the STATE lane's dated-fact emphasis, NOT the aggregation path — checked
+# before _AGGREGATE because they also start with "how many". Generic question forms
+# honestly available from query text alone.
+_DATE_ARITH = re.compile(
+    r"\bhow (many|much) (day|week|month|year)s?\b"
+    r"|\bhow long (ago|since|had|have|has|was|did|been)\b"
+    r"|\b(days?|weeks?|months?|years?) (ago|since|passed|between|had passed|"
+    r"have passed|elapsed)\b"
+    r"|\bwhen (did|was) (i|my|we)\b", re.IGNORECASE)
 
-# A query-type classifier stand-in: in production a small classifier predicts the
-# lane; for the eval we accept the dataset's question `kind` as that signal (it picks
-# only the RETRIEVAL EMPHASIS, never the answer), so the architecture comparison
-# isn't confounded by regex-router noise. Falls back to the regex when no kind given.
-_KIND_LANE = {
-    "knowledge-update": STATE,        # "what is my current X" after updates
-    "temporal-reasoning": STATE,      # as-of / dated questions
-    "single-session-preference": STATE,
-    "multi-session": MULTIHOP,        # aggregate evidence across sessions
-    "single-session-user": SINGLE,
-    "single-session-assistant": SINGLE,
-}
+# Aggregation questions ("how many X", "how much did I spend", totals/rates) aggregate
+# occurrences scattered across sessions — the MULTIHOP (connect-the-dots) lane.
+_AGGREGATE = re.compile(
+    r"\bhow (many|much|often)\b"
+    r"|\b(in total|altogether|combined|overall)\b"
+    r"|\btotal (number|amount|cost|hours|time|count)\b"
+    r"|\b(per|each|every) (day|week|month|year)\b", re.IGNORECASE)
 
 
-def route(query: str, kind: str | None = None) -> str:
-    if kind and kind.lower() in _KIND_LANE:
-        return _KIND_LANE[kind.lower()]
+def route(query: str) -> str:
+    """Classify a question into a retrieval lane from its TEXT ALONE. This is the
+    production router; it must never see benchmark metadata (question kind/type, gold
+    labels) — see tests/test_no_oracle.py, which enforces the signature."""
     q = query or ""
     if _EVOLUTION.search(q):
         return STATE                 # evolution is a STATE-history sub-case
+    if _DATE_ARITH.search(q):
+        return STATE                 # dated-fact arithmetic, before the "how many" check
+    if _AGGREGATE.search(q):
+        return MULTIHOP              # count/sum across scattered occurrences
     if _MULTIHOP.search(q):
         return MULTIHOP
     if _STATE.search(q):
