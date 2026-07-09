@@ -110,6 +110,74 @@ def _when_with_delta(created_at: str | None, as_of: str | None) -> str:
     return f"({when}, {n} {unit} {rel} the question)"
 
 
+# --------------------------------------------------------------------------- #
+# In-text relative-date resolution (config.rag_resolve_reldates)
+# --------------------------------------------------------------------------- #
+# An episode saying "last week I attended the workshop" places the EVENT on a different
+# date than the episode — the header date/delta can't express that, and the reader
+# routinely anchors on the episode date instead. Resolve each relative phrase against the
+# episode's own date and annotate it inline ("last week [≈ 2023-03-20] I attended ..."),
+# so event dates become absolute where the text states them relatively. Exact phrases
+# (yesterday, last Saturday) get "=", fuzzy ones (two months ago, last month) get "≈".
+_ANNOT_NUM_WORD = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                   "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+                   "twelve": 12, "couple": 2, "few": 3}
+_ANNOT_WEEKDAY = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                  "friday": 4, "saturday": 5, "sunday": 6}
+_REL_ANNOT = re.compile(
+    r"\byesterday\b"
+    r"|\blast\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|\b(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"couple|few)\s+(?:of\s+)?(?:day|week|month|year)s?\s+ago\b"
+    r"|\blast\s+(?:week|month|year)\b",
+    re.IGNORECASE)
+
+
+def _resolve_rel_phrase(phrase: str, anchor: "datetime.date"):
+    """Resolve one _REL_ANNOT match against `anchor` → (date, exact: bool) or None."""
+    from datetime import timedelta
+    p = phrase.lower()
+    if p == "yesterday":
+        return anchor - timedelta(days=1), True
+    m = re.match(r"last\s+(\w+)$", p)
+    if m and m.group(1) in _ANNOT_WEEKDAY:
+        back = (anchor.weekday() - _ANNOT_WEEKDAY[m.group(1)]) % 7 or 7
+        return anchor - timedelta(days=back), True
+    if m:                                       # last week/month/year — fuzzy midpoint
+        days = {"week": 7, "month": 30, "year": 365}[m.group(1)]
+        return anchor - timedelta(days=days), False
+    m = re.match(r"(\d+|\w+)\s+(?:of\s+)?(day|week|month|year)s?\s+ago$", p)
+    if m:
+        raw = m.group(1)
+        n = int(raw) if raw.isdigit() else _ANNOT_NUM_WORD.get(raw)
+        if n is None:
+            return None
+        days = n * {"day": 1, "week": 7, "month": 30, "year": 365}[m.group(2)]
+        exact = m.group(2) == "day" and (raw.isdigit() or raw in
+                                         ("a", "an", "one", "two", "three"))
+        return anchor - timedelta(days=days), exact
+    return None
+
+
+def _annotate_relative_dates(text: str, created_at: str | None) -> str:
+    """Annotate relative-date phrases in episode text with the absolute date they resolve
+    to against the episode's own date. No-op when the episode date doesn't parse."""
+    from datetime import date
+    try:
+        anchor = date.fromisoformat((created_at or "")[:10])
+    except ValueError:
+        return text
+
+    def sub(m):
+        r = _resolve_rel_phrase(m.group(0), anchor)
+        if r is None:
+            return m.group(0)
+        d, exact = r
+        return f"{m.group(0)} [{'=' if exact else '≈'} {d.isoformat()}]"
+
+    return _REL_ANNOT.sub(sub, text)
+
+
 @dataclass
 class RagAnswer:
     query: str
@@ -634,8 +702,10 @@ class ContextBuilder:
                 if not n:
                     continue
                 when = _when_with_delta(n.created_at, result.as_of)
-                lines.append(f"[{eid}] {when} {n.name}: "
-                             f"{self._snippet(n, self.config.rag_episode_chars)}")
+                snippet = self._snippet(n, self.config.rag_episode_chars)
+                if getattr(self.config, "rag_resolve_reldates", False):
+                    snippet = _annotate_relative_dates(snippet, n.created_at)
+                lines.append(f"[{eid}] {when} {n.name}: {snippet}")
         else:
             lines.append("(none retrieved)")
         lines.append("")

@@ -211,6 +211,12 @@ class Config:
     rag_answer_events: str = "off"     # "off" | "lanes" | "all"
     rag_answer_events_lanes: tuple = ("multihop", "state")   # lanes that get the schema
                                        # under "lanes" (aggregation + temporal/state)
+    # In-text relative-date resolution (query-side, render-time only): annotate relative
+    # phrases in episode text with the absolute date they resolve to against the EPISODE's
+    # own date ("last week [≈ 2023-03-20] I attended ..."), because the event's date is
+    # not the episode's date and the header delta can't express that. Off (default) =
+    # context byte-identical to today.
+    rag_resolve_reldates: bool = False
 
     # ---- communities (§ phase 3) --------------------------------------------
     community_seed: int = 42          # pin for reproducible community ids

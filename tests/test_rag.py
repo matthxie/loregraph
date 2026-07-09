@@ -630,3 +630,50 @@ def test_answer_events_all_and_malformed_payload():
     ans = g.ask("Where does Becky live?", client=client)
     assert "events" in _sent_tool_required(client)
     assert ans.events == [{"date": "d", "description": "x"}]
+
+
+# --------------------------------------------------------------------------- #
+# In-text relative-date resolution (config.rag_resolve_reldates)
+# --------------------------------------------------------------------------- #
+def test_annotate_relative_dates_resolves_against_episode_date():
+    from kg.rag import _annotate_relative_dates
+    # anchor: Monday 2023-03-27
+    out = _annotate_relative_dates("I attended the workshop last Saturday.", "2023-03-27")
+    assert "last Saturday [= 2023-03-25]" in out
+    out = _annotate_relative_dates("yesterday I adopted a cat", "2023-03-27T20:56:00+00:00")
+    assert "yesterday [= 2023-03-26]" in out
+    out = _annotate_relative_dates("I booked it two months ago.", "2023-03-27")
+    assert "two months ago [≈ 2023-01-26]" in out
+    out = _annotate_relative_dates("we met a couple of weeks ago", "2023-03-27")
+    assert "a couple of weeks ago [≈ 2023-03-13]" in out
+    out = _annotate_relative_dates("I started last week and loved it", "2023-03-27")
+    assert "last week [≈ 2023-03-20]" in out
+    out = _annotate_relative_dates("it happened 3 days ago", "2023-03-27")
+    assert "3 days ago [= 2023-03-24]" in out
+
+
+def test_annotate_relative_dates_is_noop_without_anchor_or_phrase():
+    from kg.rag import _annotate_relative_dates
+    assert _annotate_relative_dates("last week was great", None) == "last week was great"
+    assert _annotate_relative_dates("last week was great", "not-a-date") == "last week was great"
+    assert _annotate_relative_dates("nothing relative here", "2023-03-27") == \
+        "nothing relative here"
+
+
+def test_resolve_reldates_off_is_byte_identical_and_on_annotates():
+    g = becky_graph()
+    assert g.config.rag_resolve_reldates is False
+    # inject a relative phrase into an episode and rebuild the context both ways
+    from kg.rag import ContextBuilder
+    from kg.retrieval import HybridRetriever
+    retr = HybridRetriever(g.store, g.embedder, g.canon, g.config)
+    result = retr.retrieve("Where does Becky live?", k=g.config.top_k)
+    eid = result.object_ids[0]
+    node = g.store.get_node(eid)
+    node.raw_text = (node.raw_text or node.name) + " She moved last week."
+    node.created_at = node.created_at or "2023-03-27T00:00:00+00:00"
+    off = ContextBuilder(g.store, g.config).build(result)[2]
+    g.config.rag_resolve_reldates = True
+    on = ContextBuilder(g.store, g.config).build(result)[2]
+    assert "last week [≈" not in off
+    assert "last week [≈" in on
