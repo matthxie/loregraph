@@ -86,6 +86,29 @@ _RETARGET_STOP = {
 }
 
 
+def _when_with_delta(created_at: str | None, as_of: str | None) -> str:
+    """Render an episode's date for a context line: "(YYYY-MM-DD)", or, when both the
+    episode date and the question anchor (`as_of`) parse, "(YYYY-MM-DD, N days before the
+    question)" / "(..., same day as the question)" / "(..., N days after the question)".
+    Compares the date part only. Falls back to the bare date on any missing/unparseable
+    input."""
+    when = (created_at or "")[:10]
+    if not when or not as_of:
+        return f"({when})"
+    from datetime import date
+    try:
+        ep = date.fromisoformat(when)
+        anchor = date.fromisoformat(str(as_of)[:10])
+    except ValueError:
+        return f"({when})"
+    delta = (ep - anchor).days
+    if delta == 0:
+        return f"({when}, same day as the question)"
+    n = abs(delta)
+    unit = "day" if n == 1 else "days"
+    rel = "after" if delta > 0 else "before"
+    return f"({when}, {n} {unit} {rel} the question)"
+
 
 @dataclass
 class RagAnswer:
@@ -604,8 +627,8 @@ class ContextBuilder:
                 n = self.store.get_node(eid)
                 if not n:
                     continue
-                when = (n.created_at or "")[:10]
-                lines.append(f"[{eid}] ({when}) {n.name}: "
+                when = _when_with_delta(n.created_at, result.as_of)
+                lines.append(f"[{eid}] {when} {n.name}: "
                              f"{self._snippet(n, self.config.rag_episode_chars)}")
         else:
             lines.append("(none retrieved)")
