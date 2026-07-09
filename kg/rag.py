@@ -407,9 +407,23 @@ class RagAnswerer:
     def _pick_backend(self, client):
         """Live-only: an OpenAIAnswerer over an injected client, else a real OpenAI client
         from the env key. There is no offline backend — without a key (and no injected
-        client) we raise, rather than silently degrade to a fake answer."""
+        client) we raise, rather than silently degrade to a fake answer.
+
+        ANSWER_BASE_URL / ANSWER_API_KEY (optional) override the process-wide OPENAI_*
+        env — same pattern as JUDGE_BASE_URL in testrun — so a run whose EXTRACTION
+        targets a local endpoint (OPENAI_BASE_URL → Ollama/vLLM) can still answer with
+        a cloud model. Unset → prior behavior exactly."""
         if client is not None:
             return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
+        answer_base = os.environ.get("ANSWER_BASE_URL")
+        if answer_base:
+            import openai
+            key = os.environ.get("ANSWER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            if not key:
+                raise RuntimeError("ANSWER_BASE_URL is set but no ANSWER_API_KEY / "
+                                   "OPENAI_API_KEY to authenticate with.")
+            return OpenAIAnswerer(self.store, self.config, self.builder,
+                                  client=openai.OpenAI(base_url=answer_base, api_key=key))
         if os.environ.get("OPENAI_API_KEY"):
             import openai
             return OpenAIAnswerer(self.store, self.config, self.builder,
