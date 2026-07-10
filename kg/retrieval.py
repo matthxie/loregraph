@@ -362,6 +362,61 @@ def personalized_pagerank(G: nx.Graph, *, alpha: float, personalization: dict,
     raise nx.PowerIterationFailedConvergence(max_iter)
 
 
+def local_push_ppr(G: nx.Graph, *, alpha: float, personalization: dict,
+                   eps: float = 1e-6) -> dict:
+    """Approximate PPR by forward push (Andersen–Chung–Lang): solves the same fixed
+    point as `personalized_pagerank` — x = (1-alpha)·s + alpha·x·W, dangling mass
+    redistributed to the personalization — but explores only outward from the seeds,
+    so work is O(1/((1-alpha)·eps)) pushes and INDEPENDENT of graph size. Returns only
+    nodes with nonzero approximate mass; each score is within eps·weighted-degree of
+    the exact solution, which preserves the ranking at the resolution retrieval uses.
+    Deterministic: seeds are processed in sorted order and neighbor iteration follows
+    the projection's content-sorted construction."""
+    if len(G) == 0:
+        return {}
+    total = sum(v for n, v in personalization.items() if n in G and v > 0)
+    if total <= 0:
+        return {}
+    seeds = {n: v / total for n, v in sorted(personalization.items())
+             if n in G and v > 0}
+
+    from collections import deque
+    p: dict = {}
+    r: dict = dict(seeds)
+    degw: dict = {}
+
+    def deg(u) -> float:
+        d = degw.get(u)
+        if d is None:
+            d = degw[u] = float(sum(data.get("weight", 1.0) for data in G[u].values()))
+        return d
+
+    def excess(u) -> bool:
+        return r.get(u, 0.0) > eps * max(deg(u), 1.0)
+
+    queue = deque(seeds)
+    in_queue = set(seeds)
+    while queue:
+        u = queue.popleft()
+        in_queue.discard(u)
+        if not excess(u):                     # residual may have shrunk below threshold
+            continue
+        ru = r[u]
+        p[u] = p.get(u, 0.0) + (1.0 - alpha) * ru
+        r[u] = 0.0
+        du = deg(u)
+        if du > 0:
+            spread = ((v, data.get("weight", 1.0) / du) for v, data in G[u].items())
+        else:                                 # dangling: follow-mass teleports to seeds
+            spread = seeds.items()
+        for v, frac in spread:
+            r[v] = r.get(v, 0.0) + alpha * ru * frac
+            if v not in in_queue and excess(v):
+                queue.append(v)
+                in_queue.add(v)
+    return p
+
+
 # --------------------------------------------------------------------------- #
 # Retrievers
 # --------------------------------------------------------------------------- #
@@ -400,8 +455,13 @@ class PPRRetriever:
         if not pers or sum(pers.values()) <= 0:
             return res
         with prof_span("query.pagerank"):
-            ppr = personalized_pagerank(G, alpha=self.config.ppr_damping,
-                                        personalization=pers, max_iter=200)
+            if getattr(self.config, "ppr_backend", "global") == "push":
+                ppr = local_push_ppr(G, alpha=self.config.ppr_damping,
+                                     personalization=pers,
+                                     eps=getattr(self.config, "ppr_push_eps", 1e-6))
+            else:
+                ppr = personalized_pagerank(G, alpha=self.config.ppr_damping,
+                                            personalization=pers, max_iter=200)
         cand = []
         for nid, sc in ppr.items():
             n = self.store.get_node(nid)

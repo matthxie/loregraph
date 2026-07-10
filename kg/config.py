@@ -116,6 +116,14 @@ class Config:
 
     # ---- retrieval (§5) ------------------------------------------------------
     ppr_damping: float = 0.5          # HippoRAG personalization damping
+    # PPR backend: "global" = exact power iteration over the whole projection (O(N+E)
+    # per query); "push" = local forward push (Andersen–Chung–Lang), explores only the
+    # seed neighborhood — work independent of graph size, eps-approximate scores
+    # (ppr_push_eps, per unit of weighted degree). Same fixed point, same ranking at
+    # retrieval resolution; "global" (default) is byte-identical to today.
+    ppr_backend: str = "global"       # "global" | "push"
+    ppr_push_eps: float = 1e-6
+    seed_k: int = 10                  # seed nodes from fused embedding+BM25
     seed_k: int = 10                  # seed nodes from fused embedding+BM25
     top_k: int = 8                    # episodes returned to the caller
     mmr_lambda: float = 0.6           # MMR relevance↔diversity tradeoff
