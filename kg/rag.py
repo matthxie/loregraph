@@ -308,15 +308,29 @@ _ANSWER_TOOL_EVENTS = {
                             "description": {"type": "string"},
                             "quantity": {"type": "string",
                                          "description": "amount/count/duration if any"},
+                            "source": {"type": "string",
+                                       "enum": ["user", "assistant"],
+                                       "description": ("who stated it: 'user' if the user "
+                                                       "said it about their own situation "
+                                                       "(\"I was told the taxi costs $60\"), "
+                                                       "'assistant' for the assistant's "
+                                                       "generic prices, typical ranges, or "
+                                                       "estimates")},
                         },
-                        "required": ["date", "description"],
+                        "required": ["date", "description", "source"],
                     },
                 },
                 "calculation": {"type": "string",
                                 "description": ("the arithmetic, written out step by step "
                                                 "from the listed events (counts, sums, or "
                                                 "date differences as months+days); write "
-                                                "'none' if the answer needs no arithmetic")},
+                                                "'none' if the answer needs no arithmetic. "
+                                                "For the user's own costs/amounts, use "
+                                                "operands from source='user' events only — "
+                                                "if a needed operand has no source='user' "
+                                                "event, answer that the information is "
+                                                "insufficient instead of computing from "
+                                                "source='assistant' figures")},
                 "answer": {"type": "string",
                            "description": "derived ONLY from the events and calculation above"},
                 "citations": {"type": "array", "items": {"type": "string"},
