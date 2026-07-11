@@ -3,10 +3,10 @@
 The guard only matters when `self_entity` is on AND the graph is deep enough that
 the single SELF_ENTITY_ID node accumulates many fact edges. micro/sample instances
 cap at <=6 sessions (too shallow), and the local extractors DROP first-person edges,
-so this must run on deep `small`-tier instances with the HAIKU extractor + self_entity.
+so this must run on deep `small`-tier instances with the LLM extractor + self_entity.
 
 For each of the N deepest instances:
-  1. ingest once (Haiku + self_entity, no reflexion) — the only paid step;
+  1. ingest once (LLM extractor + self_entity, no reflexion) — the only paid step;
   2. measure the self node as a hub: its degree, its share of RELATED_TO edges, and
      its Personalized-PageRank mass on the instance's own query;
   3. A/B recall@k (FREE — retrieval only, no LLM) under self_guard none vs exclude;

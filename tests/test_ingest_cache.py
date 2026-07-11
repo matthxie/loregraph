@@ -66,7 +66,7 @@ def test_ingest_relevant_config_change_changes_key():
     base = ingest_cache_key("q1", SESSIONS, cfg)
     ingest_variants = [
         replace(cfg, llm_model="gpt-4o"),
-        replace(cfg, extractor_backend="haiku"),
+        replace(cfg, extractor_backend="llm"),
         replace(cfg, local_backend="keyword_only"),
         replace(cfg, cue_escalate=not cfg.cue_escalate),
         replace(cfg, embed_model="other/embed"),

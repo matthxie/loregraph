@@ -16,19 +16,19 @@ class Config:
     embed_dim: int = 384  # bge-small / MiniLM both 384; hashing fallback matches
 
     # ---- backend selection (LIVE-ONLY; the offline heuristic/hashing backends were
-    #      removed). Kept as fields for back-compat: extractor→Haiku, embedder→bge. ----
-    extractor: str = "haiku"
+    #      removed). Kept as fields for back-compat: extractor→llm, embedder→bge. ----
+    extractor: str = "llm"
     embedder: str = "st"
 
     # ---- extractor backend ---------------------------------------------------
     # DEFAULT "cue_gated" = the production strategy: a free local NLP floor
-    # (`local_backend`, gliner_yake_cooccur) on every entry, plus ONE Haiku call
+    # (`local_backend`, gliner_yake_cooccur) on every entry, plus ONE `llm_model` call
     # ONLY on entries carrying a termination/relative-date/identity cue (kg/cues.py).
-    # Other choices: "haiku" (full LLM on everything), or a pure LLM-free / hybrid NLP
+    # Other choices: "llm" (full `llm_model` on everything), or a pure LLM-free / hybrid NLP
     # backend (gliner_yake_cooccur | gliner2 | keyword_only | … , see kg/nlp_extractors.py).
     extractor_backend: str = "cue_gated"
     local_backend: str = "gliner_yake_cooccur"   # the always-on local floor under cue_gated
-    cue_escalate: bool = True                     # call Haiku on cue-bearing entries (needs key)
+    cue_escalate: bool = True                     # call `llm_model` on cue-bearing entries (needs key)
     gliner_model: str = "urchade/gliner_small-v2.1"
     gliner_threshold: float = 0.5
     # GLiNER2 (fastino) — ONE local encoder that emits typed entities AND typed relations, run in

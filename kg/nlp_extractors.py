@@ -640,31 +640,31 @@ class Gliner2Extractor:
 
 
 # --------------------------------------------------------------------------- #
-# Combination: GLiNER2 (typed, $0) UNION Haiku (clean open-vocab relations)
+# Combination: GLiNER2 (typed, $0) UNION the LLM extractor (clean open-vocab relations)
 # --------------------------------------------------------------------------- #
-class Gliner2HaikuExtractor:
-    """Run BOTH the tuned GLiNER2 extractor and the Haiku LLM extractor on each section and MERGE
+class Gliner2LlmExtractor:
+    """Run BOTH the tuned GLiNER2 extractor and the LLM extractor on each section and MERGE
     their Extractions (union entities/tags, union relation labels per directed pair). The point:
-    keep Haiku's clean open-vocabulary third-party relations AND add GLiNER2's extra typed entities
-    and relations that Haiku's default prompt misses. Cost == Haiku (GLiNER2 is free); the question
-    the eval answers is whether the GLiNER2 bonus lifts answer accuracy over Haiku alone. The meter
-    is Haiku's, so the dashboard shows the (Haiku) cost."""
+    keep the LLM's clean open-vocabulary third-party relations AND add GLiNER2's extra typed
+    entities and relations that the LLM's default prompt misses. Cost == the LLM's (GLiNER2 is
+    free); the question the eval answers is whether the GLiNER2 bonus lifts answer accuracy over
+    the LLM alone. The meter is the LLM's, so the dashboard shows the (LLM) cost."""
 
-    def __init__(self, config: Config, name: str = "gliner2_haiku"):
+    def __init__(self, config: Config, name: str = "gliner2_llm"):
         from .extractors import OpenAIExtractor
         self.config = config
         self.name = name
         self._g2 = Gliner2Extractor(config, name="gliner2", tag_fn=yake_tags)
-        self._haiku = OpenAIExtractor(config)
-        self.meter = self._haiku.meter          # cost attribution flows through Haiku's meter
+        self._llm = OpenAIExtractor(config)
+        self.meter = self._llm.meter            # cost attribution flows through the LLM's meter
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         a = self._g2.extract_text(text, title)
-        b = self._haiku.extract_text(text, title)
+        b = self._llm.extract_text(text, title)
         return a.merge(b)                        # union of both extractions
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
-        return self._haiku.extract_image(image_path, label_hint)
+        return self._llm.extract_image(image_path, label_hint)
 
 
 # --------------------------------------------------------------------------- #
@@ -725,12 +725,12 @@ def build_nlp_extractor(backend: str, config: Config):
         return Gliner2Extractor(config, name="gliner2", tag_fn=yake_tags)
     if backend == "gliner2_nounchunk":         # same, with noun-chunk tags
         return Gliner2Extractor(config, name="gliner2_nounchunk", tag_fn=nounchunk_tags)
-    if backend == "gliner2_haiku":              # GLiNER2 (me-facts, $0) UNION Haiku (open-vocab)
-        return Gliner2HaikuExtractor(config, name="gliner2_haiku")
+    if backend in ("gliner2_llm", "gliner2_haiku"):   # GLiNER2 (me-facts, $0) UNION LLM (open-vocab)
+        return Gliner2LlmExtractor(config, name="gliner2_llm")
     raise ValueError(f"unknown NLP extractor backend: {backend!r}")
 
 
 NLP_BACKENDS = {"gliner_yake", "gliner_nounchunk", "gliner_nounchunk_cooccur",
                 "gliner_yake_cooccur", "gliner_keybert_cooccur", "spacy_svo",
                 "hybrid_llm_rel", "hybrid_nounchunk_rel", "keyword_only",
-                "gliner2", "gliner2_nounchunk", "gliner2_haiku"}
+                "gliner2", "gliner2_nounchunk", "gliner2_llm"}

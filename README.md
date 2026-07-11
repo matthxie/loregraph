@@ -91,7 +91,7 @@ cp .env.example .env               # then paste in your key: OPENAI_API_KEY=sk-.
 
 `OPENAI_API_KEY` is optional. Without it, ingestion still runs (the default `cue_gated`
 extractor backend has a keyless local NLP floor), but escalation to gpt-4o-mini, the live
-`haiku`/`auto` extractor backends, and every `ask`/answer call are live-only and will raise
+`llm`/`auto` extractor backends, and every `ask`/answer call are live-only and will raise
 without a key. `kg/__init__.py` auto-loads `.env` on import, so you never need to `export` it
 yourself; the file is gitignored.
 
@@ -141,8 +141,8 @@ to compare on).
 | `--k N` | `8` | episodes retrieved per query (recall@k). |
 | `--backend auto` | live if key set | answerer backend for the query half. |
 | `--model ID` | — | override the LLM model id (extractor + L3 + answerer all at once). |
-| `--extractor {auto,haiku}` | `auto` | back-compat display switch; see `--extractor-backend` for the real knob. |
-| `--extractor-backend NAME` | `cue_gated` (config default) | extraction strategy: `cue_gated` (free local NLP floor + gpt-4o-mini only on cue-bearing entries), `haiku`/`auto` (full LLM on everything, paid), or an LLM-free NLP backend (`gliner2`, `gliner2_nounchunk`, `gliner_yake_cooccur`, …) — $0 ingest, runs locally. See `kg/nlp_extractors.py` `NLP_BACKENDS`. |
+| `--extractor {auto,llm}` | `auto` | back-compat display switch; see `--extractor-backend` for the real knob. |
+| `--extractor-backend NAME` | `cue_gated` (config default) | extraction strategy: `cue_gated` (free local NLP floor + gpt-4o-mini only on cue-bearing entries), `llm`/`auto` (full LLM on everything, paid), or an LLM-free NLP backend (`gliner2`, `gliner2_nounchunk`, `gliner_yake_cooccur`, …) — $0 ingest, runs locally. See `kg/nlp_extractors.py` `NLP_BACKENDS`. |
 | `--embedder {auto,st}` | `auto` | embedding backend (local `sentence-transformers`). |
 | `--long-doc-chars W` | `6000` | section size above which a doc is split for extraction; raises the per-call input cap to match. |
 | `--extract-max-chars C` | `12000` | per-call input cap inside `extract_text`; normally tracks `--long-doc-chars`. |

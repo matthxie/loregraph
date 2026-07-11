@@ -1,8 +1,8 @@
 """Build the committed `micro` LongMemEval tier — a tiny LIVE smoke set.
 
 `micro` is a deterministic 3-instance subset of the committed `sample` tier, chosen to
-exercise the graph's differentiators in a run that finishes in well under a minute on live
-Haiku + bge:
+exercise the graph's differentiators in a run that finishes in well under a minute on a live
+LLM extractor + bge:
 
   * 08f4fc43  temporal-reasoning  — bi-temporal fact windows / as-of
   * 0100672e  multi-session       — cross-session multi-hop retrieval

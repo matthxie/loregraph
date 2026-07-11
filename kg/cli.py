@@ -31,7 +31,7 @@ def _config(args) -> Config:
         cfg.extractor = args.extractor
     if getattr(args, "embedder", None):
         cfg.embedder = args.embedder
-    if getattr(args, "extractor_backend", None):   # haiku (paid) vs an LLM-free NLP backend ($0)
+    if getattr(args, "extractor_backend", None):   # llm (paid) vs an LLM-free NLP backend ($0)
         cfg.extractor_backend = args.extractor_backend
     if getattr(args, "model", None):          # override the LLM model (extractor + L3 + answerer)
         cfg.llm_model = args.model
@@ -119,7 +119,7 @@ def cmd_extract_dump(args):
     cfg = _config(args)
     ext = get_extractor(cfg)
     items = load_longmemeval(args.tier, limit=args.limit)
-    label = args.label or (cfg.llm_model if ext.name == "haiku" else ext.name)
+    label = args.label or (cfg.llm_model if ext.name == "llm" else ext.name)
     print(f"extracting {len(items)} items  (extractor={ext.name}, model={cfg.llm_model}, "
           f"label={label!r}) ...")
     records, errors = extract_corpus(ext, items, cfg)
@@ -390,7 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--synthetic", action="store_true",
                     help="ingest the synthetic evolving Becky/Alex stream (deterministic facts)")
     pi.add_argument("--limit", type=int, default=None, help="cap the number of session episodes")
-    pi.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pi.add_argument("--extractor", choices=["auto", "llm"], default="auto")
     pi.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pi.add_argument("--model", default=None, help="override the LLM extractor model id")
     pi.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
@@ -402,7 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser("extract-dump",
                         help="dump per-item extractions for an extractor/model (no graph build)")
-    pd.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pd.add_argument("--extractor", choices=["auto", "llm"], default="auto")
     pd.add_argument("--model", default=None, help="LLM model id to extract with")
     pd.add_argument("--tier", choices=["sample", "small", "med", "large", "micro"], default="sample",
                     help="LongMemEval tier whose session episodes to extract from")
@@ -413,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pg = sub.add_parser("eval-canon",
                         help="canonicalization gate: synonyms merge, antonyms/inverses must NOT")
-    pg.add_argument("--extractor", choices=["auto", "haiku"], default="haiku")
+    pg.add_argument("--extractor", choices=["auto", "llm"], default="llm")
     pg.add_argument("--embedder", choices=["auto", "st"], default="auto")
     pg.add_argument("--model", default=None, help="L3 adjudicator model (with --l3)")
     pg.add_argument("--l3", action="store_true", help="exercise the L3 LLM tie-breaker")
@@ -497,9 +497,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cap the number of eval questions (default: all)")
     pt.add_argument("--backend", choices=["auto"], default=None,
                     help="answerer backend for the query half (auto = live if a key is set)")
-    pt.add_argument("--extractor", choices=["auto", "haiku"], default="auto")
+    pt.add_argument("--extractor", choices=["auto", "llm"], default="auto")
     pt.add_argument("--extractor-backend", dest="extractor_backend", default=None,
-                    help="extraction backend: 'haiku' (default, paid LLM) or an LLM-free / hybrid "
+                    help="extraction backend: 'llm' (default, paid LLM) or an LLM-free / hybrid "
                          "NLP backend (e.g. gliner2, gliner2_nounchunk, gliner_yake_cooccur) — $0 "
                          "ingest, runs locally. See kg/nlp_extractors.py NLP_BACKENDS.")
     pt.add_argument("--embedder", choices=["auto", "st"], default="auto")

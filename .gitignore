@@ -34,3 +34,8 @@ runs/
 # Throwaway test virtualenv
 .venv-test/
 results/
+
+# Packaging build artifacts
+*.egg-info/
+build/
+dist/

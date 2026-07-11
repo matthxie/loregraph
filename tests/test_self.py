@@ -59,10 +59,10 @@ def test_get_embedder_is_sentence_transformer():
     assert isinstance(emb, SentenceTransformerEmbedder)
 
 
-def test_haiku_backend_requires_key(monkeypatch):
-    # the default 'cue_gated' backend is keyless; the live 'haiku' backend still RAISES
+def test_llm_backend_requires_key(monkeypatch):
+    # the default 'cue_gated' backend is keyless; the live 'llm' backend still RAISES
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    c = _cfg(); c.extractor_backend = "haiku"
+    c = _cfg(); c.extractor_backend = "llm"
     with pytest.raises(RuntimeError):
         get_extractor(c)
 

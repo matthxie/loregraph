@@ -405,26 +405,26 @@ def test_get_embedder_returns_sentence_transformer():
     assert np.allclose(a, e.embed(["knowledge graph"]))
 
 
-def test_haiku_backend_raises_without_key(monkeypatch):
-    """The 'haiku' backend is live-only: it RAISES when no OPENAI_API_KEY is set. (The
+def test_llm_backend_raises_without_key(monkeypatch):
+    """The 'llm' backend is live-only: it RAISES when no OPENAI_API_KEY is set. (The
     default 'cue_gated' backend instead runs a keyless local floor — see below.)"""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    c = cfg(); c.extractor_backend = "haiku"
+    c = cfg(); c.extractor_backend = "llm"
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         get_extractor(c)
 
 
-def test_haiku_backend_returns_haiku_with_key(monkeypatch):
-    """With a key present, the 'haiku' backend yields the live OpenAIExtractor (constructed
+def test_llm_backend_returns_llm_with_key(monkeypatch):
+    """With a key present, the 'llm' backend yields the live OpenAIExtractor (constructed
     only — no API call is made until extract_text/extract_image)."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-used")
-    c = cfg(); c.extractor_backend = "haiku"
+    c = cfg(); c.extractor_backend = "llm"
     ext = get_extractor(c)
-    assert isinstance(ext, OpenAIExtractor) and ext.name == "gpt4o_mini"
+    assert isinstance(ext, OpenAIExtractor) and ext.name == "llm"
 
 
 def test_default_extractor_is_cue_gated_and_keyless(monkeypatch):
-    """The production default is cue-gated: a keyless local NLP floor, with Haiku escalation
+    """The production default is cue-gated: a keyless local NLP floor, with LLM escalation
     only when a key is present (so extraction no longer hard-requires a key)."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     ext = get_extractor(cfg())

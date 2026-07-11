@@ -231,7 +231,7 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
 3. NORMALIZE     Links → fetch + extract main text. Files → extract text.
                  Keep the raw text (it IS the embedding surface — no summary).
 4. EXTRACT       DIRECTLY from raw content (rev 2 — no summary step), in ONE
-                 structured-output call (cognee): Haiku returns a typed
+                 structured-output call (cognee): the LLM returns a typed
                  {entities[], tags[], relations[]} object — each relation is a
                  DIRECTED connection with open-vocab labels[] (rev 3), consolidated
                  downstream like tags. Each item carries a provenance back-pointer
@@ -261,7 +261,7 @@ Note: the "seen" flag is **orthogonal to PPR** (diffusion doesn't need it). It m
 9. CACHE         Store hash → node id.
 ```
 
-Run ingestion under a **bounded-concurrency semaphore** (graphiti's `SEMAPHORE_LIMIT`) — the per-object Haiku calls fan out, so cap parallelism to avoid 429s.
+Run ingestion under a **bounded-concurrency semaphore** (graphiti's `SEMAPHORE_LIMIT`) — the per-object LLM calls fan out, so cap parallelism to avoid 429s.
 
 (Defer A-MEM-style "memory evolution" rewrites of neighbors — it's O(k) LLM calls per insert and causes non-deterministic drift. Use batch L3 reconciliation instead. The mem0 tie-breaker in step 6 is the *selective* alternative — only on ambiguous merges, not every write.)
 

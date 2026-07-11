@@ -136,7 +136,7 @@ def render_table(results: list[dict], k: int) -> str:
         rate = esc["escalated"] / esc["seen"]
         lines.append("")
         lines.append(f"full cue-escalation: {esc['escalated']}/{esc['seen']} sections "
-                     f"({rate:.1%}) called Haiku  cues={esc.get('cue_counts', {})}")
+                     f"({rate:.1%}) escalated to the LLM  cues={esc.get('cue_counts', {})}")
     ra = full.get("rerank_active")
     flag = "YES" if ra else ("NO — DEGRADED to PPR order!" if ra is False else "?")
     lines.append(f"full cross-encoder active: {flag}   lanes routed: {full.get('lanes', {})}")

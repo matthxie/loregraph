@@ -130,7 +130,7 @@ class Extractor(Protocol):
 
 
 # --------------------------------------------------------------------------- #
-# Structured-output tool schema (shared by the Haiku path)
+# Structured-output tool schema (shared by the LLM path)
 # --------------------------------------------------------------------------- #
 _ENTITY_ENUM = [t.value for t in EntityType]
 
@@ -318,7 +318,7 @@ def _parse_tool_payload(payload: dict) -> Extraction:
 # OpenAI (real)
 # --------------------------------------------------------------------------- #
 class OpenAIExtractor:
-    name = "gpt4o_mini"
+    name = "llm"
 
     # The system prompt + GRAPH_TOOL are kept STATIC and BLIND (no live graph
     # vocabulary is ever injected) — extraction never diffs against existing state;
@@ -514,10 +514,10 @@ class ScriptedExtractor:
 # Cue-gated hybrid extractor (the default production strategy)
 # --------------------------------------------------------------------------- #
 class CueGatedExtractor:
-    """A free local NLP floor on every entry, plus ONE Haiku call ONLY on entries carrying a
-    termination / relative-date / identity cue (kg/cues.py). Haiku is the merge BASE so its
+    """A free local NLP floor on every entry, plus ONE LLM call ONLY on entries carrying a
+    termination / relative-date / identity cue (kg/cues.py). The LLM is the merge BASE so its
     temporal relation fields (status=ended, valid_from/to) survive; the local entities/tags
-    union in for recall. The exposed `meter` is Haiku's, so the testrun's per-document cost
+    union in for recall. The exposed `meter` is the LLM's, so the testrun's per-document cost
     drain captures exactly the escalation spend (the local floor is free). With no
     OPENAI_API_KEY, escalation is disabled and extraction runs local-only."""
     name = "cue_gated"
@@ -529,20 +529,20 @@ class CueGatedExtractor:
             getattr(config, "local_backend", "gliner_yake_cooccur"), config)
         self.escalate = (bool(getattr(config, "cue_escalate", True))
                          and bool(os.environ.get("OPENAI_API_KEY")))
-        self._haiku: OpenAIExtractor | None = None
+        self._llm: OpenAIExtractor | None = None
         self._fallback_meter = UsageMeter()
         self.n_seen = 0
         self.n_escalated = 0
         self.cue_counts: dict[str, int] = {}
 
-    def _haiku_ext(self) -> OpenAIExtractor:
-        if self._haiku is None:
-            self._haiku = OpenAIExtractor(self.config)
-        return self._haiku
+    def _llm_ext(self) -> OpenAIExtractor:
+        if self._llm is None:
+            self._llm = OpenAIExtractor(self.config)
+        return self._llm
 
     @property
     def meter(self) -> UsageMeter:
-        return self._haiku.meter if self._haiku is not None else self._fallback_meter
+        return self._llm.meter if self._llm is not None else self._fallback_meter
 
     def extract_text(self, text: str, title: str = "") -> Extraction:
         self.n_seen += 1
@@ -553,10 +553,10 @@ class CueGatedExtractor:
             for kind in cue_kinds(text):
                 self.cue_counts[kind] = self.cue_counts.get(kind, 0) + 1
             try:
-                haiku = self._haiku_ext().extract_text(text, title)
+                llm = self._llm_ext().extract_text(text, title)
             except Exception:  # noqa: BLE001 — never sink ingest on one API error; keep the floor
                 return local
-            return haiku.merge(local)            # Haiku base → its temporal fields win
+            return llm.merge(local)             # LLM base → its temporal fields win
         return local
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
@@ -572,20 +572,22 @@ class CueGatedExtractor:
 # Factory
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
-    """Default 'cue_gated' = a local NLP floor + a Haiku call only on cue-bearing entries
-    (escalation needs OPENAI_API_KEY; without it, extraction runs local-only). 'haiku'/
-    'auto' = full gpt-4o-mini on every entry (needs the key). Any other value selects a
+    """Default 'cue_gated' = a local NLP floor + an LLM call only on cue-bearing entries
+    (escalation needs OPENAI_API_KEY; without it, extraction runs local-only). 'llm'/
+    'auto' = the full `llm_model` on every entry (needs the key). Any other value selects a
     pure LLM-free / hybrid NLP backend (kg/nlp_extractors.py). The deterministic
     ScriptedExtractor is constructed directly (demo + tests), never here."""
     backend = getattr(config, "extractor_backend", "cue_gated")
+    if backend == "haiku":                 # legacy alias from before the multi-provider rename
+        backend = "llm"
     if backend == "cue_gated":
         return CueGatedExtractor(config)
-    if backend not in ("haiku", "auto"):
+    if backend not in ("llm", "auto"):
         from .nlp_extractors import build_nlp_extractor
         return build_nlp_extractor(backend, config)
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError(
-            "No OPENAI_API_KEY found. The 'gpt4o_mini' extractor is live-only. Use the default "
+            "No OPENAI_API_KEY found. The 'llm' extractor backend is live-only. Use the default "
             "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
             "ScriptedExtractor directly for deterministic tests/demos.")
     return OpenAIExtractor(config)

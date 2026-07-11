@@ -1,11 +1,9 @@
 """Per-model extraction dump — run ONLY the extraction step (no graph build, no
 canonicalization, no embeddings) over the corpus and serialize what each
-extractor/model produces, so different modes (heuristic, Haiku, Sonnet, …) can be
-compared side by side.
+extractor/model produces, so different LLM models can be compared side by side.
 
-    python -m kg extract-dump --extractor haiku --model claude-haiku-4-5-20251001 --out store/dump_haiku.jsonl
-    python -m kg extract-dump --extractor haiku --model claude-sonnet-4-6        --out store/dump_sonnet.jsonl
-    python -m kg extract-dump --extractor heuristic                              --out store/dump_heuristic.jsonl
+    python -m kg extract-dump --extractor llm --model gpt-4o-mini --out store/dump_4o_mini.jsonl
+    python -m kg extract-dump --extractor llm --model gpt-5-mini  --out store/dump_5_mini.jsonl
 
 Each line of the .jsonl is one item's raw Extraction; a companion <out>.summary.json
 holds aggregate vocabulary stats (tag/entity/relation-label histograms).

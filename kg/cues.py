@@ -8,7 +8,7 @@ carry signal a local NLP extractor cannot capture cheaply and correctly:
   * descriptive identity — references that must bind across entries ("my new manager")
 
 A regex screen is intentionally cheap and high-recall: a false-positive just spends
-one extra Haiku call; a false-negative loses temporal/identity signal, so we err
+one extra LLM call; a false-negative loses temporal/identity signal, so we err
 toward escalating. Cue kinds are returned for logging/analysis.
 """
 from __future__ import annotations

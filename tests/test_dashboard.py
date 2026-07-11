@@ -156,10 +156,10 @@ def test_get_embedder_is_sentence_transformer():
     assert emb.name.startswith("st:")
 
 
-def test_haiku_backend_requires_key(monkeypatch):
-    # default 'cue_gated' is keyless; the live 'haiku' backend still RAISES without a key
+def test_llm_backend_requires_key(monkeypatch):
+    # default 'cue_gated' is keyless; the live 'llm' backend still RAISES without a key
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    c = _cfg(); c.extractor_backend = "haiku"
+    c = _cfg(); c.extractor_backend = "llm"
     with pytest.raises(RuntimeError):
         get_extractor(c)
 
@@ -177,12 +177,12 @@ def test_answerer_requires_client_or_key(monkeypatch):
 # metering math
 # --------------------------------------------------------------------------- #
 def test_pricing_table():
-    # haiku: 1/5 per MTok
+    # claude-haiku-4-5: 1/5 per MTok
     assert abs(price("claude-haiku-4-5-20251001", 1_000_000, 0) - 1.0) < 1e-9
     assert abs(price("claude-haiku-4-5-20251001", 0, 1_000_000) - 5.0) < 1e-9
     # opus: 5/25
     assert abs(price("claude-opus-4-8", 1_000_000, 1_000_000) - 30.0) < 1e-9
-    # unknown model falls back to haiku rate (never silently free)
+    # unknown model falls back to the claude-haiku-4-5 rate (never silently free)
     assert price("made-up-model", 1_000_000, 0) > 0
 
 
@@ -364,7 +364,7 @@ def test_triage_single_gold_unaffected_by_partial_evidence():
 # --------------------------------------------------------------------------- #
 def _patch_offline_extraction(monkeypatch):
     """Make the graph that run_testrun builds use an (empty-table) ScriptedExtractor, so
-    its internal ingest writes + bge-embeds episodes WITHOUT a live Haiku call. Episodes
+    its internal ingest writes + bge-embeds episodes WITHOUT a live LLM call. Episodes
     still land (with their ids), so all the structural assertions still hold."""
     monkeypatch.setattr("kg.graph.get_extractor", lambda cfg: ScriptedExtractor({}))
 
