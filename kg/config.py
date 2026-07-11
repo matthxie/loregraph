@@ -102,7 +102,7 @@ class Config:
     # packing) / "code" (top-level blank-line blocks) chunkers plus "auto", which
     # sniffs the format PER ENTRY (kg/chunkers.py sniff_format) and routes to the
     # right chunker — chat text still gets exactly the "turns" behavior.
-    chunking: str = "none"            # "none"|"turns"|"markdown"|"prose"|"code"|"auto"
+    chunking: str = "turns"           # "none"|"turns"|"markdown"|"prose"|"code"|"auto"
     chunk_target_chars: int = 2200    # greedy-pack natural units up to ~this per chunk
     chunk_max_chars: int = 4400      # entries at/below this stay unchunked; also the
                                       # hard ceiling one packed unit may reach
@@ -126,7 +126,7 @@ class Config:
     seed_k: int = 10                  # seed nodes from fused embedding+BM25
     seed_k: int = 10                  # seed nodes from fused embedding+BM25
     top_k: int = 8                    # episodes returned to the caller
-    mmr_lambda: float = 0.6           # MMR relevance↔diversity tradeoff
+    mmr_lambda: float = 1.0           # MMR relevance↔diversity tradeoff (1.0 = pure relevance)
     inferred_confidence_floor: float = 0.3  # drop INFERRED edges below this in traversal
 
     # ---- answer-path pipeline (the production read strategy; used by `ask`) ----
@@ -152,8 +152,6 @@ class Config:
     seed_reserve: int = 0
     # Temporal date-window boost: resolve a relative-date phrase in the query ("last
     # Saturday", "two months ago") against as_of, then reserve up to date_window_slots
-    # final slots for pool/seed episodes whose event date falls inside the resolved
-    # window and whose session is not already represented. Off by default.
     date_window_boost: bool = False
     date_window_slots: int = 2
     # Session diversity in the context-eligible prefix: reorder the final ranking so the
@@ -169,8 +167,8 @@ class Config:
     # SINGLE LLM call answers over it with citations. No per-hop LLM walking. LIVE-ONLY:
     # the offline answerer was removed, so `kg ask` requires a key (or an injected client).
     rag_backend: str = "openai"        # "openai" | "auto" (both = live OpenAI)
-    rag_model: str = "gpt-4o-mini"
-    rag_max_tokens: int = 1024        # answer output cap
+    rag_model: str = "gpt-5-mini"
+    rag_max_tokens: int = 4096        # answer output cap
     rag_context_episodes: int = 5     # episodes whose text enters the context blob (== top_k,
                                        # so nothing recall@k=8 finds gets truncated before the
                                        # reader sees it; was 6 — see optimization.md baseline)
@@ -178,19 +176,20 @@ class Config:
     rag_max_facts: int = 30           # currently-valid facts surfaced in the context
     # With chunking on, ranks 1..n can all be chunks of ONE source; cap how many context
     # slots a single source may occupy so the reader still sees other sessions. 0 = off.
-    rag_chunks_per_source: int = 4
+    rag_chunks_per_source: int = 2
     # Sibling-chunk expansion (query-side only, context-only — see spikes/queryside/REPORT.md):
     # after top-n selection, pull in each selected chunk's #cNNN neighbours within this radius
     # so a chunked session's answer-bearing sibling isn't left out of context even when it
     # didn't rank into the top-n itself. 0 = off, byte-identical to pre-expansion behavior.
-    rag_parent_expand: int = 0
+    rag_parent_expand: int = 2
     # Hard cap on total episode text after expansion; once hit, stop adding siblings (all
     # originally selected chunks are always kept — only expansion siblings are capped).
     rag_expand_budget_chars: int = 60000
     # Chunk-level retargeting (query-side only — see spikes/retarget/REPORT.md): the right
     # SOURCE can win a seat via _select_episodes while the wrong CHUNK of it gets picked
     # (PPR ranks by diffused chunk score, not by which chunk actually answers the question).
-    # "off" (default) = byte-identical to pre-retargeting behavior.
+    # "off" = byte-identical to pre-retargeting behavior; default "ce" (banked from the
+    # reader4o/reader5 A/Bs — see runs/reader5-honest-1).
     #   seed     — within each source that won seats, refill its slots with that source's
     #              best chunks by raw embedding seed rank (RetrievalResult.seed_scores)
     #              instead of PPR chunk order. Same slot count per source, swaps only.
@@ -204,19 +203,19 @@ class Config:
     #   ce+seed  — blend: a source's slots split across the CE ranking and the seed
     #              ranking (best-rank-of-either), since the two signals miss on
     #              disjoint questions (CE: relevance != answer-bearing; seed: synonymy).
-    rag_retarget: str = "off"           # "off" | "seed" | "seed+lex" | "ce" | "ce+seed"
+    rag_retarget: str = "ce"            # "off" | "seed" | "seed+lex" | "ce" | "ce+seed"
     # Provenance promotion: a FACT's episode_id (the chunk it was extracted from) is pulled
     # into context if the fact's src/dst entity names overlap the question terms and that
     # chunk isn't already present — displacing only the lowest-ranked expansion sibling
     # (never an originally selected chunk). Runs after sibling expansion.
-    rag_provenance_promote: bool = False
+    rag_provenance_promote: bool = True
     # Structured enumeration in the answer tool (query-side only, reader-facing): on the
     # configured lanes the submit_answer schema REQUIRES an `events` array (date +
     # description + quantity) filled BEFORE the answer, turning "count in your head" into
     # "fill the list, then count" — the reader's dominant failure on aggregation questions
     # is stating a total without enumerating the events behind it. Same single LLM call,
-    # a few dozen extra output tokens. "off" (default) = schema byte-identical to today.
-    rag_answer_events: str = "off"     # "off" | "lanes" | "all"
+    # a few dozen extra output tokens. "off" = plain schema; default "lanes" (banked).
+    rag_answer_events: str = "lanes"   # "off" | "lanes" | "all"
     rag_answer_events_lanes: tuple = ("multihop", "state")   # lanes that get the schema
                                        # under "lanes" (aggregation + temporal/state)
     # In-text relative-date resolution (query-side, render-time only): annotate relative

@@ -521,7 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="natural-boundary chunking A/B: 'turns' splits each session into "
                          "chat-turn chunks (paragraphs for non-chat) with a SOURCE parent + "
                          "PART_OF/NEXT edges; 'markdown'/'prose'/'code' force those chunkers; "
-                         "'auto' sniffs the format per entry and routes; default: config (none)")
+                         "'auto' sniffs the format per entry and routes; default: config (turns)")
     pt.add_argument("--k", type=int, default=8, help="episodes per query / recall@k")
     pt.add_argument("--l3", action="store_true", help="enable the L3 canonicalization tie-breaker")
     pt.add_argument("--no-judge", action="store_true",
