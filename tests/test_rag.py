@@ -330,8 +330,9 @@ def test_empty_length_response_retries_with_doubled_token_cap():
     ])
     ans = g.ask("Where does Becky live?", client=client)
     assert len(client.calls) == 2                         # exactly one retry
-    orig_cap = client.calls[0]["max_tokens"]
-    assert client.calls[1]["max_tokens"] == orig_cap * 2    # doubled on retry
+    def _cap(call):    # gpt-5/o-series send max_completion_tokens instead of max_tokens
+        return call.get("max_tokens") or call["max_completion_tokens"]
+    assert _cap(client.calls[1]) == _cap(client.calls[0]) * 2    # doubled on retry
     assert "Berlin" in ans.answer
     assert any("retried with doubled token cap" in n for n in ans.notes)
 
@@ -441,9 +442,10 @@ def _retrieval_result(query: str, object_ids: list[str], seed_scores: dict | Non
 
 
 def test_retarget_off_is_noop():
-    """rag_retarget='off' (default) must leave _select_episodes' output byte-identical —
-    the no-op guarantee that keeps default-config context unchanged."""
+    """rag_retarget='off' must leave _select_episodes' output byte-identical — the
+    no-op guarantee that keeps retargeting-free configs unchanged."""
     g = becky_graph()
+    g.config.rag_retarget = "off"
     for i in range(4):
         _chunk_node(g.store, "sess1", i, f"text of chunk {i} UCLA university")
     builder = ContextBuilder(g.store, g.config)
@@ -596,6 +598,7 @@ def _sent_tool_required(client) -> list:
 
 def test_answer_events_off_schema_unchanged():
     g = becky_graph()
+    g.config.rag_answer_events = "off"
     client = _FakeOpenAI("Berlin.", [])
     ans = g.ask("Where does Becky live?", client=client)
     assert "events" not in _sent_tool_required(client)

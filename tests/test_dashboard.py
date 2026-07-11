@@ -212,8 +212,8 @@ def test_openai_agent_populates_usage():
     assert ans.backend == "openai"
     assert ans.usage["llm_calls"] == 1
     assert ans.usage["input_tokens"] == 1500 and ans.usage["output_tokens"] == 300
-    # rag_model defaults to gpt-4o-mini: $0.15/$0.60 per MTok in/out
-    assert abs(ans.usage["cost_usd"] - (1500 * 0.15e-6 + 300 * 0.60e-6)) < 1e-9
+    # rag_model defaults to gpt-5-mini: $0.25/$2.00 per MTok in/out
+    assert abs(ans.usage["cost_usd"] - (1500 * 0.25e-6 + 300 * 2.00e-6)) < 1e-9
 
 
 def test_fake_client_with_zero_usage_reports_zero_cost():

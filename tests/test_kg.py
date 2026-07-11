@@ -880,7 +880,7 @@ def test_chunked_ingest_structure_and_idempotency():
 
 def test_chunking_off_is_unchanged():
     c = cfg()
-    assert c.chunking == "none"
+    c.chunking = "none"
     g = KnowledgeGraph.open(tmp_store(), c)
     g.extractor = ScriptedExtractor({})
     g.ingest([CorpusItem(id="s1", modality="text", source_ref="u/s1",

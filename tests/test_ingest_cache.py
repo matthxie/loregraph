@@ -85,7 +85,7 @@ def test_ingest_relevant_config_change_changes_key():
         replace(cfg, self_entity=not cfg.self_entity),
         replace(cfg, shared_edges=not cfg.shared_edges),
         replace(cfg, episode_knn_k=1),
-        replace(cfg, chunking="turns"),
+        replace(cfg, chunking="none"),
         replace(cfg, chunk_target_chars=1),
         replace(cfg, chunk_max_chars=1),
         replace(cfg, part_of_weight=0.9),

@@ -124,7 +124,6 @@ class Config:
     ppr_backend: str = "global"       # "global" | "push"
     ppr_push_eps: float = 1e-6
     seed_k: int = 10                  # seed nodes from fused embedding+BM25
-    seed_k: int = 10                  # seed nodes from fused embedding+BM25
     top_k: int = 8                    # episodes returned to the caller
     mmr_lambda: float = 1.0           # MMR relevance↔diversity tradeoff (1.0 = pure relevance)
     inferred_confidence_floor: float = 0.3  # drop INFERRED edges below this in traversal
