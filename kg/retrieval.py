@@ -211,7 +211,10 @@ class Seeder:
             for nid, cos in self.store.vectors.search(kind, qv, k=3, floor=0.6):
                 scores[nid] = max(scores.get(nid, 0.0), float(cos) * 0.6)
 
-        return scores
+        # Tombstone filter (kg/forget.py): the vector index is append-only, so erased
+        # nodes still surface here — drop them so no seed mass reaches forgotten content.
+        return {nid: s for nid, s in scores.items()
+                if (n := self.store.get_node(nid)) is None or n.valid}
 
 
 # --------------------------------------------------------------------------- #

@@ -30,6 +30,8 @@ python -m kg ingest --reset && python -m kg communities
 python -m kg query "what are the main themes across the collection"      # algorithmic retrieval
 python -m kg ask   "where does Becky live and who does she work with?"   # PPR → context → 1 answer
 python -m kg ask   "where did Becky live?" --as-of 2022                  # point-in-time retrieval
+python -m kg forget "my address is 42 Elm Street" --dry-run              # erasure: preview only
+python -m kg forget "my address is 42 Elm Street"                        # erasure: execute + save
 python -m kg eval        # recall@k ablation: PPR vs BFS vs flat vector (+ rag)
 python -m kg serve       # browser viewer: watch the graph build + trace queries
 python -m pytest -q
@@ -44,6 +46,25 @@ facts; plus the full closed+open history on evolution questions) with citations.
 live-only (needs `OPENAI_API_KEY`); a deterministic extractive synthesis survives only as an
 internal crash-guard. Pass `--as-of <date>` to either surface to read the world as it was then.
 To A/B the full pipeline vs the raw PPR-RAG engine: `python -m kg.ablate --tier sample --k 3 --ctx 3`.
+
+**Forgetting** is a first-class surface next to ingesting and querying: `g.forget("…")` /
+`python -m kg forget "…"` **erases** information, as distinct from superseding it (a fact whose
+window closed is history and stays queryable as-of-T; an erased fact is gone from every view).
+The erase is query-and-trace-back: an **exhaustive** sweep of every chunk (dense cosine + lexical —
+never top-k, deletion needs recall, and the fixpoint loop re-sweeps until nothing is found), a
+confirmation gate per candidate, then **sentence-level redaction in place** — the matched sentences
+are removed (marker: `[redacted]`), the rest of the turn survives, the chunk is re-embedded locally
+and keeps its id, and the facts/mentions/tags derived from the removed text are retracted with the
+usual orphan cascade (an entity mentioned elsewhere keeps its other edges; one supported only by
+erased text goes with it). Text is only ever *removed*, never LLM-rewritten. With `OPENAI_API_KEY`
+set, three LLM escalations sharpen the result (~$0.01–0.05/request, `--no-escalate` to disable):
+a paraphrase judge for fuzzy hits, a single-chunk re-extract diff for artifact attribution, and a
+final **inference audit** — the model is asked to reconstruct the secret from what retrieval still
+returns, and a successful guess escalates the contributing chunks to whole-chunk tombstones.
+`--dry-run` previews the full action list without mutating. Two honest limits: erasure covers what
+the *store* can reach — **ingest caches (`store/cache/`) and raw session logs must be purged
+separately** — and redaction leaves a `[redacted]` marker, so the *existence* of a secret is not
+hidden, only its content.
 
 A plain-HTML viewer (no build step, no CDN — vanilla JS + SVG) shows the episode graph, animates it
 **being built** in ingestion order, and **traces the path a query takes** (seeds → tag hubs → ranked

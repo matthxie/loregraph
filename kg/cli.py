@@ -146,6 +146,28 @@ def cmd_communities(args):
     print(f"built {n} communities; saved.")
 
 
+def cmd_forget(args):
+    g = _open(args)
+    rep = g.forget(args.secret, dry_run=args.dry_run, escalate=not args.no_escalate)
+    print(rep.summary())
+    for a in rep.actions:
+        print(f"  {a.kind:9} [{a.reason}] {a.episode_id}")
+        for s in a.removed_sentences:
+            print(f"     - {s[:100]}")
+        for art in a.artifacts_dropped:
+            print(f"     x {art[:100]}")
+    if rep.unconfirmed:
+        print("  unconfirmed candidates (semantic match, no confirmation — rerun with a "
+              "key for LLM judgment, or forget by id):")
+        for eid in rep.unconfirmed:
+            print(f"     ? {eid}")
+    if args.dry_run:
+        print("dry run: nothing was changed.")
+    else:
+        g.save()
+        print("saved. NOTE: ingest caches / raw logs are not touched — purge separately.")
+
+
 def cmd_query(args):
     g = _open(args)
     res = g.query(args.text, mode=args.mode, k=args.k, as_of=args.as_of)
@@ -399,6 +421,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     pc = sub.add_parser("communities", help="detect communities + summaries")
     pc.set_defaults(func=cmd_communities)
+
+    pf = sub.add_parser("forget", help="erase information from memory: sweep every "
+                                       "chunk, redact matched sentences, retract the "
+                                       "derived facts/mentions/tags, loop until clean")
+    pf.add_argument("secret", help="the information to erase (a concrete phrase/fact, "
+                                   "not an intent)")
+    pf.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="report what would be erased without changing anything")
+    pf.add_argument("--no-escalate", action="store_true", dest="no_escalate",
+                    help="fully offline: skip the LLM paraphrase judge, re-extract "
+                         "diff, and inference audit (fuzzy hits become 'unconfirmed')")
+    pf.set_defaults(func=cmd_forget)
 
     pq = sub.add_parser("query", help="retrieve for a question")
     pq.add_argument("text")

@@ -63,6 +63,37 @@ class KnowledgeGraph:
     def build_communities(self) -> int:
         return build_communities(self.store, self.embedder, self.config)
 
+    # ---------------------------------------------------------------- forget
+    def forget(self, secret: str, *, dry_run: bool = False, escalate: bool = True,
+               client=None):
+        """Erase a piece of information from memory (kg/forget.py): exhaustively sweep
+        every chunk for it, redact the matched sentences in place (the rest of each
+        turn survives), retract the facts/mentions/tags derived from the removed text,
+        invalidate orphans, and loop until a re-sweep finds nothing. Returns an
+        EraseReport (see its .summary()).
+
+        `escalate=True` (default) adds LLM steps when a client/key is available:
+        paraphrase confirmation for fuzzy hits, a single-chunk re-extract diff for
+        artifact attribution, and a final inference audit that escalates to whole-chunk
+        tombstones if the secret is still reconstructable from retrieval. Deterministic
+        gates run first either way; without a key the erase is fully offline
+        (paraphrased restatements are reported as `unconfirmed`, never silently kept).
+
+        `dry_run=True` reports what WOULD be erased without mutating anything.
+        Mutations are in memory until `save()`. Ingest caches and raw session logs are
+        outside the store and must be purged separately."""
+        from .forget import Eraser
+        if client is None and escalate:
+            import os
+            try:
+                import openai
+                client = openai.OpenAI() if os.environ.get("OPENAI_API_KEY") else None
+            except ImportError:
+                client = None
+        eraser = Eraser(self.store, self.embedder, self.canon, self.config,
+                        extractor=self.extractor, client=client)
+        return eraser.erase(secret, dry_run=dry_run, escalate=escalate)
+
     # ----------------------------------------------------------------- query
     def query(self, text: str, mode: str = "auto", k: int | None = None,
               as_of: str | None = None):
