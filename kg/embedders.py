@@ -24,8 +24,11 @@ class Embedder(Protocol):
     def embed(self, texts: list[str]) -> np.ndarray: ...
 
 
+_MODEL_CACHE: dict = {}
+
+
 class SentenceTransformerEmbedder:
-    """The semantic embedder. Model loads lazily on first use."""
+    """The semantic embedder. Model loads lazily on first use, once per process."""
 
     def __init__(self, model_name: str, dim: int):
         self.name = f"st:{model_name}"
@@ -35,8 +38,11 @@ class SentenceTransformerEmbedder:
 
     def _ensure(self):
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name)
+            model = _MODEL_CACHE.get(self.model_name)
+            if model is None:
+                from sentence_transformers import SentenceTransformer
+                model = _MODEL_CACHE[self.model_name] = SentenceTransformer(self.model_name)
+            self._model = model
             getdim = (getattr(self._model, "get_embedding_dimension", None)
                       or self._model.get_sentence_embedding_dimension)
             self.dim = getdim()
