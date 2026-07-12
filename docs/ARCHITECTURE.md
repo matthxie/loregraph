@@ -1,4 +1,4 @@
-<!-- Generated from a literature-review workflow over 10 sources. See LITERATURE.md for per-source notes. -->
+<!-- Generated from a literature-review workflow over 10 sources. -->
 
 # Knowledge Graph Architecture & Decisions
 
