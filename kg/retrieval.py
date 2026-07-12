@@ -26,6 +26,7 @@ import numpy as np
 
 from .canonicalize import Canonicalizer, normalize_key
 from .config import Config
+from .csr import CSRGraph
 from .embedders import Embedder
 from .facts import FactIndex
 from .models import SELF_ENTITY_ID, EdgeType, NodeType, Provenance
@@ -231,10 +232,11 @@ _PROJ_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 def projected_graph(store: GraphStore, config: Config, *, as_of: str | None = None,
-                    exclude_etypes: set[str] | None = None) -> nx.Graph:
+                    exclude_etypes: set[str] | None = None) -> CSRGraph:
     """Undirected, weighted projection of the directed store (HippoRAG runs PPR
-    undirected). Fact (RELATED_TO) edges are filtered to the requested temporal view
-    (`as_of=None` → current; `as_of=T` → as-of-T); structural edges are timeless.
+    undirected), as an immutable array-backed CSRGraph (kg/csr.py). Fact (RELATED_TO)
+    edges are filtered to the requested temporal view (`as_of=None` → current;
+    `as_of=T` → as-of-T); structural edges are timeless.
     Cached per (store.version, parameters); rebuilt only after the graph mutates."""
     exclude = _TRAVERSAL_EXCLUDE if exclude_etypes is None else exclude_etypes
     version = getattr(store, "version", None)
@@ -268,20 +270,21 @@ def self_like_ids(store: GraphStore, config: Config) -> set[str]:
 
 
 def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
-                      exclude: set[str]) -> nx.Graph:
+                      exclude: set[str]) -> CSRGraph:
     self_guard = getattr(config, "self_guard", "none")
     self_cap = float(getattr(config, "self_guard_cap", 0.05))
     self_ids = self_like_ids(store, config) if self_guard != "none" else {SELF_ENTITY_ID}
     # Deterministic construction (sorted nodes / sorted pair accumulation): the
     # projection — and everything downstream of it, PPR float sums included — is a
     # function of graph CONTENT, not of node/edge insertion or load order.
-    G = nx.Graph()
+    nodes: list[str] = []
     for nid in sorted(store.nodes):
         n = store.nodes[nid]
         if n.valid:
             if self_guard == "exclude" and n.id in self_ids:
                 continue   # drop the self anchor entirely (it carries no discriminating signal)
-            G.add_node(n.id)
+            nodes.append(n.id)
+    node_set = set(nodes)
     pair_w: dict[tuple, dict[str, float]] = {}
     for u, v, data in store.all_edges():
         if not data.get("valid", True):
@@ -294,7 +297,7 @@ def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
         if (data["provenance"] == Provenance.INFERRED.value
                 and data["confidence"] < config.inferred_confidence_floor):
             continue
-        if u not in G or v not in G:
+        if u not in node_set or v not in node_set:
             continue
         # Self-anchor hub guard: stop the single first-person node from being a
         # PPR super-hub that activation routes through (see config.self_guard).
@@ -308,10 +311,9 @@ def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
         by_etype = pair_w.setdefault(pair, {})
         if w > by_etype.get(et, 0.0):              # MAX within an etype (parallel facts
             by_etype[et] = w                       # count once); SUM across distinct etypes
-    for (u, v) in sorted(pair_w):
-        by_etype = pair_w[(u, v)]
-        G.add_edge(u, v, weight=sum(w for _et, w in sorted(by_etype.items())))
-    return G
+    edge_w = {pair: sum(w for _et, w in sorted(pair_w[pair].items()))
+              for pair in sorted(pair_w)}
+    return CSRGraph.from_pairs(nodes, edge_w)
 
 
 # --------------------------------------------------------------------------- #
@@ -324,12 +326,20 @@ def _build_projection(store: GraphStore, config: Config, *, as_of: str | None,
 _PPR_OP_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
-def _ppr_operator(G: nx.Graph):
+def _ppr_operator(G):
     bundle = _PPR_OP_CACHE.get(G)
     if bundle is None:
         import scipy.sparse as sp
-        nodelist = list(G)
-        A = nx.to_scipy_sparse_array(G, nodelist=nodelist, weight="weight", dtype=float)
+        if isinstance(G, CSRGraph):
+            # zero-conversion: the projection's arrays ARE the adjacency matrix
+            # (canonical CSR, same structure nx.to_scipy_sparse_array produces)
+            nodelist = list(G.ids)
+            n = len(nodelist)
+            A = sp.csr_array((G.weights, G.indices, G.indptr), shape=(n, n))
+        else:
+            nodelist = list(G)
+            A = nx.to_scipy_sparse_array(G, nodelist=nodelist, weight="weight",
+                                         dtype=float)
         S = np.asarray(A.sum(axis=1)).flatten()
         S[S != 0] = 1.0 / S[S != 0]
         Q = sp.csr_array(sp.spdiags(S.T, 0, *A.shape))
@@ -341,11 +351,12 @@ def _ppr_operator(G: nx.Graph):
     return bundle
 
 
-def personalized_pagerank(G: nx.Graph, *, alpha: float, personalization: dict,
+def personalized_pagerank(G, *, alpha: float, personalization: dict,
                           max_iter: int = 200, tol: float = 1e-6) -> dict:
     """Same math as nx.pagerank's scipy path (uniform start, dangling mass to the
     personalization vector, L1 convergence at N*tol), minus the per-call graph→CSR
-    conversion. Raises nx.PowerIterationFailedConvergence like nx.pagerank does."""
+    conversion. Accepts a CSRGraph (the projection) or an nx.Graph.
+    Raises nx.PowerIterationFailedConvergence like nx.pagerank does."""
     N = len(G)
     if N == 0:
         return {}
@@ -365,7 +376,7 @@ def personalized_pagerank(G: nx.Graph, *, alpha: float, personalization: dict,
     raise nx.PowerIterationFailedConvergence(max_iter)
 
 
-def local_push_ppr(G: nx.Graph, *, alpha: float, personalization: dict,
+def local_push_ppr(G, *, alpha: float, personalization: dict,
                    eps: float = 1e-6) -> dict:
     """Approximate PPR by forward push (Andersen–Chung–Lang): solves the same fixed
     point as `personalized_pagerank` — x = (1-alpha)·s + alpha·x·W, dangling mass
@@ -374,7 +385,11 @@ def local_push_ppr(G: nx.Graph, *, alpha: float, personalization: dict,
     nodes with nonzero approximate mass; each score is within eps·weighted-degree of
     the exact solution, which preserves the ranking at the resolution retrieval uses.
     Deterministic: seeds are processed in sorted order and neighbor iteration follows
-    the projection's content-sorted construction."""
+    the projection's content-sorted construction. Accepts a CSRGraph (array fast
+    path) or an nx.Graph (dict path, for tests / ad-hoc graphs)."""
+    if isinstance(G, CSRGraph):
+        return _local_push_ppr_csr(G, alpha=alpha, personalization=personalization,
+                                   eps=eps)
     if len(G) == 0:
         return {}
     total = sum(v for n, v in personalization.items() if n in G and v > 0)
@@ -418,6 +433,52 @@ def local_push_ppr(G: nx.Graph, *, alpha: float, personalization: dict,
                 queue.append(v)
                 in_queue.add(v)
     return p
+
+
+def _local_push_ppr_csr(G: CSRGraph, *, alpha: float, personalization: dict,
+                        eps: float) -> dict:
+    """local_push_ppr over the CSR arrays: same push rule and threshold, node ids
+    swapped for row indices and neighbor iteration done on array slices."""
+    if len(G) == 0:
+        return {}
+    total = sum(v for n, v in personalization.items() if n in G and v > 0)
+    if total <= 0:
+        return {}
+    index = G.index
+    seeds = {index[n]: v / total for n, v in sorted(personalization.items())
+             if n in G and v > 0}
+    degw = G.weighted_degrees()
+
+    from collections import deque
+    p: dict[int, float] = {}
+    r: dict[int, float] = dict(seeds)
+
+    def excess(i) -> bool:
+        return r.get(i, 0.0) > eps * max(degw[i], 1.0)
+
+    queue = deque(seeds)
+    in_queue = set(seeds)
+    while queue:
+        i = queue.popleft()
+        in_queue.discard(i)
+        if not excess(i):                     # residual may have shrunk below threshold
+            continue
+        ri = r[i]
+        p[i] = p.get(i, 0.0) + (1.0 - alpha) * ri
+        r[i] = 0.0
+        di = degw[i]
+        if di > 0:
+            idx, wts = G.neighbor_rows(i)
+            spread = zip(idx.tolist(), (wts / di).tolist())
+        else:                                 # dangling: follow-mass teleports to seeds
+            spread = seeds.items()
+        for j, frac in spread:
+            r[j] = r.get(j, 0.0) + alpha * ri * frac
+            if j not in in_queue and excess(j):
+                queue.append(j)
+                in_queue.add(j)
+    ids = G.ids
+    return {ids[i]: val for i, val in p.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -519,7 +580,7 @@ class PPRRetriever:
             d += 1
             nxt = []
             for u in frontier:
-                for v in G.adj[u]:
+                for v in G.neighbors(u):
                     if v not in dist:
                         dist[v] = d
                         nxt.append(v)

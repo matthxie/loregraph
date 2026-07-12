@@ -132,7 +132,7 @@ Pass `--as-of <date>` to either surface to read the world as it was then.
 |---|---|
 | Extraction | Cue-gated: local NLP floor (GLiNER/YAKE) + gpt-4o-mini escalation |
 | Embeddings | Local `sentence-transformers` (`BAAI/bge-small-en-v1.5`), fully offline |
-| Graph | NetworkX `MultiDiGraph` (directed, in-memory, persisted); traversal runs over a symmetrized projection |
+| Graph | Directed multigraph persisted to SQLite; retrieval traverses an immutable CSR (NumPy/SciPy) projection |
 | Vectors | NumPy cosine; SQLite for metadata + content-hash cache |
 | Reranking | Local cross-encoder (`ms-marco-MiniLM-L-6-v2`) |
 

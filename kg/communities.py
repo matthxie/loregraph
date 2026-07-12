@@ -39,11 +39,14 @@ def build_communities(store: GraphStore, embedder: Embedder, config: Config) -> 
     G = projected_graph(store, config)
     if G.number_of_nodes() == 0:
         return 0
+    # Louvain / label-propagation run on networkx; materialize the CSR projection
+    # (cold path — only the explicit communities rebuild pays this conversion).
+    Gnx = G.to_networkx()
     try:
         parts = nx.community.louvain_communities(
-            G, weight="weight", seed=config.community_seed)
+            Gnx, weight="weight", seed=config.community_seed)
     except Exception:
-        parts = nx.community.label_propagation_communities(G)
+        parts = nx.community.label_propagation_communities(Gnx)
 
     count = 0
     for i, members in enumerate(parts):

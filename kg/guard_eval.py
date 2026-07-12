@@ -21,8 +21,6 @@ import os
 import time
 from dataclasses import replace
 
-import networkx as nx
-
 from .config import Config
 from .corpus import iter_lme_instances
 from .graph import KnowledgeGraph
@@ -56,8 +54,9 @@ def _self_hub_stats(store, query, embedder, canon, cfg) -> dict:
             if nid in G and s > 0}
     self_mass = None
     if pers and sum(pers.values()) > 0:
-        ppr = nx.pagerank(G, alpha=cfg.ppr_damping, personalization=pers,
-                          weight="weight", max_iter=200)
+        from .retrieval import personalized_pagerank
+        ppr = personalized_pagerank(G, alpha=cfg.ppr_damping, personalization=pers,
+                                    max_iter=200)
         self_mass = ppr.get(SELF_ENTITY_ID, 0.0)
         # rank of self among all nodes by mass
         ranked = sorted(ppr.values(), reverse=True)
