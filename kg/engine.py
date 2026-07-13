@@ -256,30 +256,42 @@ class Engine:
         n = self._g.store.get_node(episode_id)
         if n is None or n.ntype is not NodeType.EPISODE or not n.valid:
             return None                        # tombstoned episodes are gone from this view
-        entities, categories = self._episode_entities(episode_id)
+        entities, categories, concepts = self._episode_entities(episode_id)
         return {"id": n.id, "text": n.raw_text or "", "created_at": n.created_at,
                 "ingested_at": n.ingested_at, "source": n.name,
-                "entities": entities, "entity_categories": categories}
+                "entities": entities, "entity_categories": categories,
+                "concepts": concepts}
 
-    def _episode_entities(self, episode_id: str) -> tuple[list[str], dict[str, str]]:
+    def _episode_entities(
+        self, episode_id: str
+    ) -> tuple[list[str], dict[str, str], list[str]]:
         """The entities this episode mentions, walking the star episode ← MENTIONED_IN ←
-        mention → RESOLVES_TO → entity. Categories derive on read from the stored
-        entity_category, falling back to entity_category_for_type(entity_type) (ingest does
-        not persist the glyph category yet — see BUILD_REPORT followups)."""
+        mention → RESOLVES_TO → entity. Named entities (person/place/thing) come back with
+        their glyph category (persisted entity_category, else entity_category_for_type, which
+        folds org/work/event into thing). CONCEPT-type nodes are split into a separate
+        `concepts` list (topical strings) rather than folded into thing, so clients can count
+        and render them as their own category. Each surface name is reported once."""
         store = self._g.store
         names: list[str] = []
         categories: dict[str, str] = {}
+        concepts: list[str] = []
+        seen: set[str] = set()
         for mid, _d in store.neighbors(episode_id, etypes={EdgeType.MENTIONED_IN},
                                        direction="in"):
             for eid, _d2 in store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
                                             direction="out"):
                 node = store.get_node(eid)
-                if node and node.name not in categories:
+                if not node or node.name in seen:
+                    continue
+                seen.add(node.name)
+                if node.entity_type is EntityType.CONCEPT:
+                    concepts.append(node.name)
+                else:
                     names.append(node.name)
                     categories[node.name] = (
                         node.entity_category
                         or entity_category_for_type(node.entity_type).value)
-        return names, categories
+        return names, categories, concepts
 
     _PREVIEW_MAX_NODES = 22
 

@@ -127,6 +127,23 @@ def test_concept_root_and_not_found(eng):
         eng.graph_preview(tag.id)
 
 
+def test_episode_detail_splits_concepts_from_entities(eng):
+    """episode() reports CONCEPT-type nodes in `concepts` (topical strings), never folded
+    into `entities`/`entity_categories` — so clients can count them as their own category."""
+    eps = eng.episodes_list()["episodes"]
+    turing = eng.episode(eps[0]["id"])                 # "Alan Turing … Bletchley Park … Enigma"
+    assert set(turing["entities"]) == {"Alan Turing", "Bletchley Park"}
+    assert turing["concepts"] == ["Enigma"]
+    assert "Enigma" not in turing["entities"]
+    assert "Enigma" not in turing["entity_categories"]
+    assert turing["entity_categories"]["Alan Turing"] == "person"
+    assert turing["entity_categories"]["Bletchley Park"] == "place"
+
+    paper = eng.episode(eps[1]["id"])                  # "Turing wrote a paper about the Enigma"
+    assert set(paper["entities"]) == {"Alan Turing"}
+    assert paper["concepts"] == ["Enigma"]
+
+
 def test_wire_shape_carries_predicate_and_stubs(eng):
     alan = _entity(eng, "Alan Turing")
     wire = Daemon._wire_graph_preview(eng.graph_preview(alan.id), alan.id)

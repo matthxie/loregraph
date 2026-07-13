@@ -315,7 +315,7 @@ class Daemon:
             "recorded_at": det.get("ingested_at") or None,
             "modality": "text", "source": det.get("source") or "capture",
             "raw_text": text, "description": None, "media_paths": [],
-            "concepts": [], "entities": det.get("entities", []),
+            "concepts": det.get("concepts", []), "entities": det.get("entities", []),
             "entity_categories": det.get("entity_categories", {}),
             "graph_preview": gp, "facts": [],
         }
@@ -360,6 +360,7 @@ class Daemon:
                 row["source"] = det.get("source") or "capture"
                 row["entities"] = det.get("entities", [])
                 row["entity_categories"] = det.get("entity_categories", {})
+                row["concepts"] = det.get("concepts", [])
             row["graph_preview"] = self._wire_graph_preview(
                 self.engine().graph_preview(ep_id), ep_id)
         except EngineError:
