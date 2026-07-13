@@ -22,19 +22,24 @@ dependencies = [
     "torch>=2.6",              # sentence-transformers backend
     "openai>=1.0",             # default LLM provider (KG_LLM=openai); mock/none/codex need no SDK
     "python-dotenv>=1.0",      # optional .env loading (import-guarded, but cheap and expected)
+    # The default `cue_gated` extractor's local floor is gliner_yake_cooccur
+    # (kg/nlp_extractors.py): with any real provider (KG_LLM=codex/openai) the daemon
+    # imports these at drain time — they ARE the serving path, not eval tooling.
+    # spacy additionally needs the en_core_web_sm model, which is not on PyPI; installers
+    # must add it themselves (e.g. `python -m spacy download en_core_web_sm` or pin the
+    # model wheel URL, as the brainbrain app's engine/requirements.txt does).
+    "gliner>=0.2.27",          # zero-shot NER backend (urchade/gliner_small-v2.1)
+    "yake>=0.4.8",             # statistical topical-tag keyphrases
+    "spacy>=3.8",              # parses for co-occurrence/SVO relations
 ]
 
 [project.optional-dependencies]
-# LLM-free / hybrid extractor backends + corpus/eval tooling. Only needed for
-# kg/nlp_extractors.py (config.extractor_backend != "haiku"), scripts/build_dataset.py,
-# and the evaluate/ablate/synthetic harnesses — never on the serving path.
+# Corpus/eval tooling + alternative extractor backends not used by the default
+# serving path (the cue_gated floor's gliner/yake/spacy live in core, above).
 research = [
     "scikit-learn>=1.5",   # cosine helpers / label-propagation fallbacks (eval-side)
     "datasets>=2.18",      # corpus building (scripts/build_dataset.py)
     "pillow>=10",          # corpus building (image handling)
-    "gliner>=0.2.27",      # zero-shot NER backend (urchade/gliner_small-v2.1)
-    "yake>=0.4.8",         # statistical topical-tag keyphrases
-    "spacy>=3.8",          # parses for co-occurrence/SVO relations (+ en_core_web_sm, installed separately)
     "keybert>=0.8",        # optional alt tagger (YAKE beat it here)
     "rake-nltk>=1.0",      # optional alt tagger (rejected on this corpus)
 ]

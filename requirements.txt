@@ -21,18 +21,20 @@ python-dotenv>=1.0    # load OPENAI_API_KEY (and friends) from a .env file
 sentence-transformers>=5.0  # BAAI/bge-small-en-v1.5
 torch>=2.6
 
+# Local NLP extraction floor (required at runtime with a real provider: the default
+# cue_gated extractor's floor is gliner_yake_cooccur — kg/nlp_extractors.py — imported
+# at drain time under KG_LLM=codex/openai).
+gliner>=0.2.27          # zero-shot NER mapped to the 8 KG EntityTypes (urchade/gliner_small-v2.1)
+yake>=0.4.8             # statistical topical-tag keyphrases
+spacy>=3.8              # sentences + dependency parse for co-occurrence/SVO relations + noun-chunks
+# python -m spacy download en_core_web_sm   # required spaCy model (run once)
+
 # --- Research/eval-only from here down (pyproject extra: research) ---
 
 # Corpus building (already run; see scripts/build_dataset.py)
 datasets>=2.18
 pillow>=10
 
-# LLM-free / hybrid extractor backends (optional; only needed when
-# config.extractor_backend != "haiku" — see kg/nlp_extractors.py + optimization.md Lever 6).
-# gliner_yake_cooccur (the cost winner) needs gliner + yake + spacy(+en_core_web_sm).
-gliner>=0.2.27          # zero-shot NER mapped to the 8 KG EntityTypes (urchade/gliner_small-v2.1)
-yake>=0.4.8             # statistical topical-tag keyphrases
-spacy>=3.8              # sentences + dependency parse for co-occurrence/SVO relations + noun-chunks
-# python -m spacy download en_core_web_sm   # required spaCy model (run once)
+# Alternative extractor backends (see kg/nlp_extractors.py + optimization.md Lever 6)
 keybert>=0.8            # optional alt tagger (reuses the project's bge embedder); YAKE beat it here
 rake-nltk>=1.0          # optional alt tagger (rejected on this corpus)
