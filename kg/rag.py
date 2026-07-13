@@ -26,7 +26,7 @@ from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex, FactLine
-from .llm_client import llm_available, make_client
+from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .profiler import span as prof_span
@@ -887,12 +887,16 @@ class OpenAIAnswerer:
                          facts=[f.render() for f in facts], object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph),
                          retargeted=list(self.builder.last_retargeted))
+        # Per-provider model resolution: an explicit config override wins; an unchanged
+        # rag_model (the Config default "gpt-5-mini") resolves to the active provider's
+        # default — None for the CLI providers (codex/claude pick their own model).
+        model = resolve_model(self.config.rag_model, "gpt-5-mini")
         # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to
         # the offline extractive path — so the split must live here.
         kwargs: dict = {
-            "model": self.config.rag_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": _RAG_SYS},
                 {"role": "user", "content": blob},
@@ -900,7 +904,7 @@ class OpenAIAnswerer:
             "tools": [self._answer_tool(result)],
             "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
         }
-        if self.config.rag_model.startswith(("gpt-5", "o1", "o3", "o4")):
+        if (model or "").startswith(("gpt-5", "o1", "o3", "o4")):
             token_key = "max_completion_tokens"
         else:
             token_key = "max_tokens"
@@ -909,7 +913,7 @@ class OpenAIAnswerer:
         try:
             with prof_span("query.llm_answer"):
                 msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
-            self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
+            self.meter.record("rag", model or "cli-default", msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
             base.citations = ep_ids
@@ -929,7 +933,7 @@ class OpenAIAnswerer:
                 with prof_span("query.llm_answer_retry"):
                     msg = call_with_backoff(
                         lambda: self.client.chat.completions.create(**retry_kwargs))
-                self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
+                self.meter.record("rag", model or "cli-default", msg, label=result.query[:40])
                 base.usage = self.meter.totals()
                 ans, raw, base.events = self._parse_message(msg)
             except Exception as e:  # noqa: BLE001 — retry failed too, fall through below

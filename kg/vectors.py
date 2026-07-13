@@ -54,6 +54,27 @@ class VectorIndex:
         if self.on_add:
             self.on_add(kind, node_id)
 
+    def remove(self, kind: str, node_id: str) -> bool:
+        """Drop one vector (post-hoc merges delete the loser's row). Swap-remove: the last
+        live row moves into the vacated slot so the buffer stays dense; O(1). Search order
+        is content-addressed (id tie-break), so the row shuffle can't change results.
+        Returns False when the id isn't indexed. Persistence is the caller's concern
+        (GraphStore.remove_node flush-deletes the row; there is no on_remove hook)."""
+        rows = self._row.get(kind)
+        if not rows or node_id not in rows:
+            return False
+        ids = self._ids[kind]
+        mat = self._mat[kind]
+        last = self._len[kind] - 1
+        row = rows.pop(node_id)
+        if row != last:
+            ids[row] = ids[last]
+            mat[row] = mat[last]
+            rows[ids[row]] = row
+        ids.pop()
+        self._len[kind] = last
+        return True
+
     def get(self, kind: str, node_id: str) -> np.ndarray | None:
         row = self._row.get(kind, {}).get(node_id)
         return None if row is None else self._mat[kind][row]

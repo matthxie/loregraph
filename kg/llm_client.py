@@ -10,7 +10,12 @@ package never imports openai/anthropic and never learns which provider is live.
 The provider is selected from the process env (``KG_LLM``), because the call sites are
 scattered across threads and modules that already read the env directly; persisting the
 choice into the env (``set_active_provider``) is how a UI-driven switch reaches all of
-them without threading a handle through every function.
+them without threading a handle through every function. When ``KG_LLM`` is unset/empty,
+``detect_provider()`` probes for the first live credential — subscription CLIs first
+(codex, then claude), API keys second (anthropic, then openai) — so a signed-in
+subscription is always preferred over metered billing without any configuration. The
+first detection is pinned back into ``KG_LLM`` so the CLI auth probes (subprocesses)
+run once per process, not once per LLM call.
 
 Providers:
   * ``openai``    — the real ``openai.OpenAI()`` client, billed against ``OPENAI_API_KEY``.
@@ -20,12 +25,18 @@ Providers:
     ``OPENAI_API_KEY`` / ``CODEX_API_KEY`` — a stray key must never silently flip a call
     onto metered API billing. The daemon stores no credential; ``codex login`` (interactive,
     owned by the desktop app) writes ~/.codex/auth.json and that is the only credential.
+  * ``claude``    — the user's Claude-subscription ``claude`` CLI (Claude Code), driven one
+    ``claude -p … --output-format json`` per call. Same billing guard, same rationale:
+    the API-key vars, the ``ANTHROPIC_AUTH_TOKEN`` bearer credential, and the Bedrock/
+    Vertex/Foundry reroute switches are stripped from the child env so the call can only
+    bill the claude.ai login (``claude auth login``'s credential), never a stray metered
+    credential or cloud endpoint.
   * ``anthropic`` — a small shim over the ``anthropic`` Messages API, when that SDK is
     installed; otherwise ``make_client`` raises ``ProviderUnavailable``.
   * ``mock``      — a deterministic, offline, network-free shim for tests and the dev loop.
   * ``none``      — no provider; ``make_client`` returns ``None`` and ``llm_available`` is False.
 
-The codex/anthropic/mock shims all duck-type the OpenAI SDK surface via
+The codex/claude/anthropic/mock shims all duck-type the OpenAI SDK surface via
 ``types.SimpleNamespace`` so the call sites cannot tell them apart from the real thing.
 """
 from __future__ import annotations
@@ -40,7 +51,7 @@ import uuid
 
 from .errors import ProviderError, ProviderUnavailable
 
-SUPPORTED_KINDS = ("mock", "none", "openai", "codex", "anthropic")
+SUPPORTED_KINDS = ("mock", "none", "openai", "codex", "anthropic", "claude")
 
 # Billing guard: either of these in codex's child env can route the call off the ChatGPT
 # subscription onto metered API billing.
@@ -49,15 +60,76 @@ _CODEX_STRIP_ENV = ("OPENAI_API_KEY", "CODEX_API_KEY")
 # target first, then brew). PATH lookup covers the dev shell.
 _CODEX_CANDIDATES = ("~/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex")
 
+# Billing guard for the claude CLI, same rationale as _CODEX_STRIP_ENV: any of these in
+# its env routes the call off the claude.ai subscription login — the API-key vars (and the
+# AUTH_TOKEN bearer credential) flip it onto metered API billing, and the USE_BEDROCK /
+# USE_VERTEX / USE_FOUNDRY switches reroute it to cloud-metered endpoints entirely.
+_CLAUDE_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+                     "CLAUDE_CODE_USE_FOUNDRY")
+_CLAUDE_CANDIDATES = ("~/.claude/local/claude", "~/.local/bin/claude",
+                      "/opt/homebrew/bin/claude", "/usr/local/bin/claude")
+
+# Per-provider default models (see default_model). The CLI kinds deliberately map to None:
+# the subscription CLIs pick their own default and a foreign model id would be rejected.
+_DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
+
 
 # --------------------------------------------------------------------------- #
 # Provider selection (env-backed, so scattered call sites all agree)
 # --------------------------------------------------------------------------- #
+def detect_provider() -> str:
+    """The first live provider, probed subscription-first: a logged-in ``codex`` CLI →
+    ``"codex"``; a logged-in ``claude`` CLI → ``"claude"``; ``ANTHROPIC_API_KEY`` set →
+    ``"anthropic"``; ``OPENAI_API_KEY`` set → ``"openai"``; else ``"none"``. Used by
+    ``current_provider()`` when ``KG_LLM`` is unset — an explicit ``KG_LLM`` always wins.
+    The CLI probes are free auth checks (no model call, no tokens)."""
+    if _codex_login_status()[0]:
+        return "codex"
+    if _claude_login_status()[0]:
+        return "claude"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    return "none"
+
+
+def default_model(kind: str | None = None) -> str | None:
+    """The model a call site should default to for a provider kind: openai →
+    ``gpt-4o-mini``; anthropic → ``claude-haiku-4-5-20251001``; codex/claude (and mock/none)
+    → None, meaning "don't pass a model — let the CLI use its own default". ``kind=None`` →
+    the active provider's kind."""
+    if kind is None:
+        kind = current_provider()["kind"]
+    return _DEFAULT_MODELS.get((kind or "").strip().lower())
+
+
+def resolve_model(configured: str | None, unchanged_default: str | None = None,
+                  provider: dict | None = None) -> str | None:
+    """The model a call site should actually request: the user's explicit config override
+    when they changed it (``configured`` differs from the Config field's dataclass default,
+    ``unchanged_default``), else the active provider's ``default_model``. This keeps a stale
+    per-provider default (e.g. a Config born ``gpt-4o-mini``) from being force-fed to a
+    provider that can't serve it."""
+    if configured and configured != unchanged_default:
+        return configured
+    provider = provider or current_provider()
+    return default_model(provider.get("kind"))
+
+
 def current_provider() -> dict:
     """The active provider read from the process env: ``{"kind", "api_key"}``. ``kind`` from
-    ``KG_LLM`` (default ``openai``); ``api_key`` from ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY``
-    per kind (None for kinds that don't take one)."""
-    kind = (os.environ.get("KG_LLM") or "openai").strip().lower()
+    ``KG_LLM`` when set, else auto-detected (``detect_provider``) ONCE and pinned back into
+    ``KG_LLM`` — the probe shells out to the codex/claude CLIs, and this is called on every
+    LLM call site, so an unpinned detection would spawn 1-2 auth subprocesses per call (and
+    a transient probe failure could flip the provider mid-run). ``set_active_provider``
+    overwrites the pin. ``api_key`` from ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY`` per kind
+    (None for kinds that don't take one)."""
+    kind = (os.environ.get("KG_LLM") or "").strip().lower()
+    if not kind:
+        kind = detect_provider()
+        os.environ["KG_LLM"] = kind  # pin: probe once per process, not once per LLM call
     if kind == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY")
     elif kind == "openai":
@@ -98,6 +170,8 @@ def make_client(provider: dict | None = None):
         return MockChatClient()
     if kind == "codex":
         return CodexClient()
+    if kind == "claude":
+        return ClaudeClient()
     if kind == "openai":
         try:
             import openai
@@ -114,8 +188,8 @@ def make_client(provider: dict | None = None):
 
 def llm_available(provider: dict | None = None) -> bool:
     """Whether the active provider can actually serve a call right now: mock → always; none →
-    never; openai/anthropic → the matching API key is present; codex → the CLI reports a
-    connected ChatGPT login (a free auth probe, no model call)."""
+    never; openai/anthropic → the matching API key is present; codex/claude → the CLI reports
+    a connected subscription login (a free auth probe, no model call)."""
     provider = provider or current_provider()
     kind = (provider.get("kind") or "").strip().lower()
     if kind == "mock":
@@ -128,12 +202,15 @@ def llm_available(provider: dict | None = None) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
     if kind == "codex":
         return _codex_login_status()[0]
+    if kind == "claude":
+        return _claude_login_status()[0]
     return False
 
 
 def provider_status(provider: dict | None = None) -> dict:
     """``{"kind", "connected", "detail"}`` for the active provider. codex probes
-    ``codex login status``; the key-based providers report whether their key is set."""
+    ``codex login status``, claude probes ``claude auth status``; the key-based providers
+    report whether their key is set."""
     provider = provider or current_provider()
     kind = (provider.get("kind") or "").strip().lower()
     if kind == "mock":
@@ -151,15 +228,20 @@ def provider_status(provider: dict | None = None) -> dict:
     if kind == "codex":
         ok, detail = _codex_login_status()
         return {"kind": kind, "connected": ok, "detail": detail}
+    if kind == "claude":
+        ok, detail = _claude_login_status()
+        return {"kind": kind, "connected": ok, "detail": detail}
     return {"kind": kind, "connected": False, "detail": f"unknown kind {kind!r}"}
 
 
 def provider_signout(kind: str) -> dict:
-    """Sign the provider out. codex → ``codex logout`` (clears ~/.codex/auth.json, best-effort);
-    every other kind is stateless here → ``{"ok": True}``."""
+    """Sign the provider out. codex → ``codex logout``, claude → ``claude auth logout``
+    (both best-effort); every other kind is stateless here → ``{"ok": True}``."""
     kind = (kind or "").strip().lower()
     if kind == "codex":
         return _codex_logout()
+    if kind == "claude":
+        return _claude_logout()
     return {"ok": True}
 
 
@@ -215,12 +297,12 @@ def _forced_tool_name(kw: dict) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# Message flattening / JSON salvage — shared by the text-only shims (codex)
+# Message flattening / JSON salvage — shared by the text-only shims (codex, claude)
 # --------------------------------------------------------------------------- #
 def _flatten_messages(messages: list) -> str:
     """Join an OpenAI ``messages`` array into one prompt string: system+user text in order,
-    with each ``image_url`` block replaced by a note (codex exec is text-only, an accepted v0
-    limitation)."""
+    with each ``image_url`` block replaced by a note (the CLI shims are text-only, an
+    accepted v0 limitation)."""
     parts: list[str] = []
     for m in messages or []:
         content = m.get("content") if isinstance(m, dict) else None
@@ -235,7 +317,7 @@ def _flatten_messages(messages: list) -> str:
                 if block.get("type") == "text" and block.get("text", "").strip():
                     parts.append(block["text"])
                 elif block.get("type") == "image_url":
-                    parts.append("[image omitted: codex exec is text-only]")
+                    parts.append("[image omitted: CLI provider is text-only]")
     return "\n\n".join(parts)
 
 
@@ -506,6 +588,190 @@ class CodexClient:
         raise ProviderError(
             f"codex exec exited {proc.returncode} with no result"
             + (f": {tail}" if tail else ""))
+
+
+# --------------------------------------------------------------------------- #
+# ClaudeClient — one guarded `claude -p` per call, billed to the Claude subscription
+# --------------------------------------------------------------------------- #
+def _claude_binary() -> str | None:
+    """Locate the claude CLI (Claude Code). ``KG_CLAUDE_BIN`` set ⇒ use it verbatim (or None
+    if it isn't a runnable file — never fall through to the probe). Else PATH ``claude``, else
+    the usual install spots (GUI apps don't inherit the shell PATH)."""
+    override = os.environ.get("KG_CLAUDE_BIN")
+    if override is not None:
+        return override if (override and os.path.isfile(override)
+                            and os.access(override, os.X_OK)) else None
+    hit = shutil.which("claude")
+    if hit:
+        return hit
+    for c in _CLAUDE_CANDIDATES:
+        p = os.path.expanduser(c)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _claude_child_env() -> dict:
+    """claude's child env with the API-key vars stripped, forcing subscription auth (the
+    claude.ai login from ``claude auth login`` is then the only credential in play)."""
+    env = dict(os.environ)
+    for k in _CLAUDE_STRIP_ENV:
+        env.pop(k, None)
+    return env
+
+
+def _claude_login_status() -> tuple[bool, str]:
+    """Free auth check (``claude auth status``, JSON by default): no model call, no tokens
+    burned. With the API keys stripped, ``loggedIn: true`` can only mean the claude.ai
+    subscription login. Returns ``(connected, detail)``."""
+    bin_ = _claude_binary()
+    if not bin_:
+        return False, "claude CLI not installed"
+    try:
+        p = subprocess.run([bin_, "auth", "status", "--json"], capture_output=True,
+                           text=True, env=_claude_child_env(), timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"claude auth status failed: {e}"
+    text = (p.stdout or "").strip()
+    try:
+        status = json.loads(text)
+    except json.JSONDecodeError:
+        status = {}
+    ok = p.returncode == 0 and isinstance(status, dict) and bool(status.get("loggedIn"))
+    if ok:
+        detail = " ".join(filter(None, ["logged in", status.get("email"),
+                                        status.get("subscriptionType")]))
+    else:
+        detail = text or (p.stderr or "").strip() or "not logged in"
+    return ok, detail
+
+
+def _claude_logout() -> dict:
+    """``claude auth logout`` — clears the stored claude.ai credential, best-effort (exit
+    status isn't surfaced). ``{"ok": False, "detail": ...}`` only when the binary is absent."""
+    bin_ = _claude_binary()
+    if not bin_:
+        return {"ok": False, "detail": "claude CLI not installed"}
+    try:
+        subprocess.run([bin_, "auth", "logout"], capture_output=True, text=True,
+                       env=_claude_child_env(), timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {"ok": True}
+
+
+class ClaudeClient:
+    """OpenAI-SDK-shaped client backed by ``claude -p`` (Claude Code, non-interactive) — one
+    guarded child per call, billed to the user's Claude subscription (the API-key vars are
+    stripped from the child env). Text only: images in the messages become placeholders. A
+    forced tool becomes an instruction to reply with ONLY the JSON matching the tool's
+    schema, and the first balanced JSON object in the reply is re-wrapped as a tool call so
+    the call sites' tool-call path runs unchanged (the CodexClient recipe verbatim).
+
+    Flags (verified against ``claude --help``): ``-p`` prints one response and exits, reading
+    the prompt from stdin; ``--output-format json`` wraps the run in a machine-readable
+    envelope whose ``result`` field is the final assistant text; ``--tools ""`` disables all
+    agent tools; ``--no-session-persistence`` keeps the session off disk; ``--safe-mode``
+    (the ``--ignore-user-config`` analog) skips the user's CLAUDE.md/plugins/hooks/MCP
+    servers while leaving auth untouched."""
+
+    EXEC_TIMEOUT = 300
+
+    def __init__(self):
+        self.chat = self
+        self.completions = self
+
+    def create(self, **kw):
+        prompt = _flatten_messages(kw.get("messages") or [])
+        name = _forced_tool_name(kw)
+        schema = None
+        if kw.get("tools"):
+            try:
+                schema = kw["tools"][0]["function"]["parameters"]
+            except (KeyError, TypeError, IndexError):
+                schema = None
+        elif kw.get("response_format"):
+            schema = kw.get("response_format")
+        if name or schema is not None:
+            instruction = ("Respond with ONLY a single JSON object matching this schema, "
+                           "no prose, no code fences:\n"
+                           + json.dumps(schema if schema is not None else {}))
+            prompt = f"{prompt}\n\n{instruction}" if prompt else instruction
+        text = self._exec(prompt, model=kw.get("model"))
+        if name:
+            span = _first_json_object(text)
+            arguments = span if span is not None else "{}"
+            return _sdk_response(
+                content=None,
+                tool_calls=[_tool_call(name, arguments)],
+                finish_reason="tool_calls")
+        return _sdk_response(content=text, tool_calls=None, finish_reason="stop")
+
+    def _exec(self, prompt: str, model: str | None = None) -> str:
+        """Run one ``claude -p``, reading the final assistant message out of the JSON
+        envelope. Raises ``ProviderUnavailable`` when the CLI is missing / not logged in and
+        ``ProviderError`` on a non-zero exit, an error result, or empty output."""
+        bin_ = _claude_binary()
+        if not bin_:
+            raise ProviderUnavailable(
+                "the Claude CLI isn't installed — connect Claude in Settings first")
+        call_dir = os.path.join(tempfile.gettempdir(), "kg-claude-cwd", uuid.uuid4().hex)
+        os.makedirs(call_dir, exist_ok=True)
+        cmd = [bin_, "-p", "--output-format", "json", "--tools", "",
+               "--no-session-persistence", "--safe-mode"]
+        # Only forward a model the claude CLI can serve: full ids and the CLI's own aliases
+        # (sonnet/opus/haiku). A foreign id (a Config still holding an openai default) would
+        # be rejected, so anything else falls to the CLI's default.
+        if model and (model in ("sonnet", "opus", "haiku") or model.startswith("claude")):
+            cmd += ["--model", model]
+        try:
+            proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                  env=_claude_child_env(), cwd=call_dir,
+                                  timeout=self.EXEC_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise ProviderError(f"claude -p timed out after {self.EXEC_TIMEOUT}s")
+        except OSError as e:
+            raise ProviderUnavailable(f"could not launch claude: {e}")
+        finally:
+            shutil.rmtree(call_dir, ignore_errors=True)
+        text = self._result_text((proc.stdout or "").strip())
+        if text:
+            return text
+        tail = (proc.stderr or proc.stdout or "").strip()[-300:]
+        low = tail.lower()
+        if "not logged in" in low or "auth login" in low or "/login" in low:
+            raise ProviderUnavailable(
+                "Claude isn't connected — run `claude auth login` (or connect in Settings), "
+                "then retry")
+        raise ProviderError(
+            f"claude -p exited {proc.returncode} with no result"
+            + (f": {tail}" if tail else ""))
+
+    @staticmethod
+    def _result_text(stdout: str) -> str:
+        """The final assistant text from ``--output-format json``: either one result object
+        or (newer CLIs) an array of run events whose last ``type == "result"`` entry carries
+        it. Unparseable output degrades to the raw stdout so a plain-text reply still lands."""
+        if not stdout:
+            return ""
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError:
+            return stdout
+        result = None
+        if isinstance(payload, dict) and payload.get("type") == "result":
+            result = payload
+        elif isinstance(payload, list):
+            for entry in reversed(payload):
+                if isinstance(entry, dict) and entry.get("type") == "result":
+                    result = entry
+                    break
+        if result is None:
+            return stdout
+        if result.get("is_error"):
+            raise ProviderError(
+                f"claude -p returned an error result: {str(result.get('result'))[:300]}")
+        return (result.get("result") or "").strip()
 
 
 # --------------------------------------------------------------------------- #

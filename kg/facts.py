@@ -20,8 +20,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import EdgeType
+from .models import Belief, EdgeType
 from .store import GraphStore
+
+
+def _believed(data: dict) -> bool:
+    """A RETRACTED fact was never actually true — it is excluded from EVERY view this
+    module serves, including the closed-window history (unlike an ended fact, whose
+    closed window is genuine trajectory). Mirrors `fact_active`'s belief check without
+    its open/as-of window logic, since history() deliberately serves closed windows."""
+    return data.get("belief", Belief.ASSERTED.value) == Belief.ASSERTED.value
 
 
 @dataclass
@@ -55,14 +63,16 @@ class FactIndex:
         self.store = store
 
     def fact_episodes(self, entity_ids: list[str]) -> set[str]:
-        """Episodes that asserted any fact (open OR closed) about these entities."""
+        """Episodes that asserted any believed fact (open OR closed) about these entities.
+        A retracted fact earns its asserting episode no guaranteed pool slot — the claim
+        was never true."""
         eps: set[str] = set()
         for eid in entity_ids:
             for direction in ("out", "in"):
                 for _nbr, data in self.store.neighbors(
                         eid, etypes={EdgeType.RELATED_TO}, direction=direction):
                     ep = data.get("episode_id")
-                    if ep:
+                    if ep and _believed(data):
                         eps.add(ep)
         return eps
 
@@ -75,6 +85,8 @@ class FactIndex:
             for direction in ("out", "in"):
                 for nbr, data in self.store.neighbors(
                         eid, etypes={EdgeType.RELATED_TO}, direction=direction):
+                    if not _believed(data):
+                        continue
                     src_id, dst_id = (eid, nbr) if direction == "out" else (nbr, eid)
                     key = (src_id, data.get("rel_tag"), dst_id,
                            data.get("valid_at", ""), data.get("invalid_at", ""))

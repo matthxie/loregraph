@@ -8,8 +8,13 @@ Engine (mock/none) leaks its ``KG_LLM`` into every test that runs after it — t
 "no provider → must raise" contract tests green-then-red purely on collection order.
 
 This autouse fixture snapshots and restores the provider vars around each test, so the
-default (``KG_LLM`` unset → openai, keyed off ``OPENAI_API_KEY``) is what every test sees
-unless it sets its own.
+default is what every test sees unless it sets its own. It also pins the CLI binary
+overrides (``KG_CODEX_BIN`` / ``KG_CLAUDE_BIN``) to "" — "override set but not runnable"
+→ the binary probe returns None — so ``detect_provider()`` (KG_LLM unset → probe codex,
+claude, then API keys; fork-parity spec A1) can never find a REAL logged-in CLI on the
+dev machine and flip the suite onto live subscription calls. With the CLIs masked and no
+key set, detection lands on "none" and the suite stays offline/deterministic; a test
+exercising the probes overrides the vars (or monkeypatches the status functions) itself.
 """
 from __future__ import annotations
 
@@ -17,12 +22,15 @@ import os
 
 import pytest
 
-_PROVIDER_ENV = ("KG_LLM", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY")
+_PROVIDER_ENV = ("KG_LLM", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY",
+                 "CLAUDE_API_KEY", "KG_CODEX_BIN", "KG_CLAUDE_BIN")
 
 
 @pytest.fixture(autouse=True)
 def _isolate_provider_env():
     saved = {k: os.environ.get(k) for k in _PROVIDER_ENV}
+    os.environ["KG_CODEX_BIN"] = ""    # mask the real CLIs (see module docstring)
+    os.environ["KG_CLAUDE_BIN"] = ""
     try:
         yield
     finally:

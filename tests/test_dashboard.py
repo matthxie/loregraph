@@ -202,7 +202,11 @@ def test_meter_reads_usage_and_no_usage_is_zero():
 # --------------------------------------------------------------------------- #
 # live-token capture path (the whole reason the dashboard can show real cost)
 # --------------------------------------------------------------------------- #
-def test_openai_agent_populates_usage():
+def test_openai_agent_populates_usage(monkeypatch):
+    # fork-parity spec A3: an unchanged rag_model now resolves to the active provider's
+    # default model, so pin the provider (openai → "gpt-4o-mini") to keep the metered
+    # model — and therefore the priced cost — deterministic regardless of the shell env.
+    monkeypatch.setenv("KG_LLM", "openai")
     g = _scripted_graph()
     turn = _turn(_tool_use("t1", "submit_answer",
                            {"answer": "Turing worked at Bletchley Park.",
@@ -212,8 +216,8 @@ def test_openai_agent_populates_usage():
     assert ans.backend == "openai"
     assert ans.usage["llm_calls"] == 1
     assert ans.usage["input_tokens"] == 1500 and ans.usage["output_tokens"] == 300
-    # rag_model defaults to gpt-5-mini: $0.25/$2.00 per MTok in/out
-    assert abs(ans.usage["cost_usd"] - (1500 * 0.25e-6 + 300 * 2.00e-6)) < 1e-9
+    # openai's per-provider default gpt-4o-mini: $0.15/$0.60 per MTok in/out (spec A3)
+    assert abs(ans.usage["cost_usd"] - (1500 * 0.15e-6 + 300 * 0.60e-6)) < 1e-9
 
 
 def test_fake_client_with_zero_usage_reports_zero_cost():
@@ -371,6 +375,12 @@ def _patch_offline_extraction(monkeypatch):
 
 def test_run_testrun_writes_artifact(monkeypatch):
     _patch_offline_extraction(monkeypatch)
+    # Pin the provider: backends["agent"] reads current_provider()/llm_available() from the
+    # env (fork-parity spec A1 auto-detects when KG_LLM is unset), so without a pin this
+    # test's outcome depended on whatever credentials the dev shell happened to hold.
+    # The dummy key is never used — the answerer runs over the injected _FakeAnthropic.
+    monkeypatch.setenv("KG_LLM", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-offline")
     tmp = tempfile.mkdtemp()
     cfg = _cfg()
     run = run_testrun(store_path=os.path.join(tmp, "t.db"), tier="sample",
