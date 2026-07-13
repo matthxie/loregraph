@@ -58,8 +58,8 @@ What it costs to run, measured on the same benchmark (~4,700 chat sessions inges
 | **Ingestion** (one-time, gpt-4o-mini extraction) | $6.35 (~$1.34 / 1k sessions) | same |
 | **Cost per query** | ~$0.0013 | ~$0.0048 |
 | **Tokens per query** (input / output) | ~8.3k / ~170 | ~8.4k / ~1.4k |
-| **Latency per query** (mean / p95) | ~5 s / ~8 s | ~16 s / ~31 s |
-| **Latency excluding the LLM API call** | ~3 s | ~3 s |
+| **Latency per query** (mean / p95) | ~4 s / ~6 s | ~15 s / ~29 s |
+| **Latency excluding the LLM API call** | ~700 ms | ~700 ms |
 
 Each query makes exactly one LLM call; the input tokens are the assembled context
 (top episodes + currently-valid facts) and gpt-5-mini's larger output is mostly
