@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 from collections import Counter
 
@@ -26,6 +25,7 @@ import numpy as np
 from .backoff import call_with_backoff
 from .config import Config
 from .embedders import Embedder
+from .llm_client import llm_available, make_client
 from .metering import UsageMeter
 from .profiler import span as prof_span
 from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
@@ -323,17 +323,16 @@ class Canonicalizer:
 
     # ------------------------------------------------------------ L3 tie-breaker
     def _l3(self):
-        """Lazy OpenAI client for the L3 adjudicator, or None if disabled / no key
-        (offline parity: with no key the whole L3 path is skipped and resolve_* keep
+        """Lazy LLM client for the L3 adjudicator, or None if disabled / no provider
+        (offline parity: with no provider the whole L3 path is skipped and resolve_* keep
         their deterministic under-merge default)."""
         if not self.config.l3_enabled:
             return None
         if self._l3_client is _L3_UNSET:
             self._l3_client = None
-            if os.environ.get("OPENAI_API_KEY"):
+            if llm_available():
                 try:
-                    import openai
-                    self._l3_client = openai.OpenAI()
+                    self._l3_client = make_client()
                 except Exception:  # noqa: BLE001 — missing dep / bad env → stay disabled
                     self._l3_client = None
         return self._l3_client

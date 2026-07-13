@@ -94,9 +94,9 @@ def test_provider_none_answers_raise_but_ingest_works(monkeypatch):
 
 def test_unsupported_provider_kinds_raise():
     with pytest.raises(ProviderUnavailable):
-        _open(kind="anthropic")
+        _open(kind="gemini")
     with pytest.raises(ProviderUnavailable):
-        _open(kind="codex")
+        _open(kind="llama")
 
 
 def test_invalid_input_and_stubs():
