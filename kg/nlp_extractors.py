@@ -26,6 +26,7 @@ from typing import Callable
 
 from .config import Config
 from .extractors import ExtractedEntity, ExtractedRelation, Extraction
+from .llm_client import make_client
 from .metering import UsageMeter
 from .models import EntityType, Provenance
 
@@ -393,9 +394,8 @@ _REL_SYS = (
 
 class _LlmRelations:
     def __init__(self, config: Config):
-        import openai
         self.config = config
-        self.client = openai.OpenAI()
+        self.client = make_client()
         self.meter = UsageMeter()
 
     def __call__(self, text: str, entities: list[ExtractedEntity]) -> list[ExtractedRelation]:

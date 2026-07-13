@@ -66,6 +66,24 @@ class EntityType(str, Enum):
     OTHER = "other"
 
 
+class EntityCategory(str, Enum):
+    """Broad visual identity used by graph clients, independent of semantic entity type."""
+    PERSON = "person"
+    PLACE = "place"
+    THING = "thing"
+
+
+def entity_category_for_type(t: "EntityType | None") -> "EntityCategory":
+    """Collapse the fine-grained EntityType onto the three glyph categories a graph
+    renderer draws — PERSON/PLACE keep their identity; org/concept/work/event/date/
+    quantity/other all read as a generic THING."""
+    if t == EntityType.PERSON:
+        return EntityCategory.PERSON
+    if t == EntityType.PLACE:
+        return EntityCategory.PLACE
+    return EntityCategory.THING
+
+
 class Belief(str, Enum):
     """Transaction-time belief state of a fact edge (docs/TEMPORAL.md §3).
 
@@ -128,6 +146,7 @@ class Node:
 
     # ---- Entity / Tag / Relation (canonical anchors) ----
     entity_type: EntityType | None = None
+    entity_category: str | None = None     # broad glyph category for graph clients (PERSON/PLACE/THING)
     aliases: list[str] = field(default_factory=list)
     tag_description: str | None = None     # TagNode (L3)
     doc_frequency: int = 0                 # # episodes referencing it (IDF specificity)

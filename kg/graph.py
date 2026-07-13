@@ -86,12 +86,8 @@ class KnowledgeGraph:
         outside the store and must be purged separately."""
         from .forget import Eraser
         if client is None and escalate:
-            import os
-            try:
-                import openai
-                client = openai.OpenAI() if os.environ.get("OPENAI_API_KEY") else None
-            except ImportError:
-                client = None
+            from .llm_client import llm_available, make_client
+            client = make_client() if llm_available() else None
         eraser = Eraser(self.store, self.embedder, self.canon, self.config,
                         extractor=self.extractor, client=client)
         return eraser.erase(secret, dry_run=dry_run, escalate=escalate)
@@ -163,10 +159,10 @@ class KnowledgeGraph:
         return "\n".join(lines)
 
     def stats(self) -> dict:
-        import os
+        from .llm_client import current_provider, llm_available
         s = self.store.stats()
-        ans = ("openai" if os.environ.get("OPENAI_API_KEY")
-               else "unavailable (no OPENAI_API_KEY)")
+        ans = (current_provider()["kind"] if llm_available()
+               else "unavailable (no LLM provider)")
         s["backends"] = {"extractor": self.extractor.name, "embedder": self.embedder.name,
                          "answerer": ans}
         return s

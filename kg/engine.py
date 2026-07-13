@@ -12,10 +12,10 @@ v0 scope — CONNECTABLE, not complete. Real graph behind ingest/retrieve/answer
 episode(s)/stats/delete_episode; contract methods the engine can't honestly serve yet
 raise EngineError("not implemented"). Known deltas from the contract, worked out later:
 
-  * Providers: "mock" and "none" are contract-complete; "openai" is supported (the live
-    path this package already implements) via an injected api_key — bridged to the
-    internals through OPENAI_API_KEY for now, since they still read the env directly.
-    "anthropic" / "codex" raise ProviderUnavailable until multi-provider lands.
+  * Providers: "mock" and "none" are contract-complete; "openai", "codex" and
+    "anthropic" are live via kg.llm_client — set_active_provider() persists the chosen
+    kind (and any injected api_key) into the process env so every scattered call site
+    picks it up, and make_client() builds the concrete SDK-shaped client on demand.
   * Durability: ingest() saves the store before returning, but does not fsync yet.
     Idempotency IS honored (content-hash dedup is native to the ingest pipeline).
   * tasks in IngestResult is always [] — task/intent extraction is not in the schema yet.
@@ -36,11 +36,11 @@ from .corpus import CorpusItem
 from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
                      ProviderUnavailable, StoreError)
 from .extractors import Extraction, ExtractedEntity, UsageMeter
-from .models import NodeType
+from .llm_client import SUPPORTED_KINDS
+from .models import EdgeType, NodeType, entity_category_for_type
 
-_SUPPORTED_KINDS = ("mock", "none", "openai")
 _STUB = ("search", "facts", "profile", "rebuild", "reingest", "maintain",
-         "ensure_model", "provider_signout")
+         "ensure_model")
 
 
 # --------------------------------------------------------------------------- #
@@ -135,12 +135,13 @@ class Engine:
         self._closed = False
         self._provider = dict(provider or {})
         kind = self._provider.get("kind")
-        if kind not in _SUPPORTED_KINDS:
+        if kind not in SUPPORTED_KINDS:
             raise ProviderUnavailable(
-                f"provider kind {kind!r} not supported yet (supported: {_SUPPORTED_KINDS})")
-        if kind == "openai" and self._provider.get("api_key"):
-            # Bridge: internals still read OPENAI_API_KEY from the env. Injected key wins.
-            os.environ["OPENAI_API_KEY"] = self._provider["api_key"]
+                f"provider kind {kind!r} not supported yet (supported: {SUPPORTED_KINDS})")
+        # One env-backed switch reaches every scattered LLM call site (extraction, rag),
+        # replacing the old hand-rolled OPENAI_API_KEY bridge; an injected api_key rides along.
+        from .llm_client import set_active_provider
+        set_active_provider(self._provider)
 
         os.makedirs(os.path.join(self._data_dir, "store"), exist_ok=True)
         cfg = Config.default()
@@ -230,6 +231,13 @@ class Engine:
         kind = self._provider.get("kind")
         if kind == "none":
             raise ProviderUnavailable("no LLM provider configured")
+        if kind != "mock":
+            # The env-selected provider must be able to serve a call now (key present /
+            # codex logged in); the migrated rag path builds the client via make_client().
+            from .llm_client import llm_available
+            if not llm_available(self._provider):
+                raise ProviderUnavailable(
+                    f"provider {kind!r} is not ready — connect it before asking")
         client = _MockAnswerClient() if kind == "mock" else None
         try:
             ans = self._g.ask(question, k=k, as_of=as_of, client=client)
@@ -247,8 +255,55 @@ class Engine:
         n = self._g.store.get_node(episode_id)
         if n is None or n.ntype is not NodeType.EPISODE or not n.valid:
             return None                        # tombstoned episodes are gone from this view
+        entities, categories = self._episode_entities(episode_id)
         return {"id": n.id, "text": n.raw_text or "", "created_at": n.created_at,
-                "ingested_at": n.ingested_at, "source": n.name}
+                "ingested_at": n.ingested_at, "source": n.name,
+                "entities": entities, "entity_categories": categories}
+
+    def _episode_entities(self, episode_id: str) -> tuple[list[str], dict[str, str]]:
+        """The entities this episode mentions, walking the star episode ← MENTIONED_IN ←
+        mention → RESOLVES_TO → entity. Categories derive on read from the stored
+        entity_category, falling back to entity_category_for_type(entity_type) (ingest does
+        not persist the glyph category yet — see BUILD_REPORT followups)."""
+        store = self._g.store
+        names: list[str] = []
+        categories: dict[str, str] = {}
+        for mid, _d in store.neighbors(episode_id, etypes={EdgeType.MENTIONED_IN},
+                                       direction="in"):
+            for eid, _d2 in store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
+                                            direction="out"):
+                node = store.get_node(eid)
+                if node and node.name not in categories:
+                    names.append(node.name)
+                    categories[node.name] = (
+                        node.entity_category
+                        or entity_category_for_type(node.entity_type).value)
+        return names, categories
+
+    def graph_preview(self, episode_id: str) -> dict:
+        """A minimal graph neighbourhood for one episode, shaped for the graph renderer:
+        {nodes:[{id,name,category}], edges:[{src,dst,label}]}. v0 returns the episode's
+        direct entities as nodes with a MENTIONS edge from the episode to each; a deeper
+        two-hop expansion is deferred (see BUILD_REPORT followups)."""
+        self._check()
+        store = self._g.store
+        n = store.get_node(episode_id)
+        if n is None or n.ntype is not NodeType.EPISODE or not n.valid:
+            raise NotFound(f"unknown episode: {episode_id}")
+        nodes = [{"id": episode_id, "name": n.name, "category": "episode"}]
+        edges = []
+        for mid, _d in store.neighbors(episode_id, etypes={EdgeType.MENTIONED_IN},
+                                       direction="in"):
+            for eid, _d2 in store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
+                                            direction="out"):
+                node = store.get_node(eid)
+                if node is None or any(x["id"] == eid for x in nodes):
+                    continue
+                category = (node.entity_category
+                            or entity_category_for_type(node.entity_type).value)
+                nodes.append({"id": eid, "name": node.name, "category": category})
+                edges.append({"src": episode_id, "dst": eid, "label": "MENTIONS"})
+        return {"nodes": nodes, "edges": edges}
 
     def episodes_list(self, offset: int = 0, limit: int = 100) -> dict:
         self._check()
@@ -270,21 +325,28 @@ class Engine:
         bridge depend on it."""
         self._check()
         kind = (provider or {}).get("kind")
-        if kind not in _SUPPORTED_KINDS:
+        if kind not in SUPPORTED_KINDS:
             raise ProviderUnavailable(
-                f"provider kind {kind!r} not supported yet (supported: {_SUPPORTED_KINDS})")
-        if kind == "openai" and provider.get("api_key"):
-            os.environ["OPENAI_API_KEY"] = provider["api_key"]
+                f"provider kind {kind!r} not supported yet (supported: {SUPPORTED_KINDS})")
+        from .llm_client import set_active_provider
         self._provider = dict(provider)
+        set_active_provider(self._provider)
         self._log("info", f"provider set: {kind}")
 
     def provider_status(self) -> dict:
         self._check()
-        kind = self._provider.get("kind")
-        connected = kind == "mock" or (kind == "openai"
-                                       and bool(os.environ.get("OPENAI_API_KEY")))
-        return {"kind": kind, "connected": connected,
-                "detail": "" if connected else "no credentials"}
+        from .llm_client import provider_status as _status
+        return _status(self._provider)
+
+    def provider_signout(self) -> dict:
+        self._check()
+        from .llm_client import provider_signout as _signout
+        return _signout(self._provider.get("kind"))
+
+    def provider_usage(self) -> dict:
+        self._check()
+        from .llm_client import provider_usage as _usage
+        return _usage(self._provider.get("kind"))
 
 
 def _not_implemented(name: str):

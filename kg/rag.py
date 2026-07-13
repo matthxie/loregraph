@@ -18,7 +18,6 @@ window contained T, so "where did Becky live in 2022?" reads the world as it was
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
 
@@ -27,6 +26,7 @@ from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex, FactLine
+from .llm_client import llm_available, make_client
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .profiler import span as prof_span
@@ -972,18 +972,18 @@ class RagAnswerer:
         self._backend = self._pick_backend(client)
 
     def _pick_backend(self, client):
-        """Live-only: an OpenAIAnswerer over an injected client, else a real OpenAI client
-        from the env key. There is no offline backend — without a key (and no injected
-        client) we raise, rather than silently degrade to a fake answer."""
+        """Live-only: an OpenAIAnswerer over an injected client, else the active provider's
+        client from the spine (make_client). There is no offline backend — without a provider
+        (and no injected client) we raise, rather than silently degrade to a fake answer."""
         if client is not None:
             return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
-        if os.environ.get("OPENAI_API_KEY"):
-            import openai
-            return OpenAIAnswerer(self.store, self.config, self.builder,
-                                  client=openai.OpenAI())
+        if llm_available():
+            client = make_client()
+            if client is not None:
+                return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
         raise RuntimeError(
-            "No OPENAI_API_KEY found. The query/answer path is live-only. "
-            "Set the key (kg auto-reads a project-root .env), or "
+            "No LLM provider available (set KG_LLM / OPENAI_API_KEY, or run codex login). "
+            "The query/answer path is live-only. kg auto-reads a project-root .env, or "
             "inject a client: get_answerer(..., client=fake).")
 
     def run(self, query: str, k: int | None = None,

@@ -20,7 +20,6 @@ representative of the live graph. Extraction is now live-only.
 from __future__ import annotations
 
 import base64
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -28,6 +27,7 @@ from typing import Protocol
 from .backoff import call_with_backoff
 from .config import Config
 from .cues import cue_kinds, has_cue
+from .llm_client import llm_available, make_client
 from .metering import UsageMeter
 from .models import EntityType, Provenance
 from .profiler import span as prof_span
@@ -377,9 +377,8 @@ class OpenAIExtractor:
     )
 
     def __init__(self, config: Config):
-        import openai
         self.config = config
-        self.client = openai.OpenAI()  # reads OPENAI_API_KEY
+        self.client = make_client()  # active provider (KG_LLM / OPENAI_API_KEY / codex)
         self.meter = UsageMeter()
 
     @property
@@ -519,7 +518,7 @@ class CueGatedExtractor:
     temporal relation fields (status=ended, valid_from/to) survive; the local entities/tags
     union in for recall. The exposed `meter` is the LLM's, so the testrun's per-document cost
     drain captures exactly the escalation spend (the local floor is free). With no
-    OPENAI_API_KEY, escalation is disabled and extraction runs local-only."""
+    LLM provider available, escalation is disabled and extraction runs local-only."""
     name = "cue_gated"
 
     def __init__(self, config: Config):
@@ -528,7 +527,7 @@ class CueGatedExtractor:
         self.local = build_nlp_extractor(
             getattr(config, "local_backend", "gliner_yake_cooccur"), config)
         self.escalate = (bool(getattr(config, "cue_escalate", True))
-                         and bool(os.environ.get("OPENAI_API_KEY")))
+                         and llm_available())
         self._llm: OpenAIExtractor | None = None
         self._fallback_meter = UsageMeter()
         self.n_seen = 0
@@ -573,8 +572,8 @@ class CueGatedExtractor:
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
     """Default 'cue_gated' = a local NLP floor + an LLM call only on cue-bearing entries
-    (escalation needs OPENAI_API_KEY; without it, extraction runs local-only). 'llm'/
-    'auto' = the full `llm_model` on every entry (needs the key). Any other value selects a
+    (escalation needs an LLM provider; without it, extraction runs local-only). 'llm'/
+    'auto' = the full `llm_model` on every entry (needs a provider). Any other value selects a
     pure LLM-free / hybrid NLP backend (kg/nlp_extractors.py). The deterministic
     ScriptedExtractor is constructed directly (demo + tests), never here."""
     backend = getattr(config, "extractor_backend", "cue_gated")
@@ -585,9 +584,10 @@ def get_extractor(config: Config) -> Extractor:
     if backend not in ("llm", "auto"):
         from .nlp_extractors import build_nlp_extractor
         return build_nlp_extractor(backend, config)
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not llm_available():
         raise RuntimeError(
-            "No OPENAI_API_KEY found. The 'llm' extractor backend is live-only. Use the default "
-            "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
-            "ScriptedExtractor directly for deterministic tests/demos.")
+            "No LLM provider available (set KG_LLM / OPENAI_API_KEY, or run codex login). The "
+            "'llm' extractor backend is live-only. Use the default 'cue_gated' backend (a local "
+            "NLP floor runs keyless), or construct a ScriptedExtractor directly for "
+            "deterministic tests/demos.")
     return OpenAIExtractor(config)

@@ -7,6 +7,7 @@
     query          retrieve for a question (auto-routes local↔global; --as-of for time travel)
     ask            answer a question: PPR retrieves a context, ONE LLM call answers (§5)
     demo           ingest the synthetic Becky/Alex stream and show temporal evolution
+    daemon         run the persistent JSON-RPC-over-stdio daemon (desktop app backend)
     stats          print node/edge counts
     inspect        dump one node + its neighbours (fact windows for RELATED_TO)
     eval           recall@k / MRR ablation across retrieval modes
@@ -270,6 +271,17 @@ def cmd_demo(args):
     ask("Where does Becky live and who does she work with?", as_of="2022")
 
 
+def cmd_daemon(args):
+    """Exec the persistent daemon (JSON-RPC over stdio, the desktop app's backend). Thin
+    passthrough — kg.daemon owns the protocol and lifecycle; the CLI only forwards --data
+    (+ --log-level) and returns the daemon's exit code as this process's."""
+    from . import daemon
+    argv = ["--data", args.data]
+    if getattr(args, "log_level", None):
+        argv += ["--log-level", args.log_level]
+    raise SystemExit(daemon.main(argv))
+
+
 def cmd_stats(args):
     g = _open(args)
     print(json.dumps(g.stats(), indent=2))
@@ -379,6 +391,11 @@ def cmd_eval(args):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m kg")
     p.add_argument("--store", default=DEFAULT_STORE, help="path to the SQLite graph store")
+    p.add_argument("--provider", default=None,
+                   choices=["mock", "none", "openai", "codex", "anthropic"],
+                   help="LLM provider for this run; routes every LLM call site through it "
+                        "(e.g. --provider codex → ChatGPT-subscription codex shim). Default: "
+                        "leave the env as-is (honours KG_LLM).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pi = sub.add_parser("ingest",
@@ -463,6 +480,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use the first-person personal-web stream (self anchor) instead "
                           "of the Becky/Alex stream")
     pde.set_defaults(func=cmd_demo)
+
+    pdm = sub.add_parser("daemon", help="run the persistent JSON-RPC-over-stdio daemon "
+                                        "(desktop app backend); this process becomes it")
+    pdm.add_argument("--data", required=True,
+                     help="daemon data dir (graph store, spool, receipts); its parent must exist")
+    pdm.add_argument("--log-level", default="info", dest="log_level",
+                     choices=["debug", "info", "warn", "error"])
+    pdm.set_defaults(func=cmd_daemon)
 
     ps = sub.add_parser("stats", help="node/edge counts")
     ps.set_defaults(func=cmd_stats)
@@ -562,6 +587,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if getattr(args, "provider", None):
+        # persist into the env so every scattered LLM call site (extraction, answerer,
+        # daemon) agrees on the provider; absent --provider we leave KG_LLM untouched.
+        from .llm_client import set_active_provider
+        set_active_provider({"kind": args.provider})
     args.func(args)
 
 
