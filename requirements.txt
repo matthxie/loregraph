@@ -1,6 +1,15 @@
-# Core graph + retrieval
+# Full research/dev environment (everything: core runtime + eval/corpus/extractor stack).
+#
+# This file is NOT read by packaging anymore. `pip install you-kg` (or `pip install -e .`)
+# installs only the lean core runtime declared in pyproject.toml [project.dependencies];
+# the research stack is the `research` extra (`pip install -e ".[research]"`).
+# Use this file when you want the whole research/dev environment in one shot:
+#     pip install -r requirements.txt
+
+# Core graph + retrieval (mirrors pyproject [project.dependencies])
 networkx>=3.6          # graph store, PageRank, BFS, communities
 numpy>=2.0            # brute-force cosine vector index
+scipy>=1.13           # cached sparse PPR operator (kg/retrieval.py)
 rank-bm25>=0.2.2      # BM25 lexical seed signal
 scikit-learn>=1.5     # cosine helpers / label-propagation fallbacks
 
@@ -8,9 +17,11 @@ scikit-learn>=1.5     # cosine helpers / label-propagation fallbacks
 openai>=1.0           # GPT-4o mini structured-output extraction + vision
 python-dotenv>=1.0    # load OPENAI_API_KEY (and friends) from a .env file
 
-# Local embeddings (optional at runtime — falls back to a hashing embedder)
+# Local embeddings (required at runtime — the hashing fallback was removed)
 sentence-transformers>=5.0  # BAAI/bge-small-en-v1.5
 torch>=2.6
+
+# --- Research/eval-only from here down (pyproject extra: research) ---
 
 # Corpus building (already run; see scripts/build_dataset.py)
 datasets>=2.18
