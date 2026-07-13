@@ -37,7 +37,8 @@ from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
                      ProviderUnavailable, StoreError)
 from .extractors import Extraction, ExtractedEntity, UsageMeter
 from .llm_client import SUPPORTED_KINDS
-from .models import EdgeType, NodeType, entity_category_for_type
+from .models import (Belief, EdgeType, EntityType, NodeType,
+                     entity_category_for_type)
 
 _STUB = ("search", "facts", "profile", "rebuild", "reingest", "maintain",
          "ensure_model")
@@ -280,30 +281,119 @@ class Engine:
                         or entity_category_for_type(node.entity_type).value)
         return names, categories
 
-    def graph_preview(self, episode_id: str) -> dict:
-        """A minimal graph neighbourhood for one episode, shaped for the graph renderer:
-        {nodes:[{id,name,category}], edges:[{src,dst,label}]}. v0 returns the episode's
-        direct entities as nodes with a MENTIONS edge from the episode to each; a deeper
-        two-hop expansion is deferred (see BUILD_REPORT followups)."""
+    _PREVIEW_MAX_NODES = 22
+
+    def graph_preview(self, node_id: str) -> dict:
+        """The complete one-hop display graph rooted at an episode, entity, or concept
+        (PROTOCOL §3.6a), shaped for the wire layer:
+        {nodes:[{id,name,kind,category,hop,external_connections}],
+         edges:[{src,dst,etype,label}]}.
+
+        Mention stars collapse to direct episode→entity MENTIONS edges (label "");
+        asserted RELATED_TO facts between two drawn nodes ride with their predicate
+        name in `label`. At most 22 nodes: the root, then hop-1 neighbours by
+        descending display connectivity. `external_connections` counts each drawn
+        node's unique display neighbours that did NOT make it on screen, so clients
+        can draw dashed continuation stubs."""
         self._check()
         store = self._g.store
-        n = store.get_node(episode_id)
-        if n is None or n.ntype is not NodeType.EPISODE or not n.valid:
-            raise NotFound(f"unknown episode: {episode_id}")
-        nodes = [{"id": episode_id, "name": n.name, "category": "episode"}]
-        edges = []
+        root = store.get_node(node_id)
+        if (root is None or not root.valid
+                or root.ntype not in (NodeType.EPISODE, NodeType.ENTITY)):
+            raise NotFound(f"unknown graph node: {node_id}")
+        ranked = sorted(self._display_neighbors(node_id),
+                        key=lambda i: (-len(self._display_neighbors(i)), i))
+        drawn_ids = [node_id] + ranked[:self._PREVIEW_MAX_NODES - 1]
+        drawn = set(drawn_ids)
+        nodes = []
+        for hop_pos, nid in enumerate(drawn_ids):
+            n = store.get_node(nid)
+            is_ep = n.ntype is NodeType.EPISODE
+            # An episode's `name` is its source_ref ("app"/"capture") — useless as a
+            # graph label, so episodes display their text (PROTOCOL §3.6a example).
+            label = (" ".join((n.raw_text or n.description or n.name or "").split())[:80]
+                     if is_ep else n.name)
+            nodes.append({
+                "id": nid, "name": label,
+                "kind": ("episode" if is_ep
+                         else "concept" if n.entity_type is EntityType.CONCEPT
+                         else "entity"),
+                "category": None if is_ep else (
+                    n.entity_category
+                    or entity_category_for_type(n.entity_type).value),
+                "hop": 0 if hop_pos == 0 else 1,
+                "external_connections": len(self._display_neighbors(nid) - drawn),
+            })
+        edges, seen = [], set()
+        for nid in drawn_ids:
+            n = store.get_node(nid)
+            if n.ntype is NodeType.EPISODE:
+                pairs = ((nid, eid, "MENTIONS", "")
+                         for eid in self._episode_entity_ids(nid))
+            else:
+                pairs = ((src, dst, "RELATED_TO", pred)
+                         for src, dst, pred in self._entity_fact_edges(nid))
+            for src, dst, etype, label in pairs:
+                key = (src, dst, etype, label)
+                if src in drawn and dst in drawn and key not in seen:
+                    seen.add(key)
+                    edges.append({"src": src, "dst": dst,
+                                  "etype": etype, "label": label})
+        return {"nodes": nodes, "edges": edges}
+
+    def _episode_entity_ids(self, episode_id: str) -> list[str]:
+        """Distinct valid entity ids this episode mentions (via the mention star)."""
+        store = self._g.store
+        out: list[str] = []
+        seen: set[str] = set()
         for mid, _d in store.neighbors(episode_id, etypes={EdgeType.MENTIONED_IN},
                                        direction="in"):
             for eid, _d2 in store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
                                             direction="out"):
                 node = store.get_node(eid)
-                if node is None or any(x["id"] == eid for x in nodes):
+                if node is not None and node.valid and eid not in seen:
+                    seen.add(eid)
+                    out.append(eid)
+        return out
+
+    def _entity_fact_edges(self, entity_id: str) -> list[tuple[str, str, str]]:
+        """(src, dst, predicate_name) for asserted RELATED_TO facts touching this
+        entity, in stored orientation. Retracted facts (never actually true) are
+        excluded; closed facts stay — they are real history the graph should show."""
+        store = self._g.store
+        out: list[tuple[str, str, str]] = []
+        for direction in ("out", "in"):
+            for nbr, data in store.neighbors(entity_id,
+                                             etypes={EdgeType.RELATED_TO},
+                                             direction=direction):
+                if data.get("belief") == Belief.RETRACTED.value:
                     continue
-                category = (node.entity_category
-                            or entity_category_for_type(node.entity_type).value)
-                nodes.append({"id": eid, "name": node.name, "category": category})
-                edges.append({"src": episode_id, "dst": eid, "label": "MENTIONS"})
-        return {"nodes": nodes, "edges": edges}
+                rel = data.get("rel_tag") or ""
+                rel_node = store.get_node(rel) if rel else None
+                pred = rel_node.name if rel_node is not None else rel
+                src, dst = ((entity_id, nbr) if direction == "out"
+                            else (nbr, entity_id))
+                out.append((src, dst, pred))
+        return out
+
+    def _display_neighbors(self, node_id: str) -> set[str]:
+        """One-hop neighbours in DISPLAY-graph terms: an episode connects to the
+        entities it mentions; an entity connects to its mentioning episodes and its
+        fact partners."""
+        store = self._g.store
+        n = store.get_node(node_id)
+        if n is None or not n.valid:
+            return set()
+        if n.ntype is NodeType.EPISODE:
+            return set(self._episode_entity_ids(node_id))
+        out = {ep for ep in store.entity_episodes(node_id)
+               if (epn := store.get_node(ep)) is not None and epn.valid}
+        for src, dst, _pred in self._entity_fact_edges(node_id):
+            other = dst if src == node_id else src
+            partner = store.get_node(other)
+            if partner is not None and partner.valid:
+                out.add(other)
+        return out
 
     def episodes_list(self, offset: int = 0, limit: int = 100) -> dict:
         self._check()

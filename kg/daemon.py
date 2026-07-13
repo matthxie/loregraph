@@ -211,24 +211,20 @@ class Daemon:
 
     @staticmethod
     def _wire_graph_preview(gp: dict, root_id: str) -> dict:
-        """Reshape the engine's {nodes:[{id,name,category}], edges:[{src,dst,label}]} into the
-        §3.6/§7.2 display graph: the root is hop 0 kind=episode; its entities are hop 1 with
-        their glyph `entity_category`; mention stars are already collapsed to direct
-        episode→entity edges. external_connections is 0 (the v0 preview is one hop, so no
-        off-screen continuation stubs are inferred)."""
-        nodes = []
-        for n in gp.get("nodes", []):
-            cat = n.get("category")
-            is_ep = cat == "episode"
-            nodes.append({
-                "id": n.get("id"), "label": n.get("name") or "",
-                "kind": "episode" if is_ep else "entity",
-                "hop": 0 if n.get("id") == root_id else 1,
-                "external_connections": 0,
-                "entity_category": None if is_ep else cat,
-            })
+        """Reshape the engine's one-hop display graph into the §3.6/§7.2 wire shape.
+        The engine already computes kind (episode|entity|concept), hop,
+        external_connections and puts the fact predicate in edge `label` (empty for
+        MENTIONS), so this is a field rename: name→label, src/dst→source/target,
+        etype→kind."""
+        nodes = [{"id": n.get("id"), "label": n.get("name") or "",
+                  "kind": n.get("kind") or "entity",
+                  "hop": n.get("hop", 0 if n.get("id") == root_id else 1),
+                  "external_connections": int(n.get("external_connections") or 0),
+                  "entity_category": n.get("category")}
+                 for n in gp.get("nodes", [])]
         edges = [{"source": e.get("src"), "target": e.get("dst"),
-                  "kind": e.get("label") or "MENTIONS", "label": ""}
+                  "kind": e.get("etype") or "MENTIONS",
+                  "label": e.get("label") or ""}
                  for e in gp.get("edges", [])]
         return {"nodes": nodes, "edges": edges}
 
