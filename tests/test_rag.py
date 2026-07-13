@@ -680,3 +680,37 @@ def test_resolve_reldates_off_is_byte_identical_and_on_annotates():
     on = ContextBuilder(g.store, g.config).build(result)[2]
     assert "last week [≈" not in off
     assert "last week [≈" in on
+
+
+# --------------------------------------------------------------------------- #
+# search() — retrieval + context assembly, NO answering LLM
+# --------------------------------------------------------------------------- #
+def test_search_returns_hits_without_llm_or_key():
+    """g.search() is ask() minus the answer call: it must work with no OPENAI_API_KEY,
+    make zero API calls, and return structured scored hits whose evidence matches the
+    context blob ask()'s LLM would see."""
+    g = becky_graph()
+    with mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("OPENAI_API_KEY", None)   # prove the path is key-free
+        res = g.search("Where does Becky live?")
+    assert res.query == "Where does Becky live?"
+    assert res.hits, "expected at least one retrieved memory"
+    top = res.hits[0]
+    assert top.episode_id and top.text
+    assert isinstance(top.score, float)
+    # every hit appears in the prompt blob (same evidence the answerer would read)
+    for h in res.hits:
+        assert f"[{h.episode_id}]" in res.context
+    assert "QUESTION: Where does Becky live?" in res.context
+    # facts are pre-rendered strings, feed-ready
+    assert all(isinstance(f, str) for f in res.facts)
+
+
+def test_search_empty_query_and_caching():
+    g = becky_graph()
+    res = g.search("   ")
+    assert res.hits == [] and res.context == ""
+    g.search("Becky")
+    first = g._searcher
+    g.search("Becky again")
+    assert g._searcher is first, "Searcher (and its warm caches) should be reused"

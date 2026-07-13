@@ -37,7 +37,7 @@ _load_dotenv()
 
 from .config import Config
 from .graph import KnowledgeGraph
-from .rag import RagAnswer
+from .rag import RagAnswer, SearchHit, SearchResult
 
-__all__ = ["Config", "KnowledgeGraph", "RagAnswer"]
+__all__ = ["Config", "KnowledgeGraph", "RagAnswer", "SearchHit", "SearchResult"]
 __version__ = "0.2.0"

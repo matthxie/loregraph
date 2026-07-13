@@ -5,6 +5,7 @@
     g.build_communities()
     g.query("how are X and Y connected?")           # local → PPR seed-and-spread
     g.query("what are the main themes?")             # global → community map-reduce
+    g.search("Becky")                                # ranked memories, no LLM (feeds/UI)
     g.ask("where does Becky live?")                  # PPR-retrieve → context → 1 LLM answer
     g.ask("where did Becky live?", as_of="2022")     # point-in-time (as-of-T) retrieval
     g.save()
@@ -21,7 +22,7 @@ from .embedders import get_embedder
 from .extractors import get_extractor
 from .ingest import IngestReport, Ingestor
 from .models import NodeType
-from .rag import RagAnswer, get_answerer
+from .rag import RagAnswer, SearchResult, Searcher, get_answerer
 from .retrieval import RetrievalResult, get_retriever
 from .store import GraphStore
 
@@ -40,6 +41,7 @@ class KnowledgeGraph:
         self._retrievers: dict[str, object] = {}
         self._answerer = None
         self._answerer_key: tuple | None = None
+        self._searcher: Searcher | None = None
 
     # ------------------------------------------------------------------ open
     @classmethod
@@ -111,6 +113,20 @@ class KnowledgeGraph:
             retriever = self._retrievers[mode] = get_retriever(
                 mode, self.store, self.embedder, self.canon, self.config)
         return retriever.retrieve(text, k=k, as_of=as_of)
+
+    # ---------------------------------------------------------------- search
+    def search(self, text: str, *, k: int | None = None,
+               as_of: str | None = None) -> SearchResult:
+        """Everything ask() does EXCEPT the answering LLM call: the hybrid retriever
+        routes the question and ranks the relevant memories, and the context builder
+        assembles the same evidence the answerer would see — returned as structured
+        hits (episode id, score, time, text) plus the relevant facts, search-engine
+        style, for feeds/UI. `.context` carries the exact prompt blob ask()'s LLM
+        would read. Fully offline: no OPENAI_API_KEY needed."""
+        if self._searcher is None:
+            self._searcher = Searcher(self.store, self.embedder, self.canon,
+                                      self.config)
+        return self._searcher.run(text, k=k, as_of=as_of)
 
     # ------------------------------------------------------------------- ask
     def ask(self, text: str, *, backend: str | None = None, k: int | None = None,

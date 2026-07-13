@@ -202,6 +202,64 @@ class RagAnswer:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class SearchHit:
+    """One retrieved memory, feed-ready: the episode chunk's id, relevance score,
+    timestamp, and text."""
+    episode_id: str
+    score: float                 # retrieval score (0.0 for provenance/sibling additions)
+    when: str = ""               # episode created_at (ISO), "" if unknown
+    name: str = ""
+    text: str = ""
+
+
+@dataclass
+class SearchResult:
+    """What `KnowledgeGraph.search()` returns: the same evidence ask() would hand its
+    answering LLM, but structured for direct display (a feed, search results page)
+    instead of prompt-formatted. `.context` keeps the exact prompt blob for callers
+    who want to run their own LLM over it."""
+    query: str
+    hits: list[SearchHit] = field(default_factory=list)   # context order (relevance-led)
+    facts: list[str] = field(default_factory=list)         # rendered fact lines
+    lane: str = ""
+    as_of: str | None = None
+    context: str = ""
+
+
+class Searcher:
+    """ask() minus the answering LLM: hybrid-retrieve (route → PPR → augment → rerank)
+    then assemble the evidence, returned as structured hits. Fully offline — needs no
+    OPENAI_API_KEY (the only model involved is the local cross-encoder, which degrades
+    gracefully when unavailable)."""
+
+    def __init__(self, store: GraphStore, embedder: Embedder, canon: Canonicalizer,
+                 config: Config):
+        self.store = store
+        self.config = config
+        self.retriever = HybridRetriever(store, embedder, canon, config)
+        self.builder = ContextBuilder(store, config)
+
+    def run(self, query: str, k: int | None = None,
+            as_of: str | None = None) -> SearchResult:
+        if not query or not query.strip():
+            return SearchResult(query=query, as_of=as_of)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
+        ep_ids, facts, blob = self.builder.build(result)
+        scores = dict(result.objects)
+        hits = []
+        for eid in ep_ids:
+            n = self.store.get_node(eid)
+            if not n:
+                continue
+            text = _WS.sub(" ", (n.raw_text or n.description or n.name or "")).strip()
+            hits.append(SearchHit(episode_id=eid, score=float(scores.get(eid, 0.0)),
+                                  when=n.created_at or "", name=n.name, text=text))
+        return SearchResult(query=query, hits=hits,
+                            facts=[f.render() for f in facts],
+                            lane=getattr(result, "lane", ""), as_of=as_of, context=blob)
+
+
 _RAG_SYS = (
     "You answer a question using ONLY the EPISODES and FACTS provided in the context — a "
     "knowledge graph already retrieved the relevant evidence for you. Do not use outside "

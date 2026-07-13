@@ -36,6 +36,8 @@ def test_open_ingest_retrieve_answer_close(monkeypatch):
     r = eng.retrieve("where is Becky moving?", k=3)
     assert r["episodes"] and r["episodes"][0]["id"] == res.episode_id
     assert "Berlin" in r["episodes"][0]["text"]
+    assert r["episodes"][0]["when"].startswith("2026-07-01")
+    assert "Berlin" in r["rendered_text"]                  # the ask()-identical prompt blob
 
     a = eng.answer("where is Becky moving?")
     assert "mock provider" in a["answer"]

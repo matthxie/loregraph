@@ -209,14 +209,19 @@ class Engine:
 
     # ------------------------------------------------------------------ query
     def retrieve(self, query: str, k: int = 8, as_of: str | None = None) -> dict:
+        """Full retrieval pipeline (route → PPR → augment → rerank), no LLM: the same
+        evidence answer() would hand its model, structured for direct display.
+        `rendered_text` is the exact prompt blob, for callers running their own LLM."""
         self._check()
         if not query or not query.strip():
             raise InvalidInput("query must be non-empty")
-        res = self._g.query(query, mode="ppr", k=k, as_of=as_of)
-        return {"query": query, "as_of": as_of,
-                "episodes": [{"id": oid, "score": score,
-                              "text": self._episode_text(oid)}
-                             for oid, score in res.objects[:k]]}
+        res = self._g.search(query, k=k, as_of=as_of)
+        return {"query": query, "as_of": as_of, "lane": res.lane,
+                "episodes": [{"id": h.episode_id, "score": h.score,
+                              "when": h.when, "text": h.text}
+                             for h in res.hits],
+                "facts": res.facts,
+                "rendered_text": res.context}
 
     def answer(self, question: str, k: int = 8, as_of: str | None = None) -> dict:
         self._check()
@@ -236,10 +241,6 @@ class Engine:
                 "invalid_citations": ans.dropped_citations,
                 "context": {"episodes": ans.context_episodes, "facts": ans.facts,
                             "as_of": ans.as_of}}
-
-    def _episode_text(self, episode_id: str) -> str:
-        n = self._g.store.get_node(episode_id)
-        return (n.raw_text or "") if n is not None else ""
 
     def episode(self, episode_id: str) -> dict | None:
         self._check()
