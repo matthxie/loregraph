@@ -688,19 +688,16 @@ class Daemon:
 
     # ------------------------------------------------------------------ model / codex
     def m_model_ensure(self, params: dict) -> dict:
-        """Best-effort (§7.7): the engine's ensure_model is a v0 stub, so a raise is expected —
-        report {ok:false} rather than crash. A model.progress notification bookends the attempt
-        for the download chip."""
-        self.notify("model.progress", {"state": "checking"})
-        try:
-            self.engine().ensure_model()
-        except (EngineError, Exception) as e:  # noqa: BLE001 — never crash the daemon on ensure
-            self._embed_verified = {"verified": False}
-            self.notify("model.progress", {"state": "unavailable", "error": str(e)})
-            return {"ok": False, "state": "unavailable", "error": str(e)}
-        self._embed_verified = {"verified": True}
-        self.notify("model.progress", {"state": "ready"})
-        return {"ok": True, "state": "ready"}
+        """Eager, checksum-verified model provisioning (§7.7). kg.modelpin does the work
+        (pinned artifact, determinate progress by cache-dir polling, wipe-on-mismatch);
+        a hard download failure raises ModelUnavailable → -32009 via the dispatcher."""
+        from . import modelpin
+        result = modelpin.ensure(
+            notify=lambda p: self.notify("model.progress", p), log=self.log)
+        # Record verify state for the additive health.embedder.verified field (§7.7).
+        self._embed_verified = {"verified": result["state"] == "ready",
+                                "sha256": result.get("sha256")}
+        return result
 
     def m_codex_usage(self, params: dict) -> dict:
         from .llm_client import provider_usage
