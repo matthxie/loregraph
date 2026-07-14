@@ -39,7 +39,7 @@ def _ingest_dir(data_dir: str) -> str:
 
 
 def _sanitize_filename(name: str) -> str:
-    """Safe spool leaf name, no path escape (bot/spool.py:sanitize_filename): basename only,
+    """Safe spool leaf name, no path escape — basename only,
     no leading dots, every run of unsafe chars collapsed to a single underscore, capped."""
     name = os.path.basename((name or "").replace("\\", "/"))
     name = name.lstrip(".") or "file"
@@ -57,7 +57,7 @@ def _sanitize_filename(name: str) -> str:
 
 def _extract_urls(text: str) -> list[str]:
     """http(s) URLs, de-duplicated, order-preserving, trailing sentence punctuation trimmed
-    (bot/spool.py:extract_urls) — scanned by hand to avoid importing `re`."""
+    — scanned by hand to avoid importing `re`."""
     seen: list[str] = []
     s = text or ""
     low = s.lower()
