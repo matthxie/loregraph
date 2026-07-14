@@ -219,13 +219,29 @@ class Engine:
     # -------------------------------------------------------------- ingestion
     def ingest(self, note: NoteInput) -> IngestResult:
         self._check()
-        if not isinstance(note.text, str) or not note.text.strip():
+        if not isinstance(note.text, str):
+            raise InvalidInput("note.text must be a string")
+        attachments = list(note.attachments or [])
+        has_text = bool(note.text.strip())
+        # a media-only note (empty text) is valid when it carries attachments; otherwise
+        # empty text is nothing to ingest.
+        if not has_text and not attachments:
             raise InvalidInput("note.text must be a non-empty string")
         if not note.created_at:
             raise InvalidInput("note.created_at is required (ISO-8601)")
-        nid = hashlib.sha256(f"{note.created_at}\n{note.text}".encode("utf-8")).hexdigest()[:16]
-        item = CorpusItem(id=nid, modality="text", source_ref=f"{note.source}/{nid}",
-                          text=note.text, created_at=note.created_at)
+        # salt the id with attachments so two media-only notes (empty text) at the same
+        # timestamp don't collide on one nid and dedup each other away.
+        nid = hashlib.sha256(
+            f"{note.created_at}\n{note.text}\n{chr(0).join(attachments)}"
+            .encode("utf-8")).hexdigest()[:16]
+        # media-only → text=None routes through the described-media perception path and
+        # hashes on the artifact path; the attachments all persist as episode.media_paths.
+        item = CorpusItem(id=nid, modality="text" if has_text else "image",
+                          source_ref=f"{note.source}/{nid}",
+                          text=note.text if has_text else None,
+                          image_path=attachments[0] if attachments else None,
+                          created_at=note.created_at)
+        item.media_paths = attachments
         try:
             report = self._g.ingest([item])
             self._g.save()                      # durability: on disk before we return

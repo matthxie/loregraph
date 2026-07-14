@@ -104,8 +104,13 @@ def dir_size(path: str) -> int:
 
 
 def wipe(root: str, pin: dict) -> None:
-    """Remove the cached model dir entirely (the wipe-on-mismatch → re-onboard path)."""
+    """Remove the cached model dir entirely AND evict the in-process model cache — the
+    wipe-on-mismatch → re-onboard path. Evicting is essential: the warmup embed populates
+    kg.embedders._MODEL_CACHE, so without eviction an unverified model would keep serving every
+    later embed in the daemon process even after its on-disk files are gone."""
     shutil.rmtree(_model_dir(root, pin), ignore_errors=True)
+    from .embedders import evict_cached_model
+    evict_cached_model(pin["repo"])
 
 
 # --------------------------------------------------------------------------- #
@@ -156,13 +161,17 @@ def ensure(notify=None, *, pin: dict = EMBED_MODEL_PIN, root: str | None = None,
     root = root or cache_root()
     total = pin["bytes"]
 
-    # 1. fast path — cached + verified.
+    # 1. verify-then-load — if the pinned artifact is already on disk, hash it BEFORE any
+    #    loader/warmup runs. A match is the download-free fast path; a MISMATCH wipes the
+    #    corrupt copy (and evicts any in-process cache) so the re-download below starts clean
+    #    and no unverified on-disk bytes are ever warmed into the process model cache.
     art = artifact_path(root, pin)
     if art is not None:
         sha = sha256_file(art)
         if sha == pin["sha256"]:
             notify({"state": "ready", "received_bytes": total, "total_bytes": total})
             return _result("ready", pin, sha, wiped=False, error=None)
+        wipe(root, pin)
 
     # 2. download, polling the cache-dir size for determinate progress.
     mdir = _model_dir(root, pin)

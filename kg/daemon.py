@@ -515,7 +515,7 @@ class Daemon:
                     "pending": len(ledger.list_pending(self.data_dir)), "episode_id": None}
         if created_at:
             try:
-                datetime.fromisoformat(created_at)
+                datetime.fromisoformat(ledger.normalize_iso(created_at))
             except ValueError:
                 raise RpcError(INVALID_INPUT, f"bad ISO date for 'created_at': {created_at!r}")
         try:
@@ -541,7 +541,8 @@ class Daemon:
         atts = []
         for a in message.get("attachments", []):
             leaf = a.get("file") if isinstance(a, dict) else None
-            if leaf and not os.path.isabs(leaf) and os.path.isfile(os.path.join(sdir, leaf)):
+            path = ledger.contained_leaf(sdir, leaf)
+            if path and os.path.isfile(path):
                 atts.append(leaf)
         return {"spool_id": message.get("spool_id", sid),
                 "created_at": message.get("created_at") or None,
@@ -609,15 +610,16 @@ class Daemon:
                 "pending_remaining": len(ledger.list_pending(self.data_dir))}
 
     def _drain_one(self, NoteInput, sid: str, spool: dict) -> dict:
-        """One spool → one episode: append the raw row, ingest through the engine (content-hash
-        idempotent, so a retried raw dedups on rebuild), dump the extraction summary, then the
-        receipt (which also removes the spool dir). Raises on any leg to fail just this item."""
+        """One spool → one episode: append the raw row exactly once (a failed item stays spooled
+        and re-drains, so the append is marker-guarded against duplicating the sacred row), ingest
+        through the engine, dump the extraction summary, then the receipt (which also removes the
+        spool dir and its marker). Raises on any leg to fail just this item."""
         text = spool.get("text", "") or ""
         created_at = spool.get("created_at") or _now_iso()
         source = spool.get("source") or "capture"
         media = spool.get("media", [])
         replaces = spool.get("replaces") or None
-        ledger.append_raw(self.data_dir, {
+        ledger.append_raw_once(self.data_dir, sid, {
             "spool_id": sid, "created_at": created_at, "source": source, "text": text,
             "urls": spool.get("urls", []),
             "attachments": [os.path.basename(m) for m in media]})

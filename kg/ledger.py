@@ -34,6 +34,31 @@ _URL_STOP = set(" \t\r\n<>()]")
 _URL_TRIM = ".,;:!?'\")"
 
 
+def normalize_iso(value: str) -> str:
+    """Normalize a trailing 'Z'/'z' UTC suffix to '+00:00' so datetime.fromisoformat accepts it
+    on Python 3.10 (which rejects the military 'Z' zone the engine's own ISO format uses)."""
+    if value and value[-1] in "Zz":
+        return value[:-1] + "+00:00"
+    return value
+
+
+def contained_leaf(base_dir: str, leaf) -> str | None:
+    """Resolve a spool attachment `leaf` against `base_dir`, returning its absolute path only if
+    it stays inside `base_dir` (defeats `../` traversal and absolute leaves), else None. Foreign
+    spool producers (the Discord bot) author manifests, so an escaping leaf is hostile and must
+    never let out-of-tree bytes into the graph/ledger."""
+    if not leaf or not isinstance(leaf, str):
+        return None
+    base = os.path.realpath(base_dir)
+    path = os.path.realpath(os.path.join(base, leaf))
+    try:
+        if path != base and os.path.commonpath([base, path]) == base:
+            return path
+    except ValueError:
+        pass
+    return None
+
+
 def _ingest_dir(data_dir: str) -> str:
     return os.path.join(data_dir, "ingest")
 
@@ -119,6 +144,26 @@ def append_raw(data_dir: str, record: dict) -> None:
         os.fsync(f.fileno())
 
 
+def append_raw_once(data_dir: str, spool_id: str, record: dict) -> bool:
+    """Append `record` to the raw ledger at most once per spool item. A drain that retries a
+    failed item re-runs with the spool still queued, so an unguarded append duplicates the sacred
+    raw row on every attempt. A durable marker inside the spool dir records that the raw row is
+    already down (fsync-first, so raw-before-derive still holds); it survives restarts and is
+    removed atomically with the spool on receipt. Returns True if it wrote, False if it no-oped."""
+    marker = os.path.join(_ingest_dir(data_dir), spool_id, ".raw")
+    if os.path.exists(marker):
+        return False
+    append_raw(data_dir, record)
+    try:
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("1")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass
+    return True
+
+
 def dump_extraction(data_dir: str, note_id: str, payload: dict) -> None:
     """Write <data_dir>/extractions/<note_id>.json atomically (write-tmp, rename) so a reader
     never sees a half-written extraction after a crash mid-write."""
@@ -150,7 +195,7 @@ def spool(data_dir: str, *, text: str = "", media: list[str] | None = None,
     os.makedirs(ingest_dir, exist_ok=True)
 
     if created_at:
-        dt = datetime.fromisoformat(created_at)
+        dt = datetime.fromisoformat(normalize_iso(created_at))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
     else:
@@ -215,10 +260,8 @@ def load_spool(data_dir: str, spool_id: str) -> dict:
     media: list[str] = []
     for att in message.get("attachments", []):
         leaf = att.get("file") if isinstance(att, dict) else None
-        if not leaf or os.path.isabs(leaf):
-            continue
-        path = os.path.join(sdir, leaf)
-        if os.path.isfile(path):
+        path = contained_leaf(sdir, leaf)
+        if path and os.path.isfile(path):
             media.append(path)
     message["media"] = media
     return message

@@ -57,6 +57,13 @@ class SentenceTransformerEmbedder:
         return np.asarray(vecs, dtype=np.float32)
 
 
+def evict_cached_model(name: str) -> None:
+    """Drop a model from the process-global cache (kg.modelpin wipe-on-mismatch): once a
+    snapshot is wiped from disk as unverified, it must stop serving embeddings in-process too.
+    No-op when the model was never loaded."""
+    _MODEL_CACHE.pop(name, None)
+
+
 def get_embedder(config: Config) -> Embedder:
     """The semantic embedder (sentence-transformers). `embedder` is accepted as
     'st'/'auto' for back-compat; both return the same SentenceTransformerEmbedder."""

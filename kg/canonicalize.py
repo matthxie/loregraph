@@ -28,7 +28,7 @@ from .embedders import Embedder
 from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .profiler import span as prof_span
-from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
+from .models import (SELF_ENTITY_ID, Belief, Edge, EdgeType, EntityType, NodeType,
                      Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
 
@@ -165,6 +165,16 @@ def _extract_json(text: str) -> dict | None:
         except (ValueError, TypeError):
             return None
     return None
+
+
+def _union_list(a: list | None, b: list | None) -> list:
+    """Order-preserving union of two provenance lists, tolerating unhashable elements (the
+    disputed_by entries are dicts). Used to fold two duplicate facts' corroboration together."""
+    out: list = list(a or [])
+    for item in (b or []):
+        if item not in out:
+            out.append(item)
+    return out
 
 
 def _singularize(w: str) -> str:
@@ -539,6 +549,13 @@ class Canonicalizer:
             return True
         return existing == incoming
 
+    def _node_type_ok(self, node_id: str, incoming: EntityType) -> bool:
+        """True if `node_id` may host an `incoming`-typed mention. A node that lives in the
+        vector index but is missing from the store is treated as compatible (matches the old
+        hits[0] guard) — the vector search would never surface it in practice."""
+        cand = self.store.get_node(node_id)
+        return cand is None or self._types_compatible(cand.entity_type, incoming)
+
     def _reconcile_type(self, node_id: str, incoming: EntityType) -> None:
         """UPGRADE an existing OTHER-typed anchor to a specific type when a typed mention
         resolves onto it (the reverse — a specific node meeting an OTHER mention — is a no-op;
@@ -592,26 +609,30 @@ class Canonicalizer:
         if self._entropy_ok(name):
             hits = self.store.vectors.search("entity", vec, k=5,
                                             floor=self.config.syn_link_threshold)
-            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
-                eid = hits[0][0]
-                # only merge onto a type-compatible node — a fuzzy name match across
-                # contradictory specific types is a false merge, so mint instead.
+            # L2 hard merge: scan the hits IN ORDER for the best TYPE-COMPATIBLE candidate at
+            # or above the merge bar — NOT just hits[0]. hits[0] may be a same-name node of an
+            # INCOMPATIBLE specific type ('Jordan' PERSON vs 'Jordan' PLACE) that ties on cosine
+            # and wins the id tie-break; merging onto it is a false merge, but stopping there (as
+            # the old code did) would permanently shadow a compatible duplicate and mint a fresh
+            # node every episode, unbounded. Take the next compatible hit above the bar instead;
+            # only when NONE clears it do we fall through to the gray-zone / L3 path.
+            eid = next((c for c, s in hits
+                        if s >= self.config.syn_merge_threshold
+                        and self._node_type_ok(c, etype)), None)
+            if eid is not None:
+                self._add_entity_alias(eid, name)     # persist identity across reloads
+                self._entity_keys.setdefault(key, eid)
+                self._reconcile_type(eid, etype)
+                return eid
+            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
+            eid = self._l3_adjudicate("entity", name, gray)
+            if eid:
                 cand = self.store.get_node(eid)
                 if cand is None or self._types_compatible(cand.entity_type, etype):
-                    self._add_entity_alias(eid, name)     # persist identity across reloads
+                    self._add_entity_alias(eid, name)
                     self._entity_keys.setdefault(key, eid)
                     self._reconcile_type(eid, etype)
                     return eid
-            else:
-                gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
-                eid = self._l3_adjudicate("entity", name, gray)
-                if eid:
-                    cand = self.store.get_node(eid)
-                    if cand is None or self._types_compatible(cand.entity_type, etype):
-                        self._add_entity_alias(eid, name)
-                        self._entity_keys.setdefault(key, eid)
-                        self._reconcile_type(eid, etype)
-                        return eid
         eid = self._new_id("entity")
         node = entity_node(eid, name=name, etype=etype, ts=now_iso())
         self.store.add_node(node)
@@ -689,16 +710,72 @@ class Canonicalizer:
         self._relation_keys.setdefault(relation_content_key(display), rid)
 
     # ------------------------------------------------------------ merge (L3 drain)
+    def _rel_symmetric(self, rel_tag: str | None) -> bool:
+        """True when a RELATED_TO fact's predicate is orientation-free (works_with, married_to).
+        Symmetric facts store ONE pinned (min,max) orientation (kg/temporal.py:75)."""
+        node = self.store.get_node(rel_tag) if rel_tag else None
+        return bool(node and getattr(node, "symmetric", False))
+
+    def _collapse_fact_dup(self, src: str, dst: str, data: dict) -> bool:
+        """If the survivor already carries the SAME open/closed fact the loser is bringing over
+        (same rel_tag, endpoint, valid_at start, open/closed status), fold the loser's edge onto
+        it instead of minting a parallel edge — add_edge stamps every RELATED_TO with a fresh
+        `seq`, so it can NEVER collapse two fact edges itself, and two identical open facts would
+        otherwise double-surface in FactIndex and get independently confirmed/closed. Returns
+        True when it collapsed (caller must NOT re-add), False otherwise. RETRACTED incoming
+        edges are left distinct (find_facts already hides retracted survivors)."""
+        if data.get("etype") != EdgeType.RELATED_TO.value:
+            return False
+        if data.get("belief", Belief.ASSERTED.value) == Belief.RETRACTED.value:
+            return False
+        rel_tag = data.get("rel_tag")
+        valid_at = data.get("valid_at", "")
+        incoming_open = not data.get("invalid_at", "")
+        for _v, gkey, ex in self.store.find_facts(src, dst, rel_tag):
+            if ex.get("rel_tag") != rel_tag:  # find_facts skips this filter when rel_tag is None
+                continue
+            if ex.get("valid_at", "") != valid_at:
+                continue
+            if bool(ex.get("invalid_at", "")) == incoming_open:  # differing open/closed status
+                continue
+            # union the corroboration provenance across the two duplicates regardless of which
+            # is stronger, then — mirroring add_edge's "keep the stronger one" collapse — adopt
+            # the loser's core metadata only when its (confidence x weight) claim is stronger.
+            ex["confirmed_by"] = _union_list(ex.get("confirmed_by"), data.get("confirmed_by"))
+            ex["disputed_by"] = _union_list(ex.get("disputed_by"), data.get("disputed_by"))
+            ex_strength = ex.get("confidence", 1.0) * ex.get("weight", 1.0)
+            in_strength = data.get("confidence", 1.0) * data.get("weight", 1.0)
+            if in_strength > ex_strength:
+                for k in ("confidence", "weight", "provenance", "belief", "episode_id",
+                          "created_at", "invalid_at", "closed_at", "closed_by_episode"):
+                    if k in data:
+                        ex[k] = data[k]
+            self.store.touch_edge(src, dst, gkey)
+            return True
+        return False
+
     def _readd_edge(self, src: str, dst: str, data: dict) -> bool:
         """Re-attach an existing edge's FULL attribute dict onto a new (src, dst) — used
         when apply_merge re-points a merged node's edges. Rebuilding an Edge and routing it
         through store.add_edge preserves every attribute (incl. the closed_at / confirmed_by /
-        disputed_by mutation provenance), re-pins symmetric orientation, gives a fact a fresh
-        seq, and collapses onto a stronger duplicate exactly like any other add. Drops
-        (returns False) a self-loop; a weaker structural duplicate collapses silently inside
-        add_edge (still counted as moved — the receipt is informational)."""
+        disputed_by mutation provenance), re-pins symmetric orientation, and gives a fact a fresh
+        seq. A RELATED_TO fact the survivor ALREADY carries (identical rel_tag / endpoint /
+        valid_at / open-closed status) is collapsed onto that existing edge via
+        _collapse_fact_dup (add_edge's fresh per-edge seq means it can't dedup facts itself); a
+        weaker structural duplicate collapses silently inside add_edge. Drops (returns False)
+        a self-loop; a collapse still counts as moved — the receipt is informational."""
         if src == dst:
             return False
+        # Symmetric FACTS store ONE pinned (min,max) orientation (kg/temporal.py:75); add_edge
+        # does NOT re-pin RELATED_TO (store._SYMMETRIC_ETYPES excludes it). A merge re-pointing
+        # the loser's copy of a symmetric fact must therefore re-pin here or it lands in the
+        # OTHER orientation than the survivor's edge — collapse would miss it and add_edge would
+        # mint a parallel open duplicate (X→S alongside the survivor's S→X).
+        if (data.get("etype") == EdgeType.RELATED_TO.value and src > dst
+                and self._rel_symmetric(data.get("rel_tag"))):
+            src, dst = dst, src
+        if self._collapse_fact_dup(src, dst, data):
+            return True
         self.store.add_edge(Edge(
             src=src, dst=dst, etype=EdgeType(data["etype"]),
             provenance=Provenance(data.get("provenance", Provenance.DERIVED.value)),

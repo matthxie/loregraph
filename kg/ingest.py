@@ -185,6 +185,9 @@ class Ingestor:
                 if existing is not None and existing.content_hash == h:
                     report.skipped += 1          # identical episode already in the store
                     continue
+                if existing is not None and self._legacy_unchanged(item, content, existing, h):
+                    report.skipped += 1          # unchanged content under the OLD hash formula
+                    continue
                 v = 1                            # same id, new content → append a version
                 while self.store.has_node(f"{base_id}_v{v}") or f"{base_id}_v{v}" in batch_ep_ids:
                     v += 1
@@ -204,6 +207,15 @@ class Ingestor:
         if errors:
             report.notes.append(f"extraction failed for {len(errors)} item(s); "
                                 f"first error: {errors[0]}")
+            # DROP the items whose extractor raised: don't embed/write an episode and don't
+            # record its hash, so a later retry reprocesses it from scratch instead of
+            # hitting a recorded hash and skipping (the extraction would be lost forever).
+            kept = [(p, ext) for p, ext in zip(pending, extractions) if ext is not None]
+            pending = [p for p, _ in kept]
+            extractions = [ext for _, ext in kept]
+            if not pending:
+                report.seconds = time.time() - t0
+                return report
 
         # 3. embed episode surfaces (raw text / image description) in one batch
         surfaces = [self._embed_surface(item, ext)
@@ -266,6 +278,23 @@ class Ingestor:
         report.seconds = time.time() - t0
         return report
 
+    def _legacy_unchanged(self, item: CorpusItem, content: str, existing, new_h: str) -> bool:
+        """Back-compat with stores written before the created_at/id salt was added to the
+        content hash. Older builds hashed _sha256(modality, content); an unchanged re-ingest
+        of such a store misses the new hash and the existing episode's (legacy) content_hash,
+        and would version-append an ep_X_v1 duplicate for every episode. Detect the legacy
+        hash on the existing episode / the persisted cache, and on a match UPGRADE the stored
+        hash + cache entry to the new formula so the item is treated as unchanged and this
+        fallback fires at most once per item (the next re-ingest hits new_h up front)."""
+        legacy = _sha256(item.modality, content)
+        if existing.content_hash != legacy and legacy not in self.store.hash_cache:
+            return False
+        existing.content_hash = new_h
+        self.store.touch_node(existing.id)
+        self.store.add_hash(new_h, existing.id)
+        self.store.hash_cache.pop(legacy, None)
+        return True
+
     # ------------------------------------------------------------------ chunking
     def _expand_chunks(self, items: list[CorpusItem]) \
             -> tuple[list[CorpusItem], list[tuple[str, CorpusItem, list[str]]]]:
@@ -323,14 +352,19 @@ class Ingestor:
                                          confidence=1.0, weight=nw))
 
     # ----------------------------------------------------------------- extract
-    def _extract_all(self, items: list[CorpusItem]) -> tuple[list[Extraction], list[str]]:
-        def work(item: CorpusItem) -> tuple[Extraction, str | None]:
+    def _extract_all(self, items: list[CorpusItem]) \
+            -> tuple[list[Extraction | None], list[str]]:
+        """Extract each item under the LLM semaphore. A per-item extractor failure yields
+        None (not an empty Extraction) so the caller can DROP that item — it must not be
+        persisted with an empty extraction, or a later retry would hit its recorded hash
+        and skip it, losing the note's extraction forever."""
+        def work(item: CorpusItem) -> tuple[Extraction | None, str | None]:
             try:
                 if item.text is None:  # described media (image/audio/pdf/…): perceive it
                     return self.extractor.extract_image(item.image_path, item.label_hint), None
                 return self._extract_text(item.text, item.title), None
             except Exception as e:  # noqa: BLE001 — keep the batch alive, record the error
-                return Extraction(), f"{item.id}: {e!r}"
+                return None, f"{item.id}: {e!r}"
         with ThreadPoolExecutor(max_workers=self.config.semaphore_limit) as pool:
             pairs = list(pool.map(work, items))
         extractions = [p[0] for p in pairs]
@@ -372,10 +406,14 @@ class Ingestor:
         ts = item.created_at or now_iso()
         modality = _modality_of(item.modality)
         raw = item.text  # None for described media → the description becomes the surface
+        # media paths persisted on the episode: an item.media_paths list (e.g. an app note's
+        # attachments) wins; otherwise the single perceived artifact (image_path).
+        media = list(getattr(item, "media_paths", None)
+                     or ([item.image_path] if item.image_path else []))
         node = episode_node(ep_id, modality=modality, source_ref=item.source_ref,
                             raw_text=raw, content_hash=h, ts=ts,
                             description=ext.description, ingested_at=now_iso(),
-                            media_paths=[item.image_path] if item.image_path else [],
+                            media_paths=media,
                             title=derive_title(item, ext))
         node.name = item.title or item.id
         self.store.add_node(node)

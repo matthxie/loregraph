@@ -266,12 +266,42 @@ GRAPH_TOOL = {
 
 
 # Prefixes that fold a relationship label onto its base predicate + a termination flag.
-# 'once' was REMOVED: "once_met" / "once_lived_in" read as "at one time" (a thing that
-# HAPPENED), not "no longer true", so it wrongly CLOSED live facts. 'past' was removed for
-# the same false-positive hazard ("past_project", "past_month" are not terminations). The
-# survivors are unambiguous former-markers.
+# These are the UNAMBIGUOUS former-markers: whatever follows is closed unconditionally.
 _TERM_PREFIX = re.compile(r"^(former|formerly|ex|no[\s_-]?longer|used[\s_-]?to)[\s_-]+",
                           re.I)
+
+# 'past'/'once' are AMBIGUOUS: "once_met"/"once_lived_in" read as "at one time it HAPPENED"
+# and "past_project"/"past_month" name a thing/time-period, none of which are terminations —
+# folding them unconditionally wrongly CLOSED live facts, which is why they were dropped.
+# They are re-admitted here but GUARDED: they only fold when the remaining label is a
+# recognized relation predicate (`_KNOWN_PREDICATES`). So "past_employer" -> employer+ended
+# (mergeable with an open 'employer' fact), while "past_month"/"past_project"/"once_met"
+# keep an unrecognized remainder and flow through as 'asserted', unchanged from before.
+_GUARDED_TERM_PREFIX = re.compile(r"^(past|once)[\s_-]+", re.I)
+
+# Relation predicates a 'past'/'once' marker may legitimately close. Seeded from the frozen
+# predicate hint in _SYS, plus the relationship/role nouns that commonly wear a former-marker.
+_KNOWN_PREDICATES = frozenset({
+    "founded", "founded_by", "works_with", "member_of", "located_in", "part_of",
+    "parent_of", "child_of", "created", "created_by", "discovered", "employed_by",
+    "succeeded_by", "influenced_by",
+    "employer", "employee", "colleague", "coworker", "co_worker", "boss", "manager",
+    "partner", "spouse", "husband", "wife", "friend", "mentor", "student", "teacher",
+    "member", "member_of_staff", "works_at", "works_for", "reports_to", "resident_of",
+})
+
+
+def _strip_term_prefix(label: str) -> tuple[str, bool]:
+    """Return (base_predicate, ended) for a single label. An unambiguous former-marker
+    strips unconditionally; a guarded 'past'/'once' marker strips ONLY when the remainder
+    is a recognized relation predicate, leaving documented false positives untouched."""
+    base = _TERM_PREFIX.sub("", label)
+    if base != label:
+        return base, True
+    guarded = _GUARDED_TERM_PREFIX.sub("", label)
+    if guarded != label and guarded.lower() in _KNOWN_PREDICATES:
+        return guarded, True
+    return label, False
 
 
 def _coerce_labels(r: dict) -> list[str]:
@@ -291,10 +321,11 @@ def _normalize_termination(labels: list[str]) -> tuple[list[str], bool]:
     ended = False
     out = []
     for lab in labels:
-        base = _TERM_PREFIX.sub("", lab.strip())
-        if base != lab.strip():
+        stripped = lab.strip()
+        base, is_term = _strip_term_prefix(stripped)
+        if is_term:
             ended = True
-        out.append(base or lab.strip())
+        out.append(base or stripped)
     return list(dict.fromkeys(l for l in out if l)), ended
 
 

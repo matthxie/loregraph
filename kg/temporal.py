@@ -66,6 +66,10 @@ def apply_fact(store: GraphStore, *, src: str, dst: str, rel_tag: str, status: s
     rel = store.get_node(rel_tag)
     functional = bool(rel and rel.functional)
     symmetric = bool(rel and rel.symmetric)
+    # REPEATABLE: an event-like predicate (visited/purchased/attended) — neither a single-valued
+    # state (functional) nor a relationship state (symmetric). Distinct dates = distinct
+    # occurrences, so a differently-dated re-assertion opens a new fact instead of collapsing.
+    repeatable = not functional and not symmetric
     margin = _dispute_margin(store)
     # symmetric predicates store ONE orientation, so works_with(A,B) == works_with(B,A)
     if symmetric and src > dst:
@@ -168,16 +172,16 @@ def apply_fact(store: GraphStore, *, src: str, dst: str, rel_tag: str, status: s
                         data["closed_by_episode"] = episode_id
                 store.touch_edge(src, v, gkey)
 
-    # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate. BUT: if
-    # this occurrence carries an explicit date LATER than every existing open occurrence's
-    # date, it is a genuinely new, separately-dated occurrence of a repeatable predicate
-    # (a 2nd visit/purchase/class), not a restatement of the first — fall through to OPEN
-    # instead of collapsing it (docs: per-occurrence events). An explicit date at or
-    # BEFORE a known start is the opposite signal: evidence the SAME fact began earlier,
-    # handled by the confirm branch's widen-to-earliest below.
+    # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate. BUT: for a
+    # REPEATABLE predicate, if this occurrence carries an explicit date DIFFERENT from every
+    # existing open occurrence's date, it is a genuinely new, separately-dated occurrence
+    # (a 2nd visit/purchase/class), not a restatement of the first — EARLIER or LATER — so fall
+    # through to OPEN instead of collapsing it (docs: per-occurrence events). For a non-repeatable
+    # predicate (functional/symmetric state) a differing date is the opposite signal: the SAME
+    # fact began earlier, handled by the confirm branch's widen-to-earliest below.
     open_existing = list(store.find_facts(src, dst, rel_tag, open_only=True))
-    new_dated_occurrence = bool(valid_from) and open_existing and all(
-        data.get("valid_at") and valid_from > data.get("valid_at")
+    new_dated_occurrence = repeatable and bool(valid_from) and open_existing and all(
+        data.get("valid_at") and valid_from != data.get("valid_at")
         for _v, _gkey, data in open_existing)
     if open_existing and not new_dated_occurrence:
         for _v, gkey, data in open_existing:
