@@ -25,7 +25,7 @@ on:
   push:
     # TEMPORARY: 'pipeline' is listed only to test the workflow end-to-end before it
     # lands on main — remove it (leaving just main) before merging.
-    branches: [main, pipeline]
+    branches: [main]
   workflow_dispatch: {}
 
 # Serialize releases so two quick merges can't interleave tag/PR steps.
