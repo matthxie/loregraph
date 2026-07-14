@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Per-developer editor settings (window colors etc. — nothing shared lives here)
+.vscode/
+
 # Secrets — real key lives here, never commit it (see .env.example for the template)
 .env
 
