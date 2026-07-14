@@ -37,7 +37,18 @@ _load_dotenv()
 
 from .config import Config
 from .graph import KnowledgeGraph
-from .rag import RagAnswer
+from .rag import RagAnswer, SearchHit, SearchResult
 
-__all__ = ["Config", "KnowledgeGraph", "RagAnswer"]
-__version__ = "0.2.0"
+__all__ = ["Config", "KnowledgeGraph", "RagAnswer", "SearchHit", "SearchResult"]
+
+# The single source of truth for the version is the installed package metadata,
+# stamped into the wheel by the release pipeline (never hardcode a number here —
+# a hardcoded string goes stale the moment the pipeline ships the next wheel).
+# A source checkout that was never pip-installed has no metadata; report a dev
+# placeholder rather than crash.
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("you-kg")
+except PackageNotFoundError:
+    __version__ = "0.0.0.dev0"

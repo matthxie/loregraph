@@ -18,7 +18,10 @@ class Config:
     rag_model: str = "gpt-5-mini"                 # answerer used by `kg ask`
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384                          # must match embed_model's output dim
-    extractor_backend: str = "cue_gated"          # "cue_gated"|"llm"|NLP backends (nlp_extractors.py)
+    extractor_backend: str = "auto"               # "auto" = LLM on every entry when a signed-in
+    #                                               provider is live (kg/llm_client.py), else the
+    #                                               keyless cue_gated floor; also
+    #                                               "cue_gated"|"llm"|NLP backends (nlp_extractors.py)
     chunking: str = "turns"                       # "none"|"turns"|"markdown"|"prose"|"code"|"auto"
     top_k: int = 8                                # episodes returned to the caller
     self_entity: bool = False                     # personal-web first-person resolution
@@ -64,12 +67,28 @@ class Config:
     lead_chars: int = 2000            # embed the lead section for very long docs
 
     # -- tag drift control: L1/L2 merge thresholds -----------------------------
-    syn_link_threshold: float = 0.85  # cosine > → SIMILAR_TO link (don't merge)
-    syn_merge_threshold: float = 0.93 # cosine > → candidate hard merge
+    syn_link_threshold: float = 0.85  # ENTITY cosine > → SIMILAR_TO link (don't merge)
+    syn_merge_threshold: float = 0.93 # ENTITY cosine > → candidate hard merge
+    # Tags get their OWN, looser thresholds so near-synonym tags actually link/merge
+    # ("check if similar; if not, make own") WITHOUT endangering entity resolution —
+    # entities keep the high bars above, tags use these. Decoupling is the fix for the
+    # documented threshold collision (entities want high, tags want low).
+    tag_syn_link_threshold: float = 0.80   # TAG cosine > → SIMILAR_TO link (connect)
+    tag_syn_merge_threshold: float = 0.88  # TAG cosine > → hard merge (collapse dup)
     entropy_min_chars: int = 4        # shorter tags merge on exact match only
     entropy_min_bits: float = 2.0     # min Shannon entropy to allow fuzzy merge
     rel_syn_merge_threshold: float = 0.95
     max_relation_labels: int = 3      # cap labels carried by one connection
+
+    # -- confidence-gated closure (docs/TEMPORAL.md; kg/temporal.py) -----------
+    # A close / supersede / retract fires only when the asserting fact is at least about as
+    # trustworthy as the fact it would overturn. If the INCOMING confidence is more than
+    # `dispute_confidence_margin` BELOW the stored edge's, we do NOT close it — a low-trust
+    # claim can't silently kill a high-trust fact. Instead the stored edge records the losing
+    # claim in `disputed_by` (episode + confidence) so the disagreement is visible and the
+    # user can adjudicate. Set the margin to 1.0 to disable (nothing is ever gated) — the
+    # pre-gate behaviour.
+    dispute_confidence_margin: float = 0.3
 
     # -- L3 selective LLM canonicalization tie-breaker (ship-disabled) ---------
     l3_enabled: bool = False

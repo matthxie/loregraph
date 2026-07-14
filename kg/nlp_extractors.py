@@ -26,6 +26,7 @@ from typing import Callable
 
 from .config import Config
 from .extractors import ExtractedEntity, ExtractedRelation, Extraction
+from .llm_client import make_client, resolve_model
 from .metering import UsageMeter
 from .models import EntityType, Provenance
 
@@ -393,9 +394,8 @@ _REL_SYS = (
 
 class _LlmRelations:
     def __init__(self, config: Config):
-        import openai
         self.config = config
-        self.client = openai.OpenAI()
+        self.client = make_client()
         self.meter = UsageMeter()
 
     def __call__(self, text: str, entities: list[ExtractedEntity]) -> list[ExtractedRelation]:
@@ -404,9 +404,13 @@ class _LlmRelations:
             return []
         ent_list = ", ".join(e.name for e in entities[:60])
         prompt = (f"ENTITIES: {ent_list}\n\nCONTENT:\n{text[:self.config.extract_max_chars]}")
+        # Per-provider model resolution, same as OpenAIExtractor._call: an explicit config
+        # override wins; the unchanged default resolves to the active provider's default —
+        # None for the CLI providers (codex/claude pick their own model).
+        model = resolve_model(self.config.llm_model, "gpt-4o-mini")
         try:
             msg = self.client.chat.completions.create(
-                model=self.config.llm_model, max_tokens=self.config.extract_max_tokens,
+                model=model, max_tokens=self.config.extract_max_tokens,
                 temperature=0,
                 messages=[
                     {"role": "system", "content": _REL_SYS},
@@ -414,7 +418,7 @@ class _LlmRelations:
                 ],
                 tools=[_REL_TOOL],
                 tool_choice={"type": "function", "function": {"name": "emit_relations"}})
-            self.meter.record("extract", self.config.llm_model, msg)
+            self.meter.record("extract", model or "cli-default", msg)
         except Exception:  # noqa: BLE001 — keep ingest alive; degrade to no relations
             return []
         names = {e.name.lower() for e in entities}

@@ -181,13 +181,17 @@ def test_mention_payload_roundtrip():
 
 
 def test_edge_key_bitemporal_discriminator():
-    # RELATED_TO discriminates on (rel_tag, valid_at) so closed + reopened facts coexist
+    # RELATED_TO discriminates on (rel_tag, valid_at, seq) so closed + reopened facts —
+    # including a same-day close→reopen — coexist (fork-parity spec B3).
     e1 = Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0007", valid_at="2020")
     e2 = Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0007", valid_at="2024")
-    assert e1.key() == ("RELATED_TO", "rel_0007", "2020")
+    assert e1.key() == ("RELATED_TO", "rel_0007", "2020", 0)
     assert e1.key() != e2.key()
-    # non-fact edges ignore valid_at in their key
-    assert Edge("m", "e", EdgeType.RESOLVES_TO).key() == ("RESOLVES_TO", "", "")
+    # same valid_at, different seq (as GraphStore.add_edge assigns) → still distinct
+    e3 = Edge("a", "b", EdgeType.RELATED_TO, rel_tag="rel_0007", valid_at="2020", seq=1)
+    assert e1.key() != e3.key()
+    # non-fact edges ignore valid_at and seq in their key
+    assert Edge("m", "e", EdgeType.RESOLVES_TO).key() == ("RESOLVES_TO", "", "", "")
 
 
 # --------------------------------------------------------------------------- #
@@ -261,9 +265,14 @@ def test_relation_synonym_merges_but_antonym_and_inverse_dont():
     store = GraphStore(cfg())
     canon = Canonicalizer(store, get_embedder(cfg()), cfg())
     a = canon.resolve_relation("is_friend_of")
-    assert a == canon.resolve_relation("is friends with")
+    # fork-parity spec D4: the trailing argument-structure marker is load-bearing, so
+    # "is_friend_of" (…_of, directed) and "is friends with" (…_with, symmetric) are
+    # DIFFERENT predicates and must NOT collapse (works_at ≠ works_with). Interior
+    # function-word dropping still merges "friend of" into the same content key.
+    assert a == canon.resolve_relation("friend of")
+    assert canon.resolve_relation("is friends with") != a
     node = store.get_node(a)
-    assert node.name == "is_friend_of" and "is_friends_with" in node.aliases
+    assert node.name == "is_friend_of" and "friend_of" in node.aliases
     assert canon.resolve_relation("is_enemy_of") != a
     assert canon.resolve_relation("manages") != canon.resolve_relation("managed_by")
 

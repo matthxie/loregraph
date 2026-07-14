@@ -1,0 +1,158 @@
+# Release pipeline: on every push to main, build the you-kg wheel, tag this repo,
+# and open/update the vendored-wheel bump PR against foca-apps/brainbrain.
+#
+# Versioning contract:
+#   * Humans own major.minor — bump them by editing `version` in pyproject.toml
+#     (breaking interface change -> major, additive -> minor).
+#   * The pipeline owns the patch digit: <major.minor>.<run_number>. Every release is
+#     unique by construction; the stamped pyproject is never committed back (no
+#     write-back commits, no skip-ci loops). pip treats a same-version wheel as
+#     already-installed and silently keeps old code, so versions are never reused.
+#
+# Setup this workflow needs (one-time) — a cross-repo credential for the app repo (the
+# default GITHUB_TOKEN cannot cross repos), via ONE of:
+#   * preferred (never expires): a GitHub App installed on foca-apps/brainbrain with
+#     Contents + Pull requests read/write. Set variable RELEASE_BOT_APP_ID and secret
+#     RELEASE_BOT_PRIVATE_KEY; the workflow mints a short-lived token per run.
+#   * fallback (rotates every ≤366 days): secret BRAINBRAIN_PAT, a fine-grained PAT
+#     with the same two permissions on foca-apps/brainbrain.
+# Optional: variable BRAINBRAIN_BASE_BRANCH — base branch for the bump PR in the app
+# repo; defaults to main when unset.
+
+name: release
+
+on:
+  push:
+    # TEMPORARY: 'pipeline' is listed only to test the workflow end-to-end before it
+    # lands on main — remove it (leaving just main) before merging.
+    branches: [main]
+  workflow_dispatch: {}
+
+# Serialize releases so two quick merges can't interleave tag/PR steps.
+concurrency:
+  group: engine-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the v<version> tag to this repo
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      APP_REPO: foca-apps/brainbrain
+      APP_BASE_BRANCH: ${{ vars.BRAINBRAIN_BASE_BRANCH || 'main' }}
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4
+        with:
+          path: engine-src
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compute and stamp version
+        id: version
+        working-directory: engine-src
+        run: |
+          python - <<'EOF'
+          import os, pathlib, re, sys
+
+          p = pathlib.Path("pyproject.toml")
+          src = p.read_text(encoding="utf-8")
+          m = re.search(r'^version\s*=\s*"(\d+)\.(\d+)(?:\.\d+)?"', src, re.M)
+          if not m:
+              sys.exit("pyproject.toml: could not find a version = \"X.Y[.Z]\" line to stamp")
+          version = f"{m.group(1)}.{m.group(2)}.{os.environ['GITHUB_RUN_NUMBER']}"
+          p.write_text(src[:m.start()] + f'version = "{version}"' + src[m.end():], encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+              out.write(f"wheel=you_kg-{version}-py3-none-any.whl\n")
+          print(f"stamped version {version}")
+          EOF
+
+      - name: Build wheel
+        working-directory: engine-src
+        run: |
+          pip install --quiet build
+          python -m build --wheel --outdir dist
+          test -f "dist/${{ steps.version.outputs.wheel }}" || {
+            echo "::error::expected dist/${{ steps.version.outputs.wheel }}; got: $(ls dist)"
+            exit 1
+          }
+
+      - name: Tag source commit
+        working-directory: engine-src
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.version.outputs.version }}"
+          existing="$(git ls-remote origin "refs/tags/$TAG" | cut -f1)"
+          if [ -z "$existing" ]; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          elif [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "tag $TAG already points at $GITHUB_SHA (re-run) — skipping"
+          else
+            echo "::error::tag $TAG already exists on $existing (not $GITHUB_SHA) — refusing to reuse a version"
+            exit 1
+          fi
+
+      # Mint a short-lived installation token from the org's GitHub App (nothing to
+      # rotate). Skipped when the app isn't configured; the steps below then fall back
+      # to the BRAINBRAIN_PAT secret.
+      - name: Mint app token
+        id: app-token
+        if: ${{ vars.RELEASE_BOT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: foca-apps
+          repositories: brainbrain
+
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+        with:
+          repository: foca-apps/brainbrain
+          token: ${{ steps.app-token.outputs.token || secrets.BRAINBRAIN_PAT }}
+          ref: ${{ env.APP_BASE_BRANCH }}
+          path: brainbrain
+
+      - name: Vendor wheel into app repo
+        run: |
+          set -euo pipefail
+          WHEEL="${{ steps.version.outputs.wheel }}"
+          VENDOR=brainbrain/engine/vendor
+          REQS=brainbrain/engine/requirements.txt
+          PIN="./vendor/$WHEEL"
+
+          mkdir -p "$VENDOR"
+          rm -f "$VENDOR"/you_kg-*.whl
+          cp "engine-src/dist/$WHEEL" "$VENDOR/"
+
+          # Replace the existing pin line, or append one if this is the first vendoring.
+          if grep -q '^\./vendor/you_kg-.*\.whl$' "$REQS"; then
+            sed -i "s|^\./vendor/you_kg-.*\.whl$|$PIN|" "$REQS"
+          else
+            printf '%s\n' "$PIN" >> "$REQS"
+          fi
+
+      - name: Open or update bump PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.BRAINBRAIN_PAT }}
+          path: brainbrain
+          branch: engine-bump
+          base: ${{ env.APP_BASE_BRANCH }}
+          commit-message: "engine: bump you-kg to ${{ steps.version.outputs.version }}"
+          title: "engine: bump you-kg to ${{ steps.version.outputs.version }}"
+          body: |
+            Automated engine bump from foca-apps/loregraph.
+
+            * version: `${{ steps.version.outputs.version }}`
+            * source commit: `${{ github.sha }}` (tag `v${{ steps.version.outputs.version }}`)
+            * wheel: `engine/vendor/${{ steps.version.outputs.wheel }}`
+
+            Before merging: `KG_SMOKE_FULL=1 engine/tests/daemon_smoke.py` from `engine/` in the app repo.

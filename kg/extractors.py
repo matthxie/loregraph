@@ -5,8 +5,9 @@ summary step) in one structured-output call, with an optional reflexion recall p
 Relations are directed and carry open-vocabulary `labels[]` (rev 3) that are
 consolidated into canonical relationship-tag nodes downstream.
 
-  * OpenAIExtractor  — the real, live path: gpt-4o-mini forced into a typed tool
-                       call, vision for images. Needs OPENAI_API_KEY.
+  * OpenAIExtractor  — the real, live path: the active provider (make_client) forced
+                       into a typed tool call, vision for images. The model is the
+                       per-provider default unless config.llm_model was overridden.
   * ScriptedExtractor — a deterministic {text: Extraction} table used ONLY by the
                        synthetic temporal demo + unit tests (it stubs the LLM so the
                        graph's open/close/supersede logic runs on known facts). Not a
@@ -20,7 +21,6 @@ representative of the live graph. Extraction is now live-only.
 from __future__ import annotations
 
 import base64
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -28,8 +28,9 @@ from typing import Protocol
 from .backoff import call_with_backoff
 from .config import Config
 from .cues import cue_kinds, has_cue
+from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
-from .models import EntityType, Provenance
+from .models import EntityCategory, EntityType, Provenance, entity_category_for_type
 from .profiler import span as prof_span
 
 # --------------------------------------------------------------------------- #
@@ -39,6 +40,10 @@ from .profiler import span as prof_span
 class ExtractedEntity:
     name: str
     type: EntityType = EntityType.OTHER
+    # Broad glyph category (person/place/thing) for graph clients. None = not stated;
+    # the parse path fills it from the payload or entity_category_for_type(type), and
+    # ingest passes it through entity_node(category=...).
+    category: EntityCategory | None = None
 
 
 @dataclass
@@ -48,17 +53,40 @@ class ExtractedRelation:
     canonical relationship-tag nodes downstream (Canonicalizer.resolve_relation).
 
     Temporal fields (docs/TEMPORAL.md §6): `status` is the polarity — "asserted" (the
-    relationship holds) or "ended" (it terminated / no longer holds, from cues like
-    "former", "ex-", "no longer"). `valid_from` / `valid_to` are OPTIONAL stated bounds
-    (ISO strings); empty means "unknown / as of this episode"."""
+    relationship holds), "ended" (it terminated / no longer holds, from cues like "former",
+    "ex-", "no longer" → a valid-time CLOSE) or "retracted" (a correction: the relationship
+    was NEVER true, the prior claim was a mistake → a belief flip, not a valid-time end).
+    `valid_from` / `valid_to` are OPTIONAL stated bounds (ISO strings); empty means
+    "unknown / as of this episode"."""
     source: str
     target: str
     labels: list[str] = field(default_factory=list)
     provenance: Provenance = Provenance.EXTRACTED
     confidence: float = 0.8
-    status: str = "asserted"          # "asserted" | "ended"
+    status: str = "asserted"          # "asserted" | "ended" | "retracted"
     valid_from: str = ""
     valid_to: str = ""
+
+
+# Process/meta tags that describe the ACT of note-taking / ingest plumbing rather than
+# what a note is ABOUT. They leak in as generic themes ("shipped", "refactor", "routing"),
+# bridge unrelated notes, and bury the personal signal, so they are dropped at parse time.
+# Kept as a small module-level frozenset so it is easy to extend; matched case-insensitively
+# against the trimmed tag surface.
+TAG_STOPLIST = frozenset({
+    "shipped", "resolution", "test", "input", "refactor", "documentation", "routing",
+})
+
+
+# Precedence when two duplicate relations disagree on polarity during a merge: a termination
+# (ended / retracted — a stated valid-time close or belief flip) carries more information than
+# a plain assertion, so it must not be silently overwritten by 'asserted'. ended and retracted
+# are peers (neither dominates the other); either beats asserted.
+_STATUS_RANK = {"asserted": 0, "ended": 1, "retracted": 1}
+
+
+def _status_rank(status: str) -> int:
+    return _STATUS_RANK.get((status or "asserted").lower(), 0)
 
 
 @dataclass
@@ -99,7 +127,12 @@ class Extraction:
         # merge by directed (source, target, valid_from): union label sets of TRUE
         # duplicates, but keep distinct-dated occurrences of the same pair/predicate
         # separate (docs: per-occurrence events must not collapse across a reflexion/
-        # sectioning merge just because they share a source/target).
+        # sectioning merge just because they share a source/target). A collision must
+        # NOT silently discard the duplicate's temporal signal: a TERMINATION
+        # (ended/retracted) wins over a plain 'asserted' — a section saying "no longer
+        # works with X" must close the fact even if an earlier section asserted it —
+        # and an empty valid_to is filled from the duplicate that states one
+        # (valid_from is part of the merge key, so it is already equal within a key).
         by_pair: dict[tuple[str, str, str], ExtractedRelation] = {}
         for r in self.relations:
             by_pair[(r.source.lower(), r.target.lower(), r.valid_from)] = r
@@ -110,6 +143,10 @@ class Extraction:
                 for lab in r.labels:
                     if lab not in have.labels:
                         have.labels.append(lab)
+                if _status_rank(r.status) > _status_rank(have.status):
+                    have.status = r.status          # termination (ended/retracted) wins
+                if not have.valid_to and r.valid_to:
+                    have.valid_to = r.valid_to      # fill an unknown bound from the duplicate
             else:
                 by_pair[kk] = r
                 self.relations.append(r)
@@ -133,6 +170,7 @@ class Extractor(Protocol):
 # Structured-output tool schema (shared by the LLM path)
 # --------------------------------------------------------------------------- #
 _ENTITY_ENUM = [t.value for t in EntityType]
+_CATEGORY_ENUM = [c.value for c in EntityCategory]
 
 GRAPH_TOOL = {
     "type": "function",
@@ -149,8 +187,16 @@ GRAPH_TOOL = {
                         "properties": {
                             "name": {"type": "string"},
                             "type": {"type": "string", "enum": _ENTITY_ENUM},
+                            "category": {
+                                "type": "string", "enum": _CATEGORY_ENUM,
+                                "description": "Broad glyph category for display: 'person' "
+                                "for people and named characters, 'place' for geographic "
+                                "locations, venues, rooms, landmarks and buildings, 'thing' "
+                                "for everything else (orgs, objects, products, works, events, "
+                                "named abstractions).",
+                            },
                         },
-                        "required": ["name", "type"],
+                        "required": ["name", "type", "category"],
                     },
                 },
                 "tags": {"type": "array", "items": {"type": "string"},
@@ -174,10 +220,13 @@ GRAPH_TOOL = {
                                 "automatically.",
                             },
                             "status": {
-                                "type": "string", "enum": ["asserted", "ended"],
+                                "type": "string", "enum": ["asserted", "ended", "retracted"],
                                 "description": "'asserted' if the relationship holds; 'ended' "
-                                "if the text says it terminated (former, ex-, no longer, left, "
-                                "until X). Default 'asserted'.",
+                                "if the text says it TERMINATED (former, ex-, no longer, left, "
+                                "until X) — it WAS true and stopped; 'retracted' if the text "
+                                "CORRECTS a prior claim as mistaken — it was NEVER true "
+                                "('actually X never...', 'I was wrong that...'). Default "
+                                "'asserted'.",
                             },
                             "valid_from": {"type": "string",
                                            "description": "optional ISO date/year the fact began, if stated"},
@@ -216,8 +265,43 @@ GRAPH_TOOL = {
 }
 
 
-_TERM_PREFIX = re.compile(r"^(former|formerly|ex|past|no[\s_-]?longer|used[\s_-]?to|once)[\s_-]+",
+# Prefixes that fold a relationship label onto its base predicate + a termination flag.
+# These are the UNAMBIGUOUS former-markers: whatever follows is closed unconditionally.
+_TERM_PREFIX = re.compile(r"^(former|formerly|ex|no[\s_-]?longer|used[\s_-]?to)[\s_-]+",
                           re.I)
+
+# 'past'/'once' are AMBIGUOUS: "once_met"/"once_lived_in" read as "at one time it HAPPENED"
+# and "past_project"/"past_month" name a thing/time-period, none of which are terminations —
+# folding them unconditionally wrongly CLOSED live facts, which is why they were dropped.
+# They are re-admitted here but GUARDED: they only fold when the remaining label is a
+# recognized relation predicate (`_KNOWN_PREDICATES`). So "past_employer" -> employer+ended
+# (mergeable with an open 'employer' fact), while "past_month"/"past_project"/"once_met"
+# keep an unrecognized remainder and flow through as 'asserted', unchanged from before.
+_GUARDED_TERM_PREFIX = re.compile(r"^(past|once)[\s_-]+", re.I)
+
+# Relation predicates a 'past'/'once' marker may legitimately close. Seeded from the frozen
+# predicate hint in _SYS, plus the relationship/role nouns that commonly wear a former-marker.
+_KNOWN_PREDICATES = frozenset({
+    "founded", "founded_by", "works_with", "member_of", "located_in", "part_of",
+    "parent_of", "child_of", "created", "created_by", "discovered", "employed_by",
+    "succeeded_by", "influenced_by",
+    "employer", "employee", "colleague", "coworker", "co_worker", "boss", "manager",
+    "partner", "spouse", "husband", "wife", "friend", "mentor", "student", "teacher",
+    "member", "member_of_staff", "works_at", "works_for", "reports_to", "resident_of",
+})
+
+
+def _strip_term_prefix(label: str) -> tuple[str, bool]:
+    """Return (base_predicate, ended) for a single label. An unambiguous former-marker
+    strips unconditionally; a guarded 'past'/'once' marker strips ONLY when the remainder
+    is a recognized relation predicate, leaving documented false positives untouched."""
+    base = _TERM_PREFIX.sub("", label)
+    if base != label:
+        return base, True
+    guarded = _GUARDED_TERM_PREFIX.sub("", label)
+    if guarded != label and guarded.lower() in _KNOWN_PREDICATES:
+        return guarded, True
+    return label, False
 
 
 def _coerce_labels(r: dict) -> list[str]:
@@ -237,11 +321,31 @@ def _normalize_termination(labels: list[str]) -> tuple[list[str], bool]:
     ended = False
     out = []
     for lab in labels:
-        base = _TERM_PREFIX.sub("", lab.strip())
-        if base != lab.strip():
+        stripped = lab.strip()
+        base, is_term = _strip_term_prefix(stripped)
+        if is_term:
             ended = True
-        out.append(base or lab.strip())
+        out.append(base or stripped)
     return list(dict.fromkeys(l for l in out if l)), ended
+
+
+def _resolve_status(r: dict, ended: bool) -> str:
+    """Map a relation's raw `status` (+ a termination-prefix flag) onto the three
+    polarities the temporal layer understands: `asserted` (holds), `ended` (was true, then
+    stopped → valid-time close) or `retracted` (a correction: never actually true →
+    belief flip). `retracted` wins over a stray termination prefix."""
+    raw = str(r.get("status", "")).lower()
+    if raw == "retracted":
+        return "retracted"
+    if ended or raw == "ended":
+        return "ended"
+    return "asserted"
+
+
+# Entity-type aliases the parse path accepts beyond the EntityType enum values: the fork
+# authored named abstractions as type 'term' (its enum had no CONCEPT), and payloads from
+# it must keep rebuilding here. Unknown types still fall to OTHER.
+_ENTITY_TYPE_ALIASES = {"term": EntityType.CONCEPT}
 
 
 _WEEKDAY_RE = re.compile(
@@ -274,19 +378,31 @@ def _parse_tool_payload(payload: dict) -> Extraction:
         name = (e.get("name") or "").strip()
         if not name:
             continue
+        raw_type = str(e.get("type", "other")).strip().lower()
         try:
-            etype = EntityType(e.get("type", "other"))
+            etype = _ENTITY_TYPE_ALIASES.get(raw_type) or EntityType(raw_type)
         except ValueError:
             etype = EntityType.OTHER
-        ents.append(ExtractedEntity(name=name, type=etype))
-    tags = [t.strip() for t in (payload.get("tags") or []) if t and t.strip()]
+        # Optional glyph category from the payload; anything unstated/unknown falls back
+        # to the type-derived category so ExtractedEntity.category is always populated.
+        try:
+            category = EntityCategory(str(e.get("category", "") or "").strip().lower())
+        except ValueError:
+            category = entity_category_for_type(etype)
+        ents.append(ExtractedEntity(name=name, type=etype, category=category))
+    # back-compat: accept the "tags" key, falling back to the fork's "concepts" key so
+    # extractions authored against the fork's schema still rebuild. Process/meta tags in
+    # the stoplist are dropped — they are about the act of note-taking, not the content.
+    tags = [surface for t in (payload.get("tags") or payload.get("concepts") or [])
+            for surface in [str(t).strip() if t else ""]
+            if surface and surface.lower() not in TAG_STOPLIST]
     rels = []
     for r in payload.get("relations", []) or []:
         s, t = (r.get("source") or "").strip(), (r.get("target") or "").strip()
         labels, ended = _normalize_termination(_coerce_labels(r))
         if not s or not t or not labels:
             continue
-        status = "ended" if (ended or str(r.get("status", "")).lower() == "ended") else "asserted"
+        status = _resolve_status(r, ended)
         for target_part in _split_compound(t):
             rels.append(ExtractedRelation(
                 source=s, target=target_part, labels=labels,
@@ -334,13 +450,19 @@ class OpenAIExtractor:
         "   - work    — a named created work (book, film, song, paper, artwork, product)\n"
         "   - event   — a time-bounded happening (a war, election, discovery, ceremony)\n"
         "   - other   — a real entity that fits none of the above\n"
+        "   Also give each entity a CATEGORY for the graph's glyphs: 'person' for people and "
+        "named characters, 'place' for geographic locations, venues, rooms, landmarks and "
+        "buildings, 'thing' for everything else (organisations, objects, products, works, "
+        "events, named abstractions).\n"
         "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
         "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
         "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
         "(themes, not entities).\n\n"
         "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
-        "   - Both source and target MUST be entities from step 1, using the EXACT SAME "
-        "surface string you wrote there. Never relate something you did not name.\n"
+        "   - Source and target are normally entities from step 1 — use the EXACT SAME "
+        "surface string you wrote there. You MAY also use one of your step-2 tags as an "
+        "endpoint when the note states a relationship to a topic or theme (e.g. an org "
+        "'works_on' a field). Never relate something you named as neither an entity nor a tag.\n"
         "   - Each relationship has 1-3 short lowercase labels that read SOURCE then TARGET. "
         "Order matters. Example: Marie Curie discovered polonium → source \"Marie Curie\", "
         "target \"polonium\", label \"discovered\" (NOT the reverse).\n"
@@ -357,8 +479,11 @@ class OpenAIExtractor:
         "try to match any canonical form yourself.\n"
         "   - TIME. If the text says a relationship ENDED (former, ex-, no longer, left, "
         "until X), emit the BASE predicate with status 'ended' — never coin 'former_*' or "
-        "'ex_*'. Set valid_from/valid_to ONLY when the text states a date; otherwise leave "
-        "them empty (it defaults to 'as of this content'). Do not guess dates.\n"
+        "'ex_*'. If the text CORRECTS a prior claim as having been mistaken all along ('I "
+        "was wrong that…', 'actually X never…'), use status 'retracted' instead (it was "
+        "never true, vs 'ended' which was true and stopped). Set valid_from/valid_to ONLY "
+        "when the text states a date; otherwise leave them empty (it defaults to 'as of this "
+        "content'). Do not guess dates.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "4) FACTS. Extract EVERY stated amount/count/measurement into facts[], no "
         "salience filter. One per OCCURRENCE — a repeat (2nd purchase/visit/class) or "
@@ -377,9 +502,8 @@ class OpenAIExtractor:
     )
 
     def __init__(self, config: Config):
-        import openai
         self.config = config
-        self.client = openai.OpenAI()  # reads OPENAI_API_KEY
+        self.client = make_client()  # active provider (explicit KG_LLM, else auto-detected)
         self.meter = UsageMeter()
 
     @property
@@ -393,9 +517,13 @@ class OpenAIExtractor:
 
     def _call(self, content_blocks: list) -> Extraction:
         import json
+        # Per-provider model resolution: an explicit config override wins; an unchanged
+        # llm_model (the Config default "gpt-4o-mini") resolves to the active provider's
+        # default — None for the CLI providers (codex/claude pick their own model).
+        model = resolve_model(self.config.llm_model, "gpt-4o-mini")
         with prof_span("extract.llm"):
             msg = call_with_backoff(lambda: self.client.chat.completions.create(
-                model=self.config.llm_model,
+                model=model,
                 max_tokens=self.config.extract_max_tokens,
                 temperature=0,
                 messages=[
@@ -405,7 +533,7 @@ class OpenAIExtractor:
                 tools=[GRAPH_TOOL],
                 tool_choice={"type": "function", "function": {"name": "emit_graph"}},
             ))
-        self.meter.record("extract", self.config.llm_model, msg)
+        self.meter.record("extract", model or "cli-default", msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":
             return _parse_tool_payload(json.loads(tc[0].function.arguments))
@@ -424,7 +552,7 @@ class OpenAIExtractor:
             f"and these entities: {ents}\n"
             f"and these facts (amounts/counts/measurements): {facts_found}.\n\n"
             "Now do a focused recall check. List ONLY items you OMITTED:\n"
-            "- any salient entity in the content missing above (with its type),\n"
+            "- any salient entity in the content missing above (with its type and category),\n"
             "- any important topical tag not already emitted,\n"
             "- any clearly-stated directed relationship between entities you missed "
             "(source and target must be named entities; labels read source→target),\n"
@@ -519,7 +647,7 @@ class CueGatedExtractor:
     temporal relation fields (status=ended, valid_from/to) survive; the local entities/tags
     union in for recall. The exposed `meter` is the LLM's, so the testrun's per-document cost
     drain captures exactly the escalation spend (the local floor is free). With no
-    OPENAI_API_KEY, escalation is disabled and extraction runs local-only."""
+    LLM provider available, escalation is disabled and extraction runs local-only."""
     name = "cue_gated"
 
     def __init__(self, config: Config):
@@ -528,7 +656,7 @@ class CueGatedExtractor:
         self.local = build_nlp_extractor(
             getattr(config, "local_backend", "gliner_yake_cooccur"), config)
         self.escalate = (bool(getattr(config, "cue_escalate", True))
-                         and bool(os.environ.get("OPENAI_API_KEY")))
+                         and llm_available())
         self._llm: OpenAIExtractor | None = None
         self._fallback_meter = UsageMeter()
         self.n_seen = 0
@@ -572,22 +700,27 @@ class CueGatedExtractor:
 # Factory
 # --------------------------------------------------------------------------- #
 def get_extractor(config: Config) -> Extractor:
-    """Default 'cue_gated' = a local NLP floor + an LLM call only on cue-bearing entries
-    (escalation needs OPENAI_API_KEY; without it, extraction runs local-only). 'llm'/
-    'auto' = the full `llm_model` on every entry (needs the key). Any other value selects a
+    """Default 'auto' = the LLM extractor on EVERY entry when a provider is live (the user's
+    signed-in subscription or an API key — extraction should basically always use it), falling
+    back to the keyless CueGatedExtractor local floor when none is. 'cue_gated' = that hybrid
+    explicitly (local NLP floor + LLM only on cue-bearing entries). 'llm' = the LLM extractor
+    strictly — no provider is an error, never a silent downgrade. Any other value selects a
     pure LLM-free / hybrid NLP backend (kg/nlp_extractors.py). The deterministic
     ScriptedExtractor is constructed directly (demo + tests), never here."""
-    backend = getattr(config, "extractor_backend", "cue_gated")
+    backend = getattr(config, "extractor_backend", "auto")
     if backend == "haiku":                 # legacy alias from before the multi-provider rename
         backend = "llm"
+    if backend == "auto":
+        return OpenAIExtractor(config) if llm_available() else CueGatedExtractor(config)
     if backend == "cue_gated":
         return CueGatedExtractor(config)
-    if backend not in ("llm", "auto"):
+    if backend != "llm":
         from .nlp_extractors import build_nlp_extractor
         return build_nlp_extractor(backend, config)
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not llm_available():
         raise RuntimeError(
-            "No OPENAI_API_KEY found. The 'llm' extractor backend is live-only. Use the default "
-            "'cue_gated' backend (a local NLP floor runs keyless), or construct a "
+            "No LLM provider available (set KG_LLM / OPENAI_API_KEY, or sign in to a codex/"
+            "claude CLI). The 'llm' extractor backend is live-only. Use the default 'auto' "
+            "backend (falls back to a keyless local NLP floor), or construct a "
             "ScriptedExtractor directly for deterministic tests/demos.")
     return OpenAIExtractor(config)

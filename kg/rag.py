@@ -18,7 +18,6 @@ window contained T, so "where did Becky live in 2022?" reads the world as it was
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
 
@@ -27,6 +26,7 @@ from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex, FactLine
+from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .profiler import span as prof_span
@@ -189,6 +189,8 @@ class RagAnswer:
     as_of: str | None = None
     context_episodes: list[str] = field(default_factory=list)  # episode ids in the context
     facts: list[str] = field(default_factory=list)             # rendered fact lines
+    fact_rows: list[dict] = field(default_factory=list)        # structured §3 Fact objects
+    context_text: str = ""                                     # the §5.1 block the LLM read
     object_ids: list[str] = field(default_factory=list)        # PPR ranking (eval seam)
     ppr_pool: list = field(default_factory=list)               # (ep_id, raw PPR score) pool
     seeds: list[str] = field(default_factory=list)
@@ -200,6 +202,70 @@ class RagAnswer:
     stopped: str = "answered"
     trace: list = field(default_factory=list)                  # no tool trace (RAG, not agentic)
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SearchHit:
+    """One retrieved memory, feed-ready: the episode chunk's id, relevance score,
+    timestamp, and text."""
+    episode_id: str
+    score: float                 # retrieval score (0.0 for provenance/sibling additions)
+    when: str = ""               # episode created_at (ISO), "" if unknown
+    name: str = ""
+    text: str = ""
+
+
+@dataclass
+class SearchResult:
+    """What `KnowledgeGraph.search()` returns: the same evidence ask() would hand its
+    answering LLM, but structured for direct display (a feed, search results page)
+    instead of prompt-formatted. `.context` keeps the exact prompt blob for callers
+    who want to run their own LLM over it."""
+    query: str
+    hits: list[SearchHit] = field(default_factory=list)   # context order (relevance-led)
+    facts: list[str] = field(default_factory=list)         # rendered fact lines
+    fact_rows: list[dict] = field(default_factory=list)    # structured §3 Fact objects,
+    #                                                        same facts in the same order
+    lane: str = ""
+    as_of: str | None = None
+    context: str = ""
+
+
+class Searcher:
+    """ask() minus the answering LLM: hybrid-retrieve (route → PPR → augment → rerank)
+    then assemble the evidence, returned as structured hits. Fully offline — needs no
+    OPENAI_API_KEY (the only model involved is the local cross-encoder, which degrades
+    gracefully when unavailable)."""
+
+    def __init__(self, store: GraphStore, embedder: Embedder, canon: Canonicalizer,
+                 config: Config):
+        self.store = store
+        self.config = config
+        self.retriever = HybridRetriever(store, embedder, canon, config)
+        self.builder = ContextBuilder(store, config)
+
+    def run(self, query: str, k: int | None = None, as_of: str | None = None,
+            rerank: bool | None = None, mmr_lambda: float | None = None,
+            since: str | None = None, until: str | None = None) -> SearchResult:
+        if not query or not query.strip():
+            return SearchResult(query=query, as_of=as_of)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
+                                         rerank=rerank, mmr_lambda=mmr_lambda,
+                                         since=since, until=until)
+        ep_ids, facts, blob = self.builder.build(result)
+        scores = dict(result.objects)
+        hits = []
+        for eid in ep_ids:
+            n = self.store.get_node(eid)
+            if not n:
+                continue
+            text = _WS.sub(" ", (n.raw_text or n.description or n.name or "")).strip()
+            hits.append(SearchHit(episode_id=eid, score=float(scores.get(eid, 0.0)),
+                                  when=n.created_at or "", name=n.name, text=text))
+        return SearchResult(query=query, hits=hits,
+                            facts=[f.render() for f in facts],
+                            fact_rows=[f.to_row() for f in facts],
+                            lane=getattr(result, "lane", ""), as_of=as_of, context=blob)
 
 
 _RAG_SYS = (
@@ -409,14 +475,7 @@ class ContextBuilder:
                     if fkey in seen:
                         continue
                     seen.add(fkey)
-                    rel_node = self.store.get_node(data.get("rel_tag")) if data.get("rel_tag") else None
-                    sn, tn = self.store.get_node(src_id), self.store.get_node(dst_id)
-                    out.append(FactLine(
-                        src=sn.name if sn else src_id,
-                        rel=rel_node.name if rel_node else "related_to",
-                        dst=tn.name if tn else dst_id, valid_at=data.get("valid_at", ""),
-                        invalid_at=data.get("invalid_at", ""),
-                        episode_id=data.get("episode_id", "")))
+                    out.append(FactLine.from_edge(self.store, src_id, dst_id, data))
                     if len(out) >= self.config.rag_max_facts:
                         return out
         return out
@@ -713,6 +772,20 @@ class ContextBuilder:
         facts = self.facts_for(ents, result.as_of)
         ctx_ids = self._expand_siblings(ep_ids)
         ctx_ids = self._promote_provenance(ctx_ids, ep_ids, facts, result.query)
+        # §7.3 hard bound: sibling expansion and provenance promotion re-inject
+        # episodes AFTER the retriever's since/until filter — a windowed request must
+        # never see (or have its answer read) an out-of-window episode. Facts are
+        # deliberately not windowed; the bound is on the returned EPISODES.
+        since, until = getattr(result, "window", None) or (None, None)
+        if since or until:
+            def _in_window(eid: str) -> bool:
+                n = self.store.get_node(eid)
+                d = ((n.created_at or n.ingested_at or "") if n else "")[:10]
+                if not d:
+                    return False
+                return ((not since or d >= since[:10])
+                        and (not until or d <= until[:10]))
+            ctx_ids = [eid for eid in ctx_ids if _in_window(eid)]
 
         lines = [f"QUESTION: {result.query}",
                  f"AS-OF: {result.as_of or 'now (current view)'}", ""]
@@ -758,6 +831,33 @@ def _validate(raw, context_ids: list[str]) -> tuple[list[str], list[str]]:
         seen.add(cid)
         (kept if cid in allow else dropped).append(cid)
     return kept, dropped
+
+
+def strip_citations(text: str, ids) -> str:
+    """Remove the given episode-id citations from answer text (PROTOCOL §3.12: invalid
+    citations are dropped from `citations` AND stripped from the answer's text — the
+    answerer may not display invented evidence either).
+
+    Only EPISODE-ID-SHAPED tokens (_EP_ID) are removed: the model's citations array is
+    free-form, and deleting an arbitrary dropped string (an entity name, a year) would
+    mangle valid prose. Bracketed forms ("[ep_x]", "[ep_a, ep_x]") lose just the id.
+    Cleanup is scoped to the removal sites via a marker — the rest of the answer's
+    formatting (markdown line breaks, aligned quotes) is untouched."""
+    to_strip = [cid for cid in (ids or [])
+                if isinstance(cid, str) and _EP_ID.fullmatch(cid)]
+    if not text or not to_strip:
+        return text
+    mark = "\x00"
+    text = text.replace(mark, "")
+    for cid in to_strip:
+        text = re.sub(rf"(?<![A-Za-z0-9_#]){re.escape(cid)}(?![A-Za-z0-9_#])",
+                      mark, text)
+    text = re.sub(rf"\[\s*{mark}\s*(?:,\s*{mark}\s*)*\]", mark, text)  # emptied [..]
+    text = re.sub(rf"\[\s*(?:{mark}\s*,\s*)+", "[", text)  # "[×, ×, ep_a]" → "[ep_a]"
+    text = re.sub(rf",\s*{mark}\s*(?=[,\]])", "", text)  # "[ep_a, ×]" / "[a, ×, b]"
+    text = re.sub(rf"\s*{mark}\s*([.,;:!?])", r"\1", text)  # "× ." → "."
+    text = re.sub(rf"\s*{mark}\s*", " ", text)           # what remains → one space
+    return text.strip()
 
 
 def _extractive(store: GraphStore, query: str, ep_ids: list[str],
@@ -826,15 +926,21 @@ class OpenAIAnswerer:
             ep_ids, facts, blob = self.builder.build(result)
         base = RagAnswer(query=result.query, answer="", backend=self.name,
                          as_of=result.as_of, context_episodes=ep_ids,
-                         facts=[f.render() for f in facts], object_ids=result.object_ids,
+                         facts=[f.render() for f in facts],
+                         fact_rows=[f.to_row() for f in facts],
+                         context_text=blob, object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph),
                          retargeted=list(self.builder.last_retargeted))
+        # Per-provider model resolution: an explicit config override wins; an unchanged
+        # rag_model (the Config default "gpt-5-mini") resolves to the active provider's
+        # default — None for the CLI providers (codex/claude pick their own model).
+        model = resolve_model(self.config.rag_model, "gpt-5-mini")
         # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to
         # the offline extractive path — so the split must live here.
         kwargs: dict = {
-            "model": self.config.rag_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": _RAG_SYS},
                 {"role": "user", "content": blob},
@@ -842,7 +948,7 @@ class OpenAIAnswerer:
             "tools": [self._answer_tool(result)],
             "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
         }
-        if self.config.rag_model.startswith(("gpt-5", "o1", "o3", "o4")):
+        if (model or "").startswith(("gpt-5", "o1", "o3", "o4")):
             token_key = "max_completion_tokens"
         else:
             token_key = "max_tokens"
@@ -851,7 +957,7 @@ class OpenAIAnswerer:
         try:
             with prof_span("query.llm_answer"):
                 msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
-            self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
+            self.meter.record("rag", model or "cli-default", msg, label=result.query[:40])
         except Exception as e:  # noqa: BLE001 — degrade to the offline synthesis, never crash
             base.answer = _extractive(self.store, result.query, ep_ids, facts)
             base.citations = ep_ids
@@ -871,7 +977,7 @@ class OpenAIAnswerer:
                 with prof_span("query.llm_answer_retry"):
                     msg = call_with_backoff(
                         lambda: self.client.chat.completions.create(**retry_kwargs))
-                self.meter.record("rag", self.config.rag_model, msg, label=result.query[:40])
+                self.meter.record("rag", model or "cli-default", msg, label=result.query[:40])
                 base.usage = self.meter.totals()
                 ans, raw, base.events = self._parse_message(msg)
             except Exception as e:  # noqa: BLE001 — retry failed too, fall through below
@@ -889,8 +995,14 @@ class OpenAIAnswerer:
                 "response truncated by the length limit")
         if not raw:
             raw = _EP_ID.findall(ans)
-        kept, dropped = _validate(raw, ep_ids)
-        base.answer = ans or "(no answer produced)"
+        # §3.12 validation universe: the context's episode ids PLUS the grounding
+        # episode ids of the context's facts — both visibly appear in the rendered
+        # block the answerer read, so citing either is legitimate evidence.
+        universe = ep_ids + [f.episode_id for f in facts if f.episode_id]
+        kept, dropped = _validate(raw, universe)
+        # §3.12: dropped citations leave the answer TEXT too, not just the list —
+        # the scrape above must run first or a citation-less tool reply loses its ids.
+        base.answer = strip_citations(ans, dropped) or "(no answer produced)"
         base.citations, base.dropped_citations = kept, dropped
         if dropped:
             base.notes.append(f"dropped {len(dropped)} uncontextual citation(s)")
@@ -914,26 +1026,29 @@ class RagAnswerer:
         self._backend = self._pick_backend(client)
 
     def _pick_backend(self, client):
-        """Live-only: an OpenAIAnswerer over an injected client, else a real OpenAI client
-        from the env key. There is no offline backend — without a key (and no injected
-        client) we raise, rather than silently degrade to a fake answer."""
+        """Live-only: an OpenAIAnswerer over an injected client, else the active provider's
+        client from the spine (make_client). There is no offline backend — without a provider
+        (and no injected client) we raise, rather than silently degrade to a fake answer."""
         if client is not None:
             return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
-        if os.environ.get("OPENAI_API_KEY"):
-            import openai
-            return OpenAIAnswerer(self.store, self.config, self.builder,
-                                  client=openai.OpenAI())
+        if llm_available():
+            client = make_client()
+            if client is not None:
+                return OpenAIAnswerer(self.store, self.config, self.builder, client=client)
         raise RuntimeError(
-            "No OPENAI_API_KEY found. The query/answer path is live-only. "
-            "Set the key (kg auto-reads a project-root .env), or "
+            "No LLM provider available (set KG_LLM / OPENAI_API_KEY, or run codex login). "
+            "The query/answer path is live-only. kg auto-reads a project-root .env, or "
             "inject a client: get_answerer(..., client=fake).")
 
-    def run(self, query: str, k: int | None = None,
-            as_of: str | None = None) -> RagAnswer:
+    def run(self, query: str, k: int | None = None, as_of: str | None = None,
+            rerank: bool | None = None, mmr_lambda: float | None = None,
+            since: str | None = None, until: str | None = None) -> RagAnswer:
         if not query or not query.strip():
             return RagAnswer(query=query, answer="(empty query)",
                              backend=self._backend.name, as_of=as_of)
-        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
+                                         rerank=rerank, mmr_lambda=mmr_lambda,
+                                         since=since, until=until)
         ans = self._backend.answer(result)
         ans.ppr_pool = list(getattr(result, "ppr_pool", []) or [])
         ans.lane = getattr(result, "lane", "")            # surface the routed lane

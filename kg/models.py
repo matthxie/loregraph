@@ -50,8 +50,18 @@ class NodeType(str, Enum):
 
 
 class Modality(str, Enum):
+    # An episode is one of two surface kinds: TEXT-surfaced (raw_text is the embedding
+    # surface) or *described* media (an LLM-authored `description` is the surface, because
+    # the bytes aren't text). The members below IMAGE are described-media labels — the
+    # engine treats anything whose item carries no raw_text as description-surfaced, and
+    # the label is informational (icon / provenance) only.
     TEXT = "text"
     IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    PDF = "pdf"      # a scanned/visual PDF described as media (a text-extractable PDF → TEXT)
+    LINK = "link"    # a fetched URL whose page text became the raw_text surface
+    FILE = "file"    # any other described artifact
 
 
 class EntityType(str, Enum):
@@ -63,7 +73,29 @@ class EntityType(str, Enum):
     EVENT = "event"
     DATE = "date"
     QUANTITY = "quantity"   # a stated amount/count/measurement (kg/extractors.py facts[])
+    PREFERENCE = "preference"   # a stated like / dislike / taste (author as me
+    #                             --holds_preference--> X, or me --dislikes--> Y).
+    #                             First-class so preferences are walkable and retrievable —
+    #                             the single biggest agent-memory win in the lit.
     OTHER = "other"
+
+
+class EntityCategory(str, Enum):
+    """Broad visual identity used by graph clients, independent of semantic entity type."""
+    PERSON = "person"
+    PLACE = "place"
+    THING = "thing"
+
+
+def entity_category_for_type(t: "EntityType | None") -> "EntityCategory":
+    """Collapse the fine-grained EntityType onto the three glyph categories a graph
+    renderer draws — PERSON/PLACE keep their identity; org/concept/work/event/date/
+    quantity/preference/other all read as a generic THING."""
+    if t == EntityType.PERSON:
+        return EntityCategory.PERSON
+    if t == EntityType.PLACE:
+        return EntityCategory.PLACE
+    return EntityCategory.THING
 
 
 class Belief(str, Enum):
@@ -116,10 +148,14 @@ class Node:
 
     # ---- Episode ----
     modality: Modality | None = None
+    title: str | None = None              # display title (PROTOCOL §7.2): resolved link/page
+    #                                       title, or derived from the analyzed description
     raw_text: str | None = None          # the embedding / retrieval surface
     description: str | None = None        # image: the VLM one-liner
     content_hash: str | None = None
     source_ref: str | None = None         # url / file path / title
+    media_paths: list[str] = field(default_factory=list)  # ALL artifacts on this episode (a
+    #                                       capture can attach several; they ride on one episode)
     tags: list[str] = field(default_factory=list)  # denormalised filter copy
 
     # ---- Mention ----
@@ -128,6 +164,7 @@ class Node:
 
     # ---- Entity / Tag / Relation (canonical anchors) ----
     entity_type: EntityType | None = None
+    entity_category: EntityCategory | None = None  # broad glyph category for graph clients
     aliases: list[str] = field(default_factory=list)
     tag_description: str | None = None     # TagNode (L3)
     doc_frequency: int = 0                 # # episodes referencing it (IDF specificity)
@@ -154,6 +191,8 @@ class Node:
             d["modality"] = self.modality.value
         if self.entity_type is not None:
             d["entity_type"] = self.entity_type.value
+        if self.entity_category is not None:
+            d["entity_category"] = self.entity_category.value
         return json.dumps(d, ensure_ascii=False)
 
     @classmethod
@@ -164,6 +203,8 @@ class Node:
             d["modality"] = Modality(d["modality"])
         if d.get("entity_type") is not None:
             d["entity_type"] = EntityType(d["entity_type"])
+        if d.get("entity_category") is not None:
+            d["entity_category"] = EntityCategory(d["entity_category"])
         # tolerate stores written before a field existed
         known = cls.__dataclass_fields__
         return cls(**{k: v for k, v in d.items() if k in known})
@@ -187,18 +228,42 @@ class Edge:
     invalid_at: str = ""                  # valid-time end   ("" = ∞ / currently true)
     belief: Belief = Belief.ASSERTED      # transaction-time belief state
     episode_id: str = ""                  # provenance: the episode that asserted this fact
+    via: list[str] = field(default_factory=list)  # SHARED_*: the tag/entity NAMES that bridge
+                                          # the two episodes (explainability: "why are these linked")
 
     valid: bool = True                    # structural soft-invalidation
     created_at: str = ""                  # transaction time
 
+    # ---- mutation provenance (RELATED_TO; written by kg/temporal.py) ----
+    disputed_by: list[dict] = field(default_factory=list)  # confidence-gated closure
+    #                                       (docs/TEMPORAL.md): a lower-trust claim that WOULD
+    #                                       have closed/superseded/retracted this fact but was too
+    #                                       far below its confidence. Each entry {episode, confidence,
+    #                                       at, action} records the losing claim so a conflicts
+    #                                       sweep can surface the disagreement instead of hiding it.
+    confirmed_by: list[str] = field(default_factory=list)  # episodes that re-asserted this fact
+    closed_at: str = ""                   # transaction time of the close/supersede ("" = never)
+    closed_by_episode: str = ""           # the episode whose assertion closed it
+    retracted_at: str = ""                # transaction time of the retraction ("" = never)
+    retracted_by_episode: str = ""        # the episode whose correction retracted it
+    seq: int = 0                          # monotonic per-store sequence — an IMMUTABLE
+    #                                       per-edge discriminator so two RELATED_TO edges for
+    #                                       the same (src,dst,rel,valid_at) can coexist (an
+    #                                       open→close→reopen on the SAME day). Assigned by
+    #                                       GraphStore.add_edge; persisted; part of key().
+
     def key(self) -> tuple:
-        """Per-edge identity in the MultiDiGraph. For a RELATED_TO fact the
-        discriminator is (canonical relationship id, valid_at) so a *reopened* fact and
-        its closed predecessor between the same pair are distinct parallel edges; the
-        common case (one open fact per predicate) collapses naturally."""
+        """Per-edge identity in the MultiDiGraph. For a RELATED_TO fact the discriminator is
+        (canonical relationship id, valid_at, seq): valid_at keeps a reopened fact distinct
+        from its closed predecessor, and `seq` (a monotonic per-store counter) additionally
+        keeps two edges with the SAME (src,dst,rel,valid_at) — a same-day close→reopen —
+        apart, since day-granularity dates alone would collide. Non-fact edges have no
+        temporal identity, so their discriminators stay empty and they collapse naturally."""
         rel = self.rel_tag or ""
-        disc = self.valid_at if self.etype == EdgeType.RELATED_TO else ""
-        return (self.etype.value, rel, disc)
+        is_fact = self.etype == EdgeType.RELATED_TO
+        disc = self.valid_at if is_fact else ""
+        seq = self.seq if is_fact else ""
+        return (self.etype.value, rel, disc, seq)
 
 
 # --------------------------------------------------------------------------- #
@@ -206,12 +271,14 @@ class Edge:
 # --------------------------------------------------------------------------- #
 def episode_node(node_id: str, *, modality: Modality, source_ref: str,
                  raw_text: str | None, content_hash: str, ts: str,
-                 description: str | None = None, ingested_at: str = "") -> Node:
+                 description: str | None = None, ingested_at: str = "",
+                 media_paths: list[str] | None = None,
+                 title: str | None = None) -> Node:
     return Node(
         id=node_id, ntype=NodeType.EPISODE, name=source_ref, modality=modality,
-        source_ref=source_ref, raw_text=raw_text, description=description,
+        title=title, source_ref=source_ref, raw_text=raw_text, description=description,
         content_hash=content_hash, created_at=ts, last_modified=ts,
-        ingested_at=ingested_at or ts,
+        ingested_at=ingested_at or ts, media_paths=list(media_paths or []),
     )
 
 
@@ -233,9 +300,11 @@ def mention_node(node_id: str, *, surface: str, etype: EntityType, episode_id: s
                 episode_id=episode_id, char_span=char_span, created_at=ts, last_modified=ts)
 
 
-def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str) -> Node:
+def entity_node(node_id: str, *, name: str, etype: EntityType, ts: str,
+                category: EntityCategory | None = None) -> Node:
     return Node(id=node_id, ntype=NodeType.ENTITY, name=name,
-                entity_type=etype, created_at=ts, last_modified=ts)
+                entity_type=etype, entity_category=category or entity_category_for_type(etype),
+                created_at=ts, last_modified=ts)
 
 
 def tag_node(node_id: str, *, canonical: str, ts: str) -> Node:

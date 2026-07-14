@@ -17,18 +17,22 @@ sequentially in the main thread so shared state stays consistent.
 from __future__ import annotations
 
 import hashlib
+import html
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
-from .canonicalize import Canonicalizer
+from .canonicalize import Canonicalizer, normalize_key
 from .chunkers import chunk_for
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
 from .extractors import Extraction, Extractor, extract_text_sectioned
-from .models import (Edge, EdgeType, EntityType, Modality, NodeType, Provenance,
-                     episode_node, mention_node, quantity_node, source_node)
+from .models import (Edge, EdgeType, EntityCategory, EntityType, Modality, NodeType,
+                     Provenance, entity_category_for_type, episode_node, mention_node,
+                     quantity_node, source_node)
 from .profiler import span as prof_span
 from .store import GraphStore, now_iso
 from .temporal import apply_fact
@@ -64,6 +68,70 @@ def _sha256(*parts: str) -> str:
     return h.hexdigest()
 
 
+def _modality_of(label: str | None) -> Modality:
+    """Map a free-form modality label to the enum. Unknown labels fall back to FILE so a new
+    medium never crashes ingest — the surface choice keys off raw_text presence, not this."""
+    try:
+        return Modality((label or "text").lower())
+    except ValueError:
+        return Modality.FILE
+
+
+_BARE_URL = re.compile(r"^https?://\S+$")
+_HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _concise_title(text: str | None, limit: int = 80) -> str | None:
+    """One display line derived from analyzed text (PROTOCOL §7.2): first sentence,
+    whitespace collapsed, capped."""
+    flat = " ".join((text or "").split())
+    if not flat:
+        return None
+    first = re.split(r"(?<=[.!?])\s", flat, maxsplit=1)[0]
+    return first[:limit].rstrip() or None
+
+
+def _resolve_link_title(url: str, timeout: float = 4.0) -> str | None:
+    """Best-effort <title> of a captured link (PROTOCOL §7.2). Fail-soft: any network or
+    parse problem yields None — the snippet/description still carry the content.
+    KG_LINK_TITLES=0 disables the fetch entirely (hermetic/offline runs)."""
+    if os.environ.get("KG_LINK_TITLES", "1") == "0":
+        return None
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "you-kg/0.1"})
+        # The socket timeout is PER read — a tarpit dripping one byte per few seconds
+        # would keep a single resp.read(65536) alive for hours inside the sequential
+        # ingest loop. Chunked reads under a wall-clock deadline cap the whole fetch.
+        deadline = time.monotonic() + 2 * timeout
+        raw = b""
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            while len(raw) < 65536 and time.monotonic() < deadline:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                raw += chunk
+        m = _HTML_TITLE.search(raw.decode("utf-8", "ignore"))
+        return _concise_title(html.unescape(m.group(1)), limit=200) if m else None
+    except Exception:  # noqa: BLE001 — a dead link must never fail ingest
+        return None
+
+
+def derive_title(item: CorpusItem, ext: Extraction) -> str | None:
+    """PROTOCOL §7.2 title derivation at ingest. A capture-supplied title (the user's
+    written text, or an app-resolved source title) wins; a bare-link capture resolves
+    the page/video title; described media derive a concise title from the analyzed
+    description. Plain text notes carry no title — clients fall back to the snippet."""
+    if item.title:
+        return item.title
+    if item.text is None:                       # described media (image/audio/pdf/…)
+        return _concise_title(ext.description)
+    text = item.text.strip()
+    if _BARE_URL.match(text):                   # a captured bare link
+        return _resolve_link_title(text)
+    return None
+
+
 class Ingestor:
     def __init__(self, store: GraphStore, extractor: Extractor, embedder: Embedder,
                  canon: Canonicalizer, config: Config):
@@ -91,23 +159,41 @@ class Ingestor:
         # 1. intake + cache decisions. Episodes are APPEND-ONLY: identical content is
         #    skipped; changed content under a known id appends a new immutable episode
         #    version (the old one stays — both are real historical entries).
+        #    Intra-batch siblings must see each other's claims: nothing is written until
+        #    step 4, so this batch's claimed hashes + ep_ids are tracked locally — keeping
+        #    the content-hash skip and append-only versioning identical to a per-item path
+        #    (two same-content items dedup; two same-id, different-content items version)
+        #    instead of silently colliding on add_node.
         pending: list[tuple[CorpusItem, str, str]] = []  # item, hash, episode_id
+        batch_hashes: set[str] = set()
+        batch_ep_ids: set[str] = set()
         for item in items:
-            content = item.text if item.modality == "text" else (item.image_path or "")
-            h = _sha256(item.modality, content)
-            if h in self.store.hash_cache:
+            # TEXT-surfaced items hash on their text; described media (no raw_text) hash on
+            # the artifact path so two distinct uploads never collide. The event-date
+            # (created_at) and stable raw id are SALTED into the key: two deliberate
+            # captures may have byte-identical text and timestamps but are still distinct
+            # episodes, while a true re-ingest reuses the same id and still skips.
+            content = item.text if item.text is not None else (item.image_path or "")
+            h = _sha256(item.modality, content, item.created_at or "", item.id)
+            if h in self.store.hash_cache or h in batch_hashes:
                 report.skipped += 1
                 continue
             base_id = f"ep_{item.id}"
             ep_id = base_id
-            if self.store.has_node(base_id):
-                if self.store.get_node(base_id).content_hash == h:
-                    report.skipped += 1
+            if self.store.has_node(base_id) or base_id in batch_ep_ids:
+                existing = self.store.get_node(base_id)
+                if existing is not None and existing.content_hash == h:
+                    report.skipped += 1          # identical episode already in the store
                     continue
-                v = 1
-                while self.store.has_node(f"{base_id}_v{v}"):
+                if existing is not None and self._legacy_unchanged(item, content, existing, h):
+                    report.skipped += 1          # unchanged content under the OLD hash formula
+                    continue
+                v = 1                            # same id, new content → append a version
+                while self.store.has_node(f"{base_id}_v{v}") or f"{base_id}_v{v}" in batch_ep_ids:
                     v += 1
                 ep_id = f"{base_id}_v{v}"
+            batch_hashes.add(h)
+            batch_ep_ids.add(ep_id)
             pending.append((item, h, ep_id))
 
         if not pending:
@@ -121,6 +207,15 @@ class Ingestor:
         if errors:
             report.notes.append(f"extraction failed for {len(errors)} item(s); "
                                 f"first error: {errors[0]}")
+            # DROP the items whose extractor raised: don't embed/write an episode and don't
+            # record its hash, so a later retry reprocesses it from scratch instead of
+            # hitting a recorded hash and skipping (the extraction would be lost forever).
+            kept = [(p, ext) for p, ext in zip(pending, extractions) if ext is not None]
+            pending = [p for p, _ in kept]
+            extractions = [ext for _, ext in kept]
+            if not pending:
+                report.seconds = time.time() - t0
+                return report
 
         # 3. embed episode surfaces (raw text / image description) in one batch
         surfaces = [self._embed_surface(item, ext)
@@ -156,7 +251,8 @@ class Ingestor:
             for i, ((item, h, ep_id), ext, vec) in enumerate(
                     zip(pending, extractions, ep_vecs)):
                 try:
-                    m, f, qf = self._write_episode(item, h, ep_id, ext, vec, ment_vecs)
+                    m, f, qf = self._write_episode(item, h, ep_id, ext, vec, ment_vecs,
+                                                   report)
                     new_eps.append(ep_id)
                     report.ingested += 1
                     report.mentions += m
@@ -181,6 +277,23 @@ class Ingestor:
 
         report.seconds = time.time() - t0
         return report
+
+    def _legacy_unchanged(self, item: CorpusItem, content: str, existing, new_h: str) -> bool:
+        """Back-compat with stores written before the created_at/id salt was added to the
+        content hash. Older builds hashed _sha256(modality, content); an unchanged re-ingest
+        of such a store misses the new hash and the existing episode's (legacy) content_hash,
+        and would version-append an ep_X_v1 duplicate for every episode. Detect the legacy
+        hash on the existing episode / the persisted cache, and on a match UPGRADE the stored
+        hash + cache entry to the new formula so the item is treated as unchanged and this
+        fallback fires at most once per item (the next re-ingest hits new_h up front)."""
+        legacy = _sha256(item.modality, content)
+        if existing.content_hash != legacy and legacy not in self.store.hash_cache:
+            return False
+        existing.content_hash = new_h
+        self.store.touch_node(existing.id)
+        self.store.add_hash(new_h, existing.id)
+        self.store.hash_cache.pop(legacy, None)
+        return True
 
     # ------------------------------------------------------------------ chunking
     def _expand_chunks(self, items: list[CorpusItem]) \
@@ -239,14 +352,19 @@ class Ingestor:
                                          confidence=1.0, weight=nw))
 
     # ----------------------------------------------------------------- extract
-    def _extract_all(self, items: list[CorpusItem]) -> tuple[list[Extraction], list[str]]:
-        def work(item: CorpusItem) -> tuple[Extraction, str | None]:
+    def _extract_all(self, items: list[CorpusItem]) \
+            -> tuple[list[Extraction | None], list[str]]:
+        """Extract each item under the LLM semaphore. A per-item extractor failure yields
+        None (not an empty Extraction) so the caller can DROP that item — it must not be
+        persisted with an empty extraction, or a later retry would hit its recorded hash
+        and skip it, losing the note's extraction forever."""
+        def work(item: CorpusItem) -> tuple[Extraction | None, str | None]:
             try:
-                if item.modality == "image":
+                if item.text is None:  # described media (image/audio/pdf/…): perceive it
                     return self.extractor.extract_image(item.image_path, item.label_hint), None
                 return self._extract_text(item.text, item.title), None
             except Exception as e:  # noqa: BLE001 — keep the batch alive, record the error
-                return Extraction(), f"{item.id}: {e!r}"
+                return None, f"{item.id}: {e!r}"
         with ThreadPoolExecutor(max_workers=self.config.semaphore_limit) as pool:
             pairs = list(pool.map(work, items))
         extractions = [p[0] for p in pairs]
@@ -257,39 +375,73 @@ class Ingestor:
         return extract_text_sectioned(self.extractor, text, title, self.config.long_doc_chars)
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
-        if item.modality == "image":
-            return ext.description or (item.label_hint or "an image")
+        if item.text is None:  # described media — the extractor's description is the surface
+            return ext.description or (item.label_hint or "media")
         text = item.text or ""
         if len(text) > self.config.long_doc_chars:
             return text[:self.config.lead_chars]
         return text
 
+    def _resolve_endpoint(self, surface: str, ent_map: dict[str, str],
+                          tag_map: dict[str, str]) -> tuple[str | None, bool]:
+        """Resolve a relation endpoint to a graph node. Prefer an entity named in THIS episode
+        (mention star), then one of this episode's tags, then an EXISTING tag anywhere in the
+        graph (canon's global tag-key map) — so a relation that names a tag the current note
+        didn't re-tag still lands on the real tag node instead of minting a shadow 'other'
+        entity. Only when nothing matches do we fall back to an 'other' entity anchor.
+        Returns (node_id, minted_fallback) so the caller can report the fallback mint."""
+        key = surface.lower()
+        hit = ent_map.get(key) or tag_map.get(key)
+        if hit:
+            return hit, False
+        existing_tag = self.canon._tag_keys.get(normalize_key(surface))
+        if existing_tag:
+            return existing_tag, False
+        return self.canon.resolve_entity(surface, EntityType.OTHER), True
+
     # ------------------------------------------------------------------- write
-    def _write_episode(self, item: CorpusItem, h: str, ep_id: str,
-                       ext: Extraction, vec, ment_vecs: dict) -> tuple[int, int, int]:
+    def _write_episode(self, item: CorpusItem, h: str, ep_id: str, ext: Extraction, vec,
+                       ment_vecs: dict, report: IngestReport | None = None) \
+            -> tuple[int, int, int]:
         ts = item.created_at or now_iso()
-        modality = Modality.IMAGE if item.modality == "image" else Modality.TEXT
-        raw = None if item.modality == "image" else item.text
+        modality = _modality_of(item.modality)
+        raw = item.text  # None for described media → the description becomes the surface
+        # media paths persisted on the episode: an item.media_paths list (e.g. an app note's
+        # attachments) wins; otherwise the single perceived artifact (image_path).
+        media = list(getattr(item, "media_paths", None)
+                     or ([item.image_path] if item.image_path else []))
         node = episode_node(ep_id, modality=modality, source_ref=item.source_ref,
                             raw_text=raw, content_hash=h, ts=ts,
-                            description=ext.description, ingested_at=now_iso())
+                            description=ext.description, ingested_at=now_iso(),
+                            media_paths=media,
+                            title=derive_title(item, ext))
         node.name = item.title or item.id
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)
         self.store.add_hash(h, ep_id)
 
+        def _note(msg: str) -> None:
+            if report is not None:
+                report.notes.append(f"{ep_id}: {msg}")
+
         # tags → TAGGED_AS (Episode → Tag)
         seen_tags: set[str] = set()
+        tag_map: dict[str, str] = {}      # surface(lower) -> tag id, for relation endpoints
         for t in ext.tags:
             tid = self.canon.resolve_tag(t)
             if not tid:
+                # normalize_key() reduced the surface to an empty key (all punctuation/
+                # stopword-stripped) → it can never become a tag node; surface the drop.
+                _note(f"tag {t!r} dropped (normalizes to an empty key)")
                 continue
+            tag_map[t.lower()] = tid
             self.store.add_edge(Edge(src=ep_id, dst=tid, etype=EdgeType.TAGGED_AS,
                                     provenance=Provenance.EXTRACTED, confidence=1.0))
             if tid not in seen_tags:          # df = # episodes referencing the tag (dedup
                 self.canon.bump_doc_frequency(tid)   # duplicate surfaces / re-canonicalized
                 seen_tags.add(tid)                   # variants within one episode)
             cname = self.store.get_node(tid).name
+            tag_map.setdefault(cname.lower(), tid)
             if cname not in node.tags:
                 node.tags.append(cname)
 
@@ -301,6 +453,18 @@ class Ingestor:
             eid = self.canon.resolve_entity(e.name, e.type)
             if not eid:
                 continue
+            # stamp the broad glyph category on the anchor; a later, more specific mention
+            # upgrades a generic THING (e.g. "Jordan" first seen as a thing, later as a
+            # person). getattr keeps the extractor-supplied category optional; the type-
+            # derived category is the fallback either way.
+            cat = getattr(e, "category", None) or entity_category_for_type(e.type)
+            anchor = self.store.get_node(eid)
+            if anchor and (anchor.entity_category is None
+                           or (anchor.entity_category == EntityCategory.THING
+                               and cat != EntityCategory.THING)):
+                anchor.entity_category = cat
+                anchor.last_modified = ts
+                self.store.touch_node(eid)
             ent_map[e.name.lower()] = eid
             mid = f"men_{self._mention_seq:05d}"
             self._mention_seq += 1
@@ -319,13 +483,28 @@ class Ingestor:
                 self.canon.bump_doc_frequency(eid)
                 seen_ents.add(eid)
 
-        # relations → bi-temporal facts (open / confirm / close / supersede)
+        # relations → bi-temporal facts (open / confirm / close / supersede). An endpoint
+        # resolves to an ENTITY if one was named (mention star), else to a TAG if it names
+        # one of this episode's tags OR an existing tag anywhere in the graph (so a
+        # tag→entity / tag→tag relation lands on the real tag node instead of a shadow
+        # 'other' entity), else falls back to a new 'other' entity anchor.
         n_facts = 0
         for r in ext.relations:
-            s = ent_map.get(r.source.lower()) or self.canon.resolve_entity(r.source, EntityType.OTHER)
-            t = ent_map.get(r.target.lower()) or self.canon.resolve_entity(r.target, EntityType.OTHER)
-            if not s or not t or s == t or r.confidence < 0.1:
+            s, s_minted = self._resolve_endpoint(r.source, ent_map, tag_map)
+            t, t_minted = self._resolve_endpoint(r.target, ent_map, tag_map)
+            if not s or not t or r.confidence < 0.1:
                 continue
+            if s == t:
+                # self-loop after canonicalization (both endpoints resolved to the same
+                # node) — never a real fact; drop it visibly rather than silently.
+                _note(f"relation {r.source!r}→{r.target!r} dropped (endpoints resolve to "
+                      f"the same node)")
+                continue
+            for role, surface, minted in (("source", r.source, s_minted),
+                                          ("target", r.target, t_minted)):
+                if minted:
+                    _note(f"relation endpoint {surface!r} ({role}) minted as a new 'other' "
+                          f"entity (not a named entity/tag — possible typo)")
             already = set(self.store.edge_rel_tags(s, t))
             seen_here: set[str] = set()
             for label in r.labels[:self.config.max_relation_labels]:
@@ -339,7 +518,9 @@ class Ingestor:
                                     status=r.status, at=ts, valid_from=r.valid_from,
                                     valid_to=r.valid_to, provenance=r.provenance,
                                     confidence=r.confidence, episode_id=ep_id)
-                if action != "skip":
+                # "dispute" mutated an existing edge's disputed_by (a gated close) rather
+                # than writing a fact, and "skip" did nothing — neither is a new fact.
+                if action not in ("skip", "dispute"):
                     n_facts += 1
 
         # quantities → a fresh QUANTITY node per OCCURRENCE + one edge from its subject.
@@ -348,10 +529,12 @@ class Ingestor:
         # occurrences both stay distinct and summable without regex-parsing names.
         n_quantity = 0
         for qf in ext.facts:
-            sid = ent_map.get(qf.subject.lower()) or self.canon.resolve_entity(
-                qf.subject, EntityType.OTHER)
+            sid, s_minted = self._resolve_endpoint(qf.subject, ent_map, tag_map)
             if not sid:
                 continue
+            if s_minted:
+                _note(f"quantity subject {qf.subject!r} minted as a new 'other' entity "
+                      f"(not a named entity/tag — possible typo)")
             rid = self.canon.resolve_relation(qf.predicate)
             if not rid:
                 continue

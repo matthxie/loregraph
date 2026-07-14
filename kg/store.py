@@ -15,6 +15,7 @@ than overwriting — `close_facts` / `find_facts` are the helpers the temporal i
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -67,6 +68,7 @@ class GraphStore:
         self.vectors = VectorIndex(self.config.embed_dim)
         self.hash_cache: dict[str, str] = {}  # content_hash -> episode node id
         self._ep_count: int | None = None     # cached len(EPISODE nodes), see episode_count()
+        self._edge_seq: int = 0               # monotonic counter → Edge.seq (reopen discriminator)
         # Mutation bookkeeping: save() persists only what changed (write-through), and
         # retrieval-side caches (projection / BM25) key off `version` to know when the
         # graph has moved under them. Every mutator below bumps _touch().
@@ -149,10 +151,18 @@ class GraphStore:
             return
         if not edge.created_at:
             edge.created_at = now_iso()
-        etype, rel, disc = edge.key()
+        # a fact edge gets a fresh monotonic seq so a same-(src,dst,rel,valid_at) reopen (a
+        # same-day close→reopen) is a DISTINCT parallel edge, not a collapsed collision. Every
+        # RELATED_TO add_edge is a genuinely new fact (confirm/close/backfill mutate in place),
+        # so a unique seq here is always correct. Structural edges keep seq=0 → they still
+        # collapse by identity below.
+        if edge.etype == EdgeType.RELATED_TO:
+            self._edge_seq += 1
+            edge.seq = self._edge_seq
+        etype, rel, disc, seq = edge.key()
         if etype in _SYMMETRIC_ETYPES and edge.src > edge.dst:  # pin canonical orientation
             edge.src, edge.dst = edge.dst, edge.src
-        gkey = f"{etype}:{rel}:{disc}"
+        gkey = f"{etype}:{rel}:{disc}:{seq}"
         # collapse a duplicate of the SAME edge identity, keeping the stronger one.
         existing = self.g.get_edge_data(edge.src, edge.dst)
         if existing and gkey in existing:
@@ -166,6 +176,11 @@ class GraphStore:
             weight=edge.weight, valid_at=edge.valid_at, invalid_at=edge.invalid_at,
             belief=edge.belief.value if isinstance(edge.belief, Belief) else edge.belief,
             episode_id=edge.episode_id, valid=edge.valid, created_at=edge.created_at,
+            via=list(edge.via or []), seq=edge.seq,
+            disputed_by=list(edge.disputed_by or []),
+            confirmed_by=list(edge.confirmed_by or []),
+            closed_at=edge.closed_at, closed_by_episode=edge.closed_by_episode,
+            retracted_at=edge.retracted_at, retracted_by_episode=edge.retracted_by_episode,
         )
         self._dirty_edges.add((edge.src, edge.dst, gkey))
         self._touch()
@@ -183,7 +198,8 @@ class GraphStore:
             d = (self.g.get_edge_data(src, dst) or {}).get(gkey)
             if d is not None and old_valid_at != d.get("valid_at", ""):
                 self._deleted_edge_rows.add(
-                    (src, dst, d["etype"], d.get("rel_tag") or "", old_valid_at))
+                    (src, dst, d["etype"], d.get("rel_tag") or "", old_valid_at,
+                     int(d.get("seq", 0))))
         self._dirty_edges.add((src, dst, gkey))
         self._touch()
 
@@ -191,7 +207,13 @@ class GraphStore:
     def find_facts(self, src: str, dst: str | None = None, rel_tag: str | None = None,
                    open_only: bool = False):
         """Yield (dst, gkey, data) for RELATED_TO fact edges out of `src`, optionally
-        filtered by target / predicate / still-open (`invalid_at == ""`)."""
+        filtered by target / predicate / still-open (`invalid_at == ""`).
+
+        RETRACTED facts (belief flip: the fact was never actually true) are NEVER
+        yielded — a retraction removes the edge from every read path (current and
+        as-of-T, matching `fact_active`) AND every write path: a never-true fact must
+        not be confirmed, closed, backfilled or re-disputed. kg/temporal.py's
+        retract-first case writes a fresh RETRACTED edge instead of resurrecting one."""
         if src not in self.g:
             return
         for v, edges in self.g.succ[src].items():
@@ -200,18 +222,26 @@ class GraphStore:
             for gkey, data in edges.items():
                 if data.get("etype") != EdgeType.RELATED_TO.value:
                     continue
+                if data.get("belief", Belief.ASSERTED.value) == Belief.RETRACTED.value:
+                    continue
                 if rel_tag is not None and data.get("rel_tag") != rel_tag:
                     continue
                 if open_only and data.get("invalid_at", ""):
                     continue
                 yield v, gkey, data
 
-    def close_facts(self, src: str, dst: str, rel_tag: str, at: str) -> int:
+    def close_facts(self, src: str, dst: str, rel_tag: str, at: str,
+                    episode_id: str = "") -> int:
         """Close every still-open (src→dst, rel_tag) fact at time `at` (set invalid_at).
-        Returns the number closed. The edge stays in the graph — just no longer current."""
+        Returns the number closed. The edge stays in the graph — just no longer current.
+        Stamps `closed_at` (= the end date) and `closed_by_episode` (the asserting
+        episode) as mutation provenance."""
         closed = 0
         for _v, gkey, data in self.find_facts(src, dst, rel_tag, open_only=True):
             data["invalid_at"] = at
+            data["closed_at"] = at
+            if episode_id:
+                data["closed_by_episode"] = episode_id
             self.touch_edge(src, dst, gkey)
             closed += 1
         return closed
@@ -298,8 +328,11 @@ class GraphStore:
             CREATE TABLE IF NOT EXISTS edges(
                 src TEXT, dst TEXT, etype TEXT, rel_tag TEXT, provenance TEXT,
                 confidence REAL, weight REAL, valid_at TEXT, invalid_at TEXT,
-                belief TEXT, episode_id TEXT, valid INTEGER, created_at TEXT,
-                PRIMARY KEY (src, dst, etype, rel_tag, valid_at));
+                belief TEXT, episode_id TEXT, valid INTEGER, created_at TEXT, via TEXT,
+                seq INTEGER DEFAULT 0, closed_at TEXT, closed_by_episode TEXT,
+                retracted_at TEXT, retracted_by_episode TEXT, confirmed_by TEXT,
+                disputed_by TEXT,
+                PRIMARY KEY (src, dst, etype, rel_tag, valid_at, seq));
             CREATE TABLE IF NOT EXISTS vectors(
                 node_id TEXT, kind TEXT, vec BLOB, PRIMARY KEY (node_id, kind));
             CREATE TABLE IF NOT EXISTS cache(
@@ -307,6 +340,21 @@ class GraphStore:
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        # migrate pre-existing edges tables in place (a store db should keep loading/saving
+        # without a manual rebuild). Each ADD COLUMN is a no-op if the column is already
+        # there. NOTE: `seq` joins the PRIMARY KEY only in a freshly-created table — SQLite
+        # can't add a column to an existing PK, so a db created before this change keeps its
+        # old (…, valid_at) PK until a rebuild recreates it; the extra columns still
+        # round-trip. Rebuild is required for the same-day reopen fix to take full effect on
+        # a pre-existing db.
+        for col, decl in (("via", "TEXT"), ("seq", "INTEGER DEFAULT 0"),
+                          ("closed_at", "TEXT"), ("closed_by_episode", "TEXT"),
+                          ("retracted_at", "TEXT"), ("retracted_by_episode", "TEXT"),
+                          ("confirmed_by", "TEXT"), ("disputed_by", "TEXT")):
+            try:
+                con.execute(f"ALTER TABLE edges ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass  # column already present
         con.commit()
         con.close()
 
@@ -333,7 +381,7 @@ class GraphStore:
         if self._deleted_edge_rows:
             cur.executemany(
                 "DELETE FROM edges WHERE src=? AND dst=? AND etype=? AND rel_tag=? "
-                "AND valid_at=?", sorted(self._deleted_edge_rows))
+                "AND valid_at=? AND seq=?", sorted(self._deleted_edge_rows))
         cur.executemany(
             "INSERT OR REPLACE INTO nodes(id, ntype, payload) VALUES (?,?,?)",
             [(n.id, n.ntype.value, n.to_payload())
@@ -348,9 +396,15 @@ class GraphStore:
                               d["confidence"], d["weight"], d.get("valid_at", ""),
                               d.get("invalid_at", ""), d.get("belief", "asserted"),
                               d.get("episode_id", ""), int(d.get("valid", True)),
-                              d.get("created_at", "")))
+                              d.get("created_at", ""), json.dumps(d.get("via") or []),
+                              int(d.get("seq", 0)), d.get("closed_at", ""),
+                              d.get("closed_by_episode", ""), d.get("retracted_at", ""),
+                              d.get("retracted_by_episode", ""),
+                              json.dumps(d.get("confirmed_by") or []),
+                              json.dumps(d.get("disputed_by") or [])))
         cur.executemany(
-            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", edge_rows)
+            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            edge_rows)
         vec_rows = []
         for kind, nid in sorted(self._dirty_vectors):
             vec = self.vectors.get(kind, nid)
@@ -388,15 +442,34 @@ class GraphStore:
             self.nodes[node.id] = node
             self.g.add_node(node.id, ntype=node.ntype.value)
         for row in cur.execute("SELECT * FROM edges"):
+            # tolerate a pre-`via`/`seq` row (13 cols) as well as the current 21-col shape
+            # (via + seq + the mutation-provenance columns) — read extras by index.
             (src, dst, etype, rel_tag, prov, conf, weight, valid_at, invalid_at,
-             belief, episode_id, valid, created) = row
+             belief, episode_id, valid, created) = row[:13]
+            via_raw = row[13] if len(row) > 13 and row[13] is not None else ""
+            seq = int(row[14]) if len(row) > 14 and row[14] is not None else 0
+            closed_at = row[15] if len(row) > 15 and row[15] is not None else ""
+            closed_by = row[16] if len(row) > 16 and row[16] is not None else ""
+            retracted_at = row[17] if len(row) > 17 and row[17] is not None else ""
+            retracted_by = row[18] if len(row) > 18 and row[18] is not None else ""
+            confirmed_raw = row[19] if len(row) > 19 and row[19] is not None else ""
+            disputed_raw = row[20] if len(row) > 20 and row[20] is not None else ""
             rel_tag = rel_tag or None
-            disc = valid_at if etype == EdgeType.RELATED_TO.value else ""
+            is_fact = etype == EdgeType.RELATED_TO.value
+            disc = valid_at if is_fact else ""
+            skey = seq if is_fact else ""
+            if is_fact and seq > self._edge_seq:
+                self._edge_seq = seq  # keep the counter ahead of the highest persisted seq
             self.g.add_edge(
-                src, dst, key=f"{etype}:{rel_tag or ''}:{disc}", etype=etype,
+                src, dst, key=f"{etype}:{rel_tag or ''}:{disc}:{skey}", etype=etype,
                 rel_tag=rel_tag, provenance=prov, confidence=conf, weight=weight,
                 valid_at=valid_at, invalid_at=invalid_at, belief=belief,
-                episode_id=episode_id, valid=bool(valid), created_at=created)
+                episode_id=episode_id, valid=bool(valid), created_at=created,
+                via=(json.loads(via_raw) if via_raw else []), seq=seq,
+                closed_at=closed_at, closed_by_episode=closed_by,
+                retracted_at=retracted_at, retracted_by_episode=retracted_by,
+                confirmed_by=(json.loads(confirmed_raw) if confirmed_raw else []),
+                disputed_by=(json.loads(disputed_raw) if disputed_raw else []))
         for node_id, kind, blob in cur.execute("SELECT node_id, kind, vec FROM vectors"):
             vec = np.frombuffer(blob, dtype=np.float32)
             if vec.size:
@@ -412,18 +485,23 @@ class GraphStore:
         for n in self.nodes.values():
             by_type[n.ntype.value] = by_type.get(n.ntype.value, 0) + 1
         by_edge: dict[str, int] = {}
-        open_facts = closed_facts = 0
+        open_facts = closed_facts = retracted_facts = 0
         for _u, _v, d in self.g.edges(data=True):
             by_edge[d["etype"]] = by_edge.get(d["etype"], 0) + 1
             if d["etype"] == EdgeType.RELATED_TO.value:
-                if d.get("invalid_at", ""):
+                if d.get("belief", Belief.ASSERTED.value) == Belief.RETRACTED.value:
+                    retracted_facts += 1   # never-valid corrections: neither open nor closed
+                elif d.get("invalid_at", ""):
                     closed_facts += 1
                 else:
                     open_facts += 1
+        facts = {"open": open_facts, "closed": closed_facts}
+        if retracted_facts:
+            facts["retracted"] = retracted_facts
         return {
             "nodes": len(self.nodes),
             "edges": self.g.number_of_edges(),
             "by_node_type": by_type,
             "by_edge_type": by_edge,
-            "facts": {"open": open_facts, "closed": closed_facts},
+            "facts": facts,
         }

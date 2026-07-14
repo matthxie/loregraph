@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 from collections import Counter
 
@@ -26,9 +25,10 @@ import numpy as np
 from .backoff import call_with_backoff
 from .config import Config
 from .embedders import Embedder
+from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .profiler import span as prof_span
-from .models import (SELF_ENTITY_ID, Edge, EdgeType, EntityType, NodeType,
+from .models import (SELF_ENTITY_ID, Belief, Edge, EdgeType, EntityType, NodeType,
                      Provenance, entity_node, relation_tag_node, tag_node)
 from .store import GraphStore, now_iso
 
@@ -44,10 +44,14 @@ _REL_SEP = re.compile(r"[\s\-]+")
 # limitation of personal-web mode (best on natural, non-numeral corpora).
 _FIRST_PERSON = frozenset({"i", "me", "my", "mine", "myself"})
 
-# Relational function words stripped when computing a relation's *match key*, so
-# "is_friend_of" and "is_friends_with" reduce to the same content word ("friend").
+# Relational function words stripped from the INTERIOR of a relation's *match key*, so
+# "is_friend_of" and "friend_of" reduce to the same content key ("friend_of").
 # "by" is POINTEDLY excluded — it marks the passive/inverse, so "managed_by" must
-# stay distinct from "manages".
+# stay distinct from "manages". A TRAILING function word is likewise kept by
+# relation_content_key(): the final preposition is the predicate's argument-structure
+# marker ("works_with" symmetric comitative vs "works_at"/"works_on" directional), so
+# stripping it folded directional predicates onto symmetric content keys and got their
+# orientation pinned ("Acme works_at me"-order facts).
 _REL_FUNCTION_WORDS = frozenset(
     "is are am was were be been being a an the of with to from in on at for as "
     "that who whom which into onto and".split())
@@ -75,21 +79,35 @@ _ANTONYM_LEMMAS = (
 _FUNCTIONAL_SURFACES = ("lives_in", "located_in", "employed_by", "born_in",
                         "died_in", "based_in", "headquartered_in", "capital_of", "ceo_of",
                         "president_of", "spouse_of", "married_to", "moved_to")
+# Surfaces reduce to content keys at import, which keep the trailing preposition — so
+# "friend_of" and "friends_with" are two keys (both listed, both symmetric), and a
+# directional "works_at"/"works_on" can never collide into "works_with"'s symmetric key.
 _SYMMETRIC_SURFACES = ("works_with", "collaborates_with", "married_to", "spouse_of",
-                       "sibling_of", "friend_of", "is_friend_of", "colleague_of",
-                       "partnered_with", "co_founder_of")
+                       "sibling_of", "friend_of", "is_friend_of", "friends_with",
+                       "colleague_of", "partnered_with", "co_founder_of")
+
+
+def _trailing_marker(s: str) -> str:
+    """The kept trailing function word of a content key ('' when it ends in a content token)."""
+    last = relation_content_key(s).rsplit("_", 1)[-1]
+    return last if last in _REL_FUNCTION_WORDS else ""
 
 
 def relation_merge_vetoed(a: str, b: str) -> bool:
     """Deterministic guard run BEFORE any relation pair reaches the L3 LLM: force the
     two predicates to stay DISTINCT (never even offered as a merge option) when they are
-    passive/inverse voices or known opposites. This guarantees a model slip can't produce
-    a wrong relation merge — the whole reason resolve_relation is merge-only-no-link."""
+    passive/inverse voices, argument-structure mismatches, or known opposites. This
+    guarantees a model slip can't produce a wrong relation merge — the whole reason
+    resolve_relation is merge-only-no-link."""
     na, nb = normalize_relation(a), normalize_relation(b)
     if not na or not nb:
         return True
     # passive/inverse asymmetry: exactly one side carries the "_by" direction marker
     if na.endswith("_by") != nb.endswith("_by"):
+        return True
+    # argument-structure mismatch: different trailing markers (works_at vs works_with) must
+    # never merge even when embeddings sit close — same rationale as the "_by" rule
+    if _trailing_marker(a) != _trailing_marker(b):
         return True
     ka = set(relation_content_key(a).split("_"))
     kb = set(relation_content_key(b).split("_"))
@@ -149,6 +167,16 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+def _union_list(a: list | None, b: list | None) -> list:
+    """Order-preserving union of two provenance lists, tolerating unhashable elements (the
+    disputed_by entries are dicts). Used to fold two duplicate facts' corroboration together."""
+    out: list = list(a or [])
+    for item in (b or []):
+        if item not in out:
+            out.append(item)
+    return out
+
+
 def _singularize(w: str) -> str:
     """Light noun-oriented depluralisation of one token (shared by the tag and
     relation keys). Imperfect on verbs but deterministic; the embedding gate and
@@ -188,14 +216,22 @@ def _verb_stem(w: str) -> str:
 
 
 def relation_content_key(s: str) -> str:
-    """Match key for relation consolidation — drop relational function words and stem the
-    remaining content tokens (tense + number), so surface / inflectional / tense variants
-    of the same predicate collapse while genuinely different predicates don't:
+    """Match key for relation consolidation — drop INTERIOR relational function words and stem
+    the remaining content tokens (tense + number), KEEPING a trailing function word: like the
+    pointedly-unstripped "_by" (passive/inverse marker), the final preposition is the
+    predicate's argument-structure marker, so dropping it folded directional predicates onto
+    symmetric content keys (works_at → "work" == works_with → "work") and got their
+    orientation pinned. Surface / inflectional / tense variants of the same predicate still
+    collapse while genuinely different predicates don't:
 
-        is_friend_of / is_friends_with / friends-with → "friend"   (merge)
-        lives_in / lived_in / living_in               → "liv"      (merge — tense folded)
-        is_friend_of vs is_enemy_of                   → friend / enemy   (distinct: content word)
-        manages      vs managed_by                    → manag / manag_by (distinct: "by" kept)
+        is_friend_of / friend_of / friend-of → "friend_of"  (merge — interior words dropped)
+        lives_in / lived_in / living_in      → "liv_in"     (merge — tense folded)
+        works_with / worked_with             → "work_with"  (merge)
+        works_at  vs works_with              → work_at / work_with   (distinct: trailing marker)
+        friend_of vs friends_with            → friend_of / friend_with (distinct nodes; BOTH
+                                               symmetric via _SYMMETRIC_SURFACES)
+        is_friend_of vs is_enemy_of          → friend_of / enemy_of  (distinct: content word)
+        manages      vs managed_by           → manag / manag_by      (distinct: "by" kept)
 
     If a label is *only* function words ("is_a"), fall back to the full form so it still
     resolves to a stable key.
@@ -203,8 +239,13 @@ def relation_content_key(s: str) -> str:
     norm = normalize_relation(s)
     if not norm:
         return ""
-    content = [_verb_stem(t) for t in norm.split("_") if t not in _REL_FUNCTION_WORDS]
-    return "_".join(content) if content else norm
+    toks = [t for t in norm.split("_") if t]
+    content = [_verb_stem(t) for t in toks if t not in _REL_FUNCTION_WORDS]
+    if not content:
+        return norm
+    if toks[-1] in _REL_FUNCTION_WORDS:
+        content.append(toks[-1])       # trailing argument-structure marker kept as-is
+    return "_".join(content)
 
 
 # Cardinality lexicons reduced to content keys (see _FUNCTIONAL_SURFACES above).
@@ -228,6 +269,29 @@ def normalize_key(s: str) -> str:
     return " ".join(toks)
 
 
+# Typed proper-noun entity kinds: their surfaces are NAMES, not common nouns, so the
+# last-token depluralisation in normalize_key() is unwanted — it makes "Socks"→"sock"
+# collide with "Sock" and "Paris"→"pari" with "Pari". Skip singularization for these.
+_PROPER_TYPES = frozenset({EntityType.PERSON, EntityType.PLACE, EntityType.ORG})
+
+
+def _is_proper_surface(name: str, etype: EntityType | None) -> bool:
+    """A capitalized proper noun of a person/place/org type — a NAME, not a common noun."""
+    return (etype in _PROPER_TYPES and bool(name)
+            and name.lstrip()[:1].isupper())
+
+
+def entity_key(name: str, etype: EntityType | None = None) -> str:
+    """L1 key for an ENTITY surface. Same as normalize_key, but for a capitalized proper-noun
+    person/place/org it does NOT singularize the last token — so two distinct names differing
+    only by a trailing 's' ("Socks"/"Sock", "Paris"/"Pari") stay distinct instead of L1-merging
+    on a bogus depluralisation. Common-noun / term / other surfaces keep singularization."""
+    if _is_proper_surface(name, etype):
+        s = _PUNCT.sub(" ", (name or "").lower())
+        return _WS.sub(" ", s).strip()
+    return normalize_key(name)
+
+
 def char_entropy(s: str) -> float:
     s = (s or "").lower()
     if not s:
@@ -247,7 +311,7 @@ class Canonicalizer:
         self._relation_keys: dict[str, str] = {}  # normalized key -> relation-tag id
         self._emb_cache: dict[str, np.ndarray] = {}  # surface -> embedding (batch primed)
         self._next = Counter()
-        self._l3_client = _L3_UNSET                   # lazy OpenAI client (L3 tie-breaker)
+        self._l3_client = _L3_UNSET                   # lazy LLM client (L3 tie-breaker)
         self.l3_log: list[dict] = []                  # every L3 verdict, for the eval gate
         self.meter = UsageMeter()                     # L3 token/cost accounting (testrun)
         self._reindex()
@@ -277,7 +341,9 @@ class Canonicalizer:
                 for a in n.aliases:
                     self._tag_keys.setdefault(normalize_key(a), n.id)
             elif n.ntype == NodeType.ENTITY:
-                self._entity_keys[normalize_key(n.name)] = n.id
+                self._entity_keys[entity_key(n.name, n.entity_type)] = n.id
+                for a in n.aliases:
+                    self._entity_keys.setdefault(entity_key(a, n.entity_type), n.id)
             elif n.ntype == NodeType.RELATION:
                 self._relation_keys[relation_content_key(n.name)] = n.id
                 for a in n.aliases:
@@ -303,12 +369,16 @@ class Canonicalizer:
 
     # ------------------------------------------------------------------ shared
     def _synonymy(self, kind: str, surface: str, embedding: np.ndarray,
-                  new_id: str) -> None:
-        """L2: link/merge against existing same-kind nodes by cosine."""
+                  new_id: str, link_threshold: float | None = None) -> None:
+        """L2: link/merge against existing same-kind nodes by cosine. `link_threshold`
+        overrides the (entity) default so the TAG path can link at a looser bar without
+        changing entity synonymy — entities call this with the default."""
         if not self._entropy_ok(surface):
             return
+        floor = (self.config.syn_link_threshold if link_threshold is None
+                 else link_threshold)
         hits = self.store.vectors.search(kind, embedding, k=3,
-                                         floor=self.config.syn_link_threshold,
+                                         floor=floor,
                                          exclude={new_id})
         for other_id, cos in hits:
             self.store.add_edge(Edge(
@@ -323,17 +393,16 @@ class Canonicalizer:
 
     # ------------------------------------------------------------ L3 tie-breaker
     def _l3(self):
-        """Lazy OpenAI client for the L3 adjudicator, or None if disabled / no key
-        (offline parity: with no key the whole L3 path is skipped and resolve_* keep
+        """Lazy LLM client for the L3 adjudicator, or None if disabled / no provider
+        (offline parity: with no provider the whole L3 path is skipped and resolve_* keep
         their deterministic under-merge default)."""
         if not self.config.l3_enabled:
             return None
         if self._l3_client is _L3_UNSET:
             self._l3_client = None
-            if os.environ.get("OPENAI_API_KEY"):
+            if llm_available():
                 try:
-                    import openai
-                    self._l3_client = openai.OpenAI()
+                    self._l3_client = make_client()
                 except Exception:  # noqa: BLE001 — missing dep / bad env → stay disabled
                     self._l3_client = None
         return self._l3_client
@@ -360,13 +429,16 @@ class Canonicalizer:
         else:
             prompt = _L3_ENT_PROMPT.format(kind=kind, surface=surface, candidates=lines)
         verdict, reason = "NEW", ""
+        # explicit config override if the user changed it, else the active provider's
+        # default (None for CLI providers → the CLI's own default model).
+        model = resolve_model(self.config.l3_model, "gpt-4o-mini")
         try:
             with prof_span("canon.l3_llm"):
                 msg = call_with_backoff(lambda: client.chat.completions.create(
-                    model=self.config.l3_model, max_tokens=300, temperature=0,
+                    model=model, max_tokens=300, temperature=0,
                     messages=[{"role": "system", "content": _L3_SYS},
                               {"role": "user", "content": prompt}]))
-            self.meter.record("l3", self.config.l3_model, msg, label=surface)
+            self.meter.record("l3", model or "cli-default", msg, label=surface)
             text = msg.choices[0].message.content or "" if msg.choices else ""
             data = _extract_json(text) or {}
             verdict = str(data.get("verdict", "NEW")).strip()
@@ -387,6 +459,10 @@ class Canonicalizer:
 
     # -------------------------------------------------------------------- tags
     def resolve_tag(self, surface: str) -> str | None:
+        """Create-or-reuse a canonical TAG node: exact-key (L1) reuse, else embedding
+        merge (L2, at the looser TAG bar) into a near-identical existing tag, else mint
+        a new node and LINK it to similar tags (SIMILAR_TO). Uses the tag-specific
+        thresholds so it can merge/link more freely than entity resolution."""
         surface = (surface or "").strip()
         if not surface:
             return None
@@ -398,19 +474,19 @@ class Canonicalizer:
             self._add_alias(tid, surface)
             return tid
         vec = self._embed(surface)
-        # L2 merge gate (high bar) — only if entropy guard allows. NOTE: this uses a
-        # single global cosine threshold; TaxoCom's local-neighborhood thresholding
-        # (§3) is an accepted MVP simplification at ~1k tags.
+        # L2 merge gate — uses the TAG thresholds (looser than entity), only if the entropy
+        # guard allows. NOTE: this uses a single global cosine threshold; TaxoCom's
+        # local-neighborhood thresholding (§3) is an accepted MVP simplification at ~1k tags.
         if self._entropy_ok(surface):
             hits = self.store.vectors.search("tag", vec, k=5,
-                                            floor=self.config.syn_link_threshold)
-            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
+                                            floor=self.config.tag_syn_link_threshold)
+            if hits and hits[0][1] >= self.config.tag_syn_merge_threshold:  # L2 hard merge
                 tid = hits[0][0]
                 self._add_alias(tid, surface)
                 self._tag_keys[key] = tid
                 return tid
-            # L3: gray band [syn_link, syn_merge) → ask the LLM merge-or-new (no-op if disabled)
-            gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
+            # L3: gray band [link, merge) → ask the LLM merge-or-new (no-op if disabled)
+            gray = [(c, s) for c, s in hits if s < self.config.tag_syn_merge_threshold]
             tid = self._l3_adjudicate("tag", surface, gray)
             if tid:
                 self._add_alias(tid, surface)
@@ -421,7 +497,8 @@ class Canonicalizer:
         self.store.add_node(node)
         self.store.vectors.add("tag", tid, vec)
         self._tag_keys[key] = tid
-        self._synonymy("tag", surface, vec, tid)       # link (not merge)
+        self._synonymy("tag", surface, vec, tid,       # link (not merge), at the looser bar
+                       link_threshold=self.config.tag_syn_link_threshold)
         return tid
 
     def _add_alias(self, tag_id: str, surface: str) -> None:
@@ -462,6 +539,49 @@ class Canonicalizer:
             self._entity_keys[key] = SELF_ENTITY_ID
         return SELF_ENTITY_ID
 
+    # ------------------------------------------------------- entity type guards
+    def _types_compatible(self, existing: EntityType | None, incoming: EntityType) -> bool:
+        """Two entity types may share one node only if they don't CONTRADICT. OTHER (the
+        catch-all) is compatible with anything — a specific type just refines it. Two DIFFERENT
+        specific types (person vs place, org vs person) contradict → keep them apart rather than
+        silently collapsing a "Jordan the person" onto "Jordan the country"."""
+        if existing is None or existing == EntityType.OTHER or incoming == EntityType.OTHER:
+            return True
+        return existing == incoming
+
+    def _node_type_ok(self, node_id: str, incoming: EntityType) -> bool:
+        """True if `node_id` may host an `incoming`-typed mention. A node that lives in the
+        vector index but is missing from the store is treated as compatible (matches the old
+        hits[0] guard) — the vector search would never surface it in practice."""
+        cand = self.store.get_node(node_id)
+        return cand is None or self._types_compatible(cand.entity_type, incoming)
+
+    def _reconcile_type(self, node_id: str, incoming: EntityType) -> None:
+        """UPGRADE an existing OTHER-typed anchor to a specific type when a typed mention
+        resolves onto it (the reverse — a specific node meeting an OTHER mention — is a no-op;
+        the specific type already wins). Only ever narrows OTHER → specific, never re-types a
+        node that already carries a specific type."""
+        node = self.store.get_node(node_id)
+        if node is None:
+            return
+        if node.entity_type in (None, EntityType.OTHER) and incoming != EntityType.OTHER:
+            node.entity_type = incoming
+            node.last_modified = now_iso()
+            self.store.touch_node(node_id)
+
+    def _add_entity_alias(self, entity_id: str, surface: str) -> None:
+        """Persist a merged surface as an alias on the entity node (mirrors the tag path's
+        _add_alias) so identity survives a save/reload — _reindex rebuilds keys from name AND
+        aliases. Register the alias key too, so an intra-session repeat of the surface L1-hits."""
+        node = self.store.get_node(entity_id)
+        if node is None:
+            return
+        low = surface.strip().lower()
+        if low and low != node.name.lower() and low not in node.aliases:
+            node.aliases.append(low)
+            self.store.touch_node(entity_id)
+        self._entity_keys.setdefault(entity_key(surface, node.entity_type), entity_id)
+
     # ---------------------------------------------------------------- entities
     def resolve_entity(self, name: str, etype: EntityType) -> str | None:
         # personal-web: first-person references collapse onto ONE stable self anchor,
@@ -472,29 +592,54 @@ class Canonicalizer:
         name = (name or "").strip()
         if not name:
             return None
-        key = normalize_key(name)
+        key = entity_key(name, etype)
         if not key:
             return None
-        if key in self._entity_keys:                   # L1 hit
-            return self._entity_keys[key]
+        if key in self._entity_keys:                   # L1 hit (normalized name / proper-noun)
+            eid = self._entity_keys[key]
+            existing = self.store.get_node(eid)
+            # type reconciliation: an L1 name collision across INCOMPATIBLE specific types
+            # (person vs place) is two different real-world things sharing a name — fall
+            # through and mint a distinct anchor instead of collapsing them. Compatible / OTHER
+            # → reuse (and upgrade an OTHER anchor to the specific type the mention supplies).
+            if existing is None or self._types_compatible(existing.entity_type, etype):
+                self._reconcile_type(eid, etype)
+                return eid
         vec = self._embed(name)
         if self._entropy_ok(name):
             hits = self.store.vectors.search("entity", vec, k=5,
                                             floor=self.config.syn_link_threshold)
-            if hits and hits[0][1] >= self.config.syn_merge_threshold:  # L2 hard merge
-                eid = hits[0][0]
-                self._entity_keys[key] = eid
+            # L2 hard merge: scan the hits IN ORDER for the best TYPE-COMPATIBLE candidate at
+            # or above the merge bar — NOT just hits[0]. hits[0] may be a same-name node of an
+            # INCOMPATIBLE specific type ('Jordan' PERSON vs 'Jordan' PLACE) that ties on cosine
+            # and wins the id tie-break; merging onto it is a false merge, but stopping there (as
+            # the old code did) would permanently shadow a compatible duplicate and mint a fresh
+            # node every episode, unbounded. Take the next compatible hit above the bar instead;
+            # only when NONE clears it do we fall through to the gray-zone / L3 path.
+            eid = next((c for c, s in hits
+                        if s >= self.config.syn_merge_threshold
+                        and self._node_type_ok(c, etype)), None)
+            if eid is not None:
+                self._add_entity_alias(eid, name)     # persist identity across reloads
+                self._entity_keys.setdefault(key, eid)
+                self._reconcile_type(eid, etype)
                 return eid
             gray = [(c, s) for c, s in hits if s < self.config.syn_merge_threshold]
             eid = self._l3_adjudicate("entity", name, gray)
             if eid:
-                self._entity_keys[key] = eid
-                return eid
+                cand = self.store.get_node(eid)
+                if cand is None or self._types_compatible(cand.entity_type, etype):
+                    self._add_entity_alias(eid, name)
+                    self._entity_keys.setdefault(key, eid)
+                    self._reconcile_type(eid, etype)
+                    return eid
         eid = self._new_id("entity")
         node = entity_node(eid, name=name, etype=etype, ts=now_iso())
         self.store.add_node(node)
         self.store.vectors.add("entity", eid, vec)
-        self._entity_keys[key] = eid
+        self._entity_keys.setdefault(key, eid)   # an incompatible-type L1 collision keeps the
+        #                                          first node's key; this distinct anchor is
+        #                                          still reachable by embedding / its own name.
         self._synonymy("entity", name, vec, eid)       # link (not merge)
         return eid
 
@@ -504,10 +649,11 @@ class Canonicalizer:
         RelationTagNode — the same two-layer move as `resolve_tag`, tuned for
         predicates:
 
-          L1  CONTENT-KEY exact hash (`relation_content_key`): drop relational
-              function words + singularize, so "is_friend_of" / "is_friends_with"
-              collapse on the content word "friend" — while "is_enemy_of" (different
-              content word) and "managed_by" (passive "by" kept) stay distinct.
+          L1  CONTENT-KEY exact hash (`relation_content_key`): drop interior relational
+              function words + stem, keeping the trailing argument-structure marker, so
+              "is_friend_of" / "friend_of" collapse on "friend_of" — while "is_enemy_of"
+              (different content word), "friends_with" (different trailing marker) and
+              "managed_by" (passive "by" kept) stay distinct.
           L2  embedding-synonymy MERGE only, at a HIGH bar (rel_syn_merge_threshold,
               default 0.95) and behind the entropy guard — catches synonyms with
               *different* content words ("collaborates_with" ↔ "works_with") that L1
@@ -562,6 +708,143 @@ class Canonicalizer:
             node.aliases.append(display)
             self.store.touch_node(rid)
         self._relation_keys.setdefault(relation_content_key(display), rid)
+
+    # ------------------------------------------------------------ merge (L3 drain)
+    def _rel_symmetric(self, rel_tag: str | None) -> bool:
+        """True when a RELATED_TO fact's predicate is orientation-free (works_with, married_to).
+        Symmetric facts store ONE pinned (min,max) orientation (kg/temporal.py:75)."""
+        node = self.store.get_node(rel_tag) if rel_tag else None
+        return bool(node and getattr(node, "symmetric", False))
+
+    def _collapse_fact_dup(self, src: str, dst: str, data: dict) -> bool:
+        """If the survivor already carries the SAME open/closed fact the loser is bringing over
+        (same rel_tag, endpoint, valid_at start, open/closed status), fold the loser's edge onto
+        it instead of minting a parallel edge — add_edge stamps every RELATED_TO with a fresh
+        `seq`, so it can NEVER collapse two fact edges itself, and two identical open facts would
+        otherwise double-surface in FactIndex and get independently confirmed/closed. Returns
+        True when it collapsed (caller must NOT re-add), False otherwise. RETRACTED incoming
+        edges are left distinct (find_facts already hides retracted survivors)."""
+        if data.get("etype") != EdgeType.RELATED_TO.value:
+            return False
+        if data.get("belief", Belief.ASSERTED.value) == Belief.RETRACTED.value:
+            return False
+        rel_tag = data.get("rel_tag")
+        valid_at = data.get("valid_at", "")
+        incoming_open = not data.get("invalid_at", "")
+        for _v, gkey, ex in self.store.find_facts(src, dst, rel_tag):
+            if ex.get("rel_tag") != rel_tag:  # find_facts skips this filter when rel_tag is None
+                continue
+            if ex.get("valid_at", "") != valid_at:
+                continue
+            if bool(ex.get("invalid_at", "")) == incoming_open:  # differing open/closed status
+                continue
+            # union the corroboration provenance across the two duplicates regardless of which
+            # is stronger, then — mirroring add_edge's "keep the stronger one" collapse — adopt
+            # the loser's core metadata only when its (confidence x weight) claim is stronger.
+            ex["confirmed_by"] = _union_list(ex.get("confirmed_by"), data.get("confirmed_by"))
+            ex["disputed_by"] = _union_list(ex.get("disputed_by"), data.get("disputed_by"))
+            ex_strength = ex.get("confidence", 1.0) * ex.get("weight", 1.0)
+            in_strength = data.get("confidence", 1.0) * data.get("weight", 1.0)
+            if in_strength > ex_strength:
+                for k in ("confidence", "weight", "provenance", "belief", "episode_id",
+                          "created_at", "invalid_at", "closed_at", "closed_by_episode"):
+                    if k in data:
+                        ex[k] = data[k]
+            self.store.touch_edge(src, dst, gkey)
+            return True
+        return False
+
+    def _readd_edge(self, src: str, dst: str, data: dict) -> bool:
+        """Re-attach an existing edge's FULL attribute dict onto a new (src, dst) — used
+        when apply_merge re-points a merged node's edges. Rebuilding an Edge and routing it
+        through store.add_edge preserves every attribute (incl. the closed_at / confirmed_by /
+        disputed_by mutation provenance), re-pins symmetric orientation, and gives a fact a fresh
+        seq. A RELATED_TO fact the survivor ALREADY carries (identical rel_tag / endpoint /
+        valid_at / open-closed status) is collapsed onto that existing edge via
+        _collapse_fact_dup (add_edge's fresh per-edge seq means it can't dedup facts itself); a
+        weaker structural duplicate collapses silently inside add_edge. Drops (returns False)
+        a self-loop; a collapse still counts as moved — the receipt is informational."""
+        if src == dst:
+            return False
+        # Symmetric FACTS store ONE pinned (min,max) orientation (kg/temporal.py:75); add_edge
+        # does NOT re-pin RELATED_TO (store._SYMMETRIC_ETYPES excludes it). A merge re-pointing
+        # the loser's copy of a symmetric fact must therefore re-pin here or it lands in the
+        # OTHER orientation than the survivor's edge — collapse would miss it and add_edge would
+        # mint a parallel open duplicate (X→S alongside the survivor's S→X).
+        if (data.get("etype") == EdgeType.RELATED_TO.value and src > dst
+                and self._rel_symmetric(data.get("rel_tag"))):
+            src, dst = dst, src
+        if self._collapse_fact_dup(src, dst, data):
+            return True
+        self.store.add_edge(Edge(
+            src=src, dst=dst, etype=EdgeType(data["etype"]),
+            provenance=Provenance(data.get("provenance", Provenance.DERIVED.value)),
+            confidence=data.get("confidence", 1.0), weight=data.get("weight", 1.0),
+            rel_tag=data.get("rel_tag"), valid_at=data.get("valid_at", ""),
+            invalid_at=data.get("invalid_at", ""),
+            belief=data.get("belief", "asserted"),
+            episode_id=data.get("episode_id", ""), via=list(data.get("via") or []),
+            valid=data.get("valid", True), created_at=data.get("created_at", ""),
+            disputed_by=list(data.get("disputed_by") or []),
+            confirmed_by=list(data.get("confirmed_by") or []),
+            closed_at=data.get("closed_at", ""),
+            closed_by_episode=data.get("closed_by_episode", ""),
+            retracted_at=data.get("retracted_at", ""),
+            retracted_by_episode=data.get("retracted_by_episode", "")))
+        return True
+
+    def apply_merge(self, survivor_id: str, loser_id: str) -> dict:
+        """Execute a reconcile-ledger merge (loser → survivor) — the deferred L3 adjudication
+        run as a review pass at zero API cost. Re-points every edge incident to the loser onto
+        the survivor (dropping self-loops), folds the loser's name + aliases into the survivor,
+        deletes the loser node, and repairs the key maps so the loser's normalized keys resolve
+        to the survivor (a later mention of the loser's surface L1-hits the survivor). REFUSES
+        to merge the self anchor away as the loser. Returns a receipt."""
+        if loser_id == SELF_ENTITY_ID:
+            return {"merged": False, "reason": "refusing to merge the self anchor away"}
+        if survivor_id == loser_id:
+            return {"merged": False, "reason": "same node"}
+        surv, lose = self.store.get_node(survivor_id), self.store.get_node(loser_id)
+        if surv is None or lose is None:
+            return {"merged": False, "reason": "missing node"}
+        if surv.ntype != lose.ntype:
+            return {"merged": False,
+                    "reason": f"type mismatch {surv.ntype.value}/{lose.ntype.value}"}
+        g = self.store.g
+        out_edges: list[tuple[str, dict]] = []
+        in_edges: list[tuple[str, dict]] = []
+        if loser_id in g:
+            out_edges = [(v, dict(d)) for _u, v, d in g.out_edges(loser_id, data=True)]
+            in_edges = [(u, dict(d)) for u, _v, d in g.in_edges(loser_id, data=True)]
+        # remove_node drops the loser + its incident edges from the graph AND flush-deletes
+        # their persisted rows; the survivor's re-added edges are marked dirty by add_edge.
+        self.store.remove_node(loser_id)
+        moved = dropped = 0
+        for v, d in out_edges:
+            ok = self._readd_edge(survivor_id, survivor_id if v == loser_id else v, d)
+            moved, dropped = (moved + 1, dropped) if ok else (moved, dropped + 1)
+        for u, d in in_edges:
+            ok = self._readd_edge(survivor_id if u == loser_id else u, survivor_id, d)
+            moved, dropped = (moved + 1, dropped) if ok else (moved, dropped + 1)
+        for alias in [lose.name] + list(lose.aliases or []):
+            a = (alias or "").strip().lower()
+            if a and a != surv.name.lower() and a not in surv.aliases:
+                surv.aliases.append(a)
+        surv.doc_frequency = max(surv.doc_frequency, lose.doc_frequency)
+        surv.last_modified = now_iso()
+        self.store.touch_node(survivor_id)
+        # Drop the loser's in-memory vector so it is never a search candidate again; the
+        # persisted row is deleted by remove_node's flush, so it never comes back on reload.
+        kind = {NodeType.ENTITY: "entity", NodeType.TAG: "tag"}.get(lose.ntype)
+        if kind is not None:
+            self.store.vectors.remove(kind, loser_id)
+        # repair the key maps: every key that resolved to the loser now hits the survivor.
+        keymap = self._entity_keys if lose.ntype == NodeType.ENTITY else self._tag_keys
+        for k, nid in list(keymap.items()):
+            if nid == loser_id:
+                keymap[k] = survivor_id
+        return {"merged": True, "survivor": survivor_id, "loser": loser_id,
+                "edges_moved": moved, "edges_dropped": dropped}
 
     # ---------------------------------------------------------- IDF / specificity
     def bump_doc_frequency(self, node_id: str) -> None:

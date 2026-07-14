@@ -146,6 +146,83 @@ def test_openai_citation_validation():
     assert "ep_nope" in ans.dropped_citations and "entity_0000" in ans.dropped_citations
 
 
+def test_invalid_citations_also_stripped_from_answer_text():
+    """PROTOCOL §3.12: ids that fail the gate leave the answer TEXT too, not just the
+    citations list — the reader must never see invented evidence."""
+    g = becky_graph()
+    client = _FakeOpenAI("Becky lives in Berlin [ep_nope]. True fact.", ["ep_nope"])
+    ans = g.ask("Where does Becky live?", client=client)
+    assert "ep_nope" in ans.dropped_citations
+    assert "ep_nope" not in ans.answer
+    assert "Berlin" in ans.answer                      # only the bad id is removed
+
+
+def test_strip_citations_unit():
+    from kg.rag import strip_citations
+    assert strip_citations("A [ep_x]. B", ["ep_x"]) == "A. B"
+    assert strip_citations("A [ep_a, ep_x] B", ["ep_x"]) == "A [ep_a] B"
+    assert strip_citations("A [ep_x, ep_a] B", ["ep_x"]) == "A [ep_a] B"
+    assert strip_citations("bare ep_x end", ["ep_x"]) == "bare end"
+    assert strip_citations("chunk [ep_s#c001] here", ["ep_s#c001"]) == "chunk here"
+    assert strip_citations("keep [ep_a]", []) == "keep [ep_a]"
+    # an id that prefixes another id must not damage the longer one
+    assert strip_citations("see [ep_ab]", ["ep_a"]) == "see [ep_ab]"
+    # only episode-id-SHAPED dropped strings are removed: a model listing an entity
+    # name or a year as a "citation" must not lose that token from valid prose
+    assert strip_citations("Sam is at Figma [ep_x]. Figma is a tool.",
+                           ["Figma", "ep_x"]) == "Sam is at Figma. Figma is a tool."
+    # cleanup is scoped to the removal sites — unrelated formatting survives
+    assert strip_citations("a  b   c [ep_x]", ["ep_x"]) == "a  b   c"
+    assert strip_citations("keep : this ! [ep_x] gone", ["ep_x"]) == \
+        "keep : this ! gone"
+
+
+def test_search_and_answer_carry_structured_fact_rows():
+    """Structured-first (PROTOCOL §3): context facts ride as full Fact objects
+    alongside the proven rendered lines, on both the search and answer paths, and
+    the answer now carries the §5.1 block it actually read (context_text)."""
+    g = becky_graph()
+    res = g.search("Where does Becky live?")
+    assert res.facts and res.fact_rows
+    assert [r["rendered"] for r in res.fact_rows] == res.facts
+    row = res.fact_rows[0]
+    assert set(row) == {"source", "predicate", "target", "status", "valid_from",
+                        "valid_to", "recorded_at", "episode_id", "confidence",
+                        "provenance", "functional", "disputed_by", "rendered"}
+    assert row["status"] in ("asserted", "ended")
+    assert row["episode_id"] and row["episode_id"].startswith("ep_")
+
+    ans = g.ask("Where does Becky live?", client=_FakeOpenAI("Berlin", []))
+    assert [r["rendered"] for r in ans.fact_rows] == ans.facts
+    assert "EPISODES" in ans.context_text          # the §5.1 block the model read
+
+
+def test_context_builder_enforces_since_until_window():
+    """§7.3: the window is a hard bound on the RETURNED episodes. The context
+    builder re-injects episodes after the retriever's filter (sibling expansion,
+    provenance promotion), so it must re-apply the window read off the result."""
+    from kg.models import NodeType
+    from kg.retrieval import RetrievalResult
+    g = becky_graph()
+    eps = sorted(g.store.nodes_of_type(NodeType.EPISODE),
+                 key=lambda n: n.created_at)
+    early, late = eps[0], eps[-1]
+    assert early.created_at[:10] < late.created_at[:10]
+    result = RetrievalResult(query="Becky", mode="ppr",
+                             objects=[(early.id, 1.0), (late.id, 0.9)])
+    result.window = (late.created_at[:10], None)     # since = the late episode's day
+    builder = ContextBuilder(g.store, cfg())
+    ctx_ids, _facts, blob = builder.build(result)
+    assert early.id not in ctx_ids
+    assert early.id not in blob
+
+
+def test_wire_facts_serves_rows_and_wraps_strings():
+    from kg.daemon import Daemon
+    rows = Daemon._wire_facts([{"source": "a", "rendered": "r"}, "plain line", 7])
+    assert rows == [{"source": "a", "rendered": "r"}, {"rendered": "plain line"}]
+
+
 def test_sys_prompt_orders_timeframe_answer_first():
     """07741c44: the reader led with the current state and the judge graded the first
     clause, missing the earlier timeframe the question actually asked about."""
@@ -680,3 +757,37 @@ def test_resolve_reldates_off_is_byte_identical_and_on_annotates():
     on = ContextBuilder(g.store, g.config).build(result)[2]
     assert "last week [≈" not in off
     assert "last week [≈" in on
+
+
+# --------------------------------------------------------------------------- #
+# search() — retrieval + context assembly, NO answering LLM
+# --------------------------------------------------------------------------- #
+def test_search_returns_hits_without_llm_or_key():
+    """g.search() is ask() minus the answer call: it must work with no OPENAI_API_KEY,
+    make zero API calls, and return structured scored hits whose evidence matches the
+    context blob ask()'s LLM would see."""
+    g = becky_graph()
+    with mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("OPENAI_API_KEY", None)   # prove the path is key-free
+        res = g.search("Where does Becky live?")
+    assert res.query == "Where does Becky live?"
+    assert res.hits, "expected at least one retrieved memory"
+    top = res.hits[0]
+    assert top.episode_id and top.text
+    assert isinstance(top.score, float)
+    # every hit appears in the prompt blob (same evidence the answerer would read)
+    for h in res.hits:
+        assert f"[{h.episode_id}]" in res.context
+    assert "QUESTION: Where does Becky live?" in res.context
+    # facts are pre-rendered strings, feed-ready
+    assert all(isinstance(f, str) for f in res.facts)
+
+
+def test_search_empty_query_and_caching():
+    g = becky_graph()
+    res = g.search("   ")
+    assert res.hits == [] and res.context == ""
+    g.search("Becky")
+    first = g._searcher
+    g.search("Becky again")
+    assert g._searcher is first, "Searcher (and its warm caches) should be reused"
