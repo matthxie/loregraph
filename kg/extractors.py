@@ -170,6 +170,7 @@ class Extractor(Protocol):
 # Structured-output tool schema (shared by the LLM path)
 # --------------------------------------------------------------------------- #
 _ENTITY_ENUM = [t.value for t in EntityType]
+_CATEGORY_ENUM = [c.value for c in EntityCategory]
 
 GRAPH_TOOL = {
     "type": "function",
@@ -186,8 +187,16 @@ GRAPH_TOOL = {
                         "properties": {
                             "name": {"type": "string"},
                             "type": {"type": "string", "enum": _ENTITY_ENUM},
+                            "category": {
+                                "type": "string", "enum": _CATEGORY_ENUM,
+                                "description": "Broad glyph category for display: 'person' "
+                                "for people and named characters, 'place' for geographic "
+                                "locations, venues, rooms, landmarks and buildings, 'thing' "
+                                "for everything else (orgs, objects, products, works, events, "
+                                "named abstractions).",
+                            },
                         },
-                        "required": ["name", "type"],
+                        "required": ["name", "type", "category"],
                     },
                 },
                 "tags": {"type": "array", "items": {"type": "string"},
@@ -410,13 +419,19 @@ class OpenAIExtractor:
         "   - work    — a named created work (book, film, song, paper, artwork, product)\n"
         "   - event   — a time-bounded happening (a war, election, discovery, ceremony)\n"
         "   - other   — a real entity that fits none of the above\n"
+        "   Also give each entity a CATEGORY for the graph's glyphs: 'person' for people and "
+        "named characters, 'place' for geographic locations, venues, rooms, landmarks and "
+        "buildings, 'thing' for everything else (organisations, objects, products, works, "
+        "events, named abstractions).\n"
         "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
         "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
         "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
         "(themes, not entities).\n\n"
         "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
-        "   - Both source and target MUST be entities from step 1, using the EXACT SAME "
-        "surface string you wrote there. Never relate something you did not name.\n"
+        "   - Source and target are normally entities from step 1 — use the EXACT SAME "
+        "surface string you wrote there. You MAY also use one of your step-2 tags as an "
+        "endpoint when the note states a relationship to a topic or theme (e.g. an org "
+        "'works_on' a field). Never relate something you named as neither an entity nor a tag.\n"
         "   - Each relationship has 1-3 short lowercase labels that read SOURCE then TARGET. "
         "Order matters. Example: Marie Curie discovered polonium → source \"Marie Curie\", "
         "target \"polonium\", label \"discovered\" (NOT the reverse).\n"
@@ -506,7 +521,7 @@ class OpenAIExtractor:
             f"and these entities: {ents}\n"
             f"and these facts (amounts/counts/measurements): {facts_found}.\n\n"
             "Now do a focused recall check. List ONLY items you OMITTED:\n"
-            "- any salient entity in the content missing above (with its type),\n"
+            "- any salient entity in the content missing above (with its type and category),\n"
             "- any important topical tag not already emitted,\n"
             "- any clearly-stated directed relationship between entities you missed "
             "(source and target must be named entities; labels read source→target),\n"

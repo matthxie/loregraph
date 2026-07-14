@@ -189,6 +189,8 @@ class RagAnswer:
     as_of: str | None = None
     context_episodes: list[str] = field(default_factory=list)  # episode ids in the context
     facts: list[str] = field(default_factory=list)             # rendered fact lines
+    fact_rows: list[dict] = field(default_factory=list)        # structured §3 Fact objects
+    context_text: str = ""                                     # the §5.1 block the LLM read
     object_ids: list[str] = field(default_factory=list)        # PPR ranking (eval seam)
     ppr_pool: list = field(default_factory=list)               # (ep_id, raw PPR score) pool
     seeds: list[str] = field(default_factory=list)
@@ -222,6 +224,8 @@ class SearchResult:
     query: str
     hits: list[SearchHit] = field(default_factory=list)   # context order (relevance-led)
     facts: list[str] = field(default_factory=list)         # rendered fact lines
+    fact_rows: list[dict] = field(default_factory=list)    # structured §3 Fact objects,
+    #                                                        same facts in the same order
     lane: str = ""
     as_of: str | None = None
     context: str = ""
@@ -240,11 +244,14 @@ class Searcher:
         self.retriever = HybridRetriever(store, embedder, canon, config)
         self.builder = ContextBuilder(store, config)
 
-    def run(self, query: str, k: int | None = None,
-            as_of: str | None = None) -> SearchResult:
+    def run(self, query: str, k: int | None = None, as_of: str | None = None,
+            rerank: bool | None = None, mmr_lambda: float | None = None,
+            since: str | None = None, until: str | None = None) -> SearchResult:
         if not query or not query.strip():
             return SearchResult(query=query, as_of=as_of)
-        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
+                                         rerank=rerank, mmr_lambda=mmr_lambda,
+                                         since=since, until=until)
         ep_ids, facts, blob = self.builder.build(result)
         scores = dict(result.objects)
         hits = []
@@ -257,6 +264,7 @@ class Searcher:
                                   when=n.created_at or "", name=n.name, text=text))
         return SearchResult(query=query, hits=hits,
                             facts=[f.render() for f in facts],
+                            fact_rows=[f.to_row() for f in facts],
                             lane=getattr(result, "lane", ""), as_of=as_of, context=blob)
 
 
@@ -467,14 +475,7 @@ class ContextBuilder:
                     if fkey in seen:
                         continue
                     seen.add(fkey)
-                    rel_node = self.store.get_node(data.get("rel_tag")) if data.get("rel_tag") else None
-                    sn, tn = self.store.get_node(src_id), self.store.get_node(dst_id)
-                    out.append(FactLine(
-                        src=sn.name if sn else src_id,
-                        rel=rel_node.name if rel_node else "related_to",
-                        dst=tn.name if tn else dst_id, valid_at=data.get("valid_at", ""),
-                        invalid_at=data.get("invalid_at", ""),
-                        episode_id=data.get("episode_id", "")))
+                    out.append(FactLine.from_edge(self.store, src_id, dst_id, data))
                     if len(out) >= self.config.rag_max_facts:
                         return out
         return out
@@ -771,6 +772,20 @@ class ContextBuilder:
         facts = self.facts_for(ents, result.as_of)
         ctx_ids = self._expand_siblings(ep_ids)
         ctx_ids = self._promote_provenance(ctx_ids, ep_ids, facts, result.query)
+        # §7.3 hard bound: sibling expansion and provenance promotion re-inject
+        # episodes AFTER the retriever's since/until filter — a windowed request must
+        # never see (or have its answer read) an out-of-window episode. Facts are
+        # deliberately not windowed; the bound is on the returned EPISODES.
+        since, until = getattr(result, "window", None) or (None, None)
+        if since or until:
+            def _in_window(eid: str) -> bool:
+                n = self.store.get_node(eid)
+                d = ((n.created_at or n.ingested_at or "") if n else "")[:10]
+                if not d:
+                    return False
+                return ((not since or d >= since[:10])
+                        and (not until or d <= until[:10]))
+            ctx_ids = [eid for eid in ctx_ids if _in_window(eid)]
 
         lines = [f"QUESTION: {result.query}",
                  f"AS-OF: {result.as_of or 'now (current view)'}", ""]
@@ -816,6 +831,33 @@ def _validate(raw, context_ids: list[str]) -> tuple[list[str], list[str]]:
         seen.add(cid)
         (kept if cid in allow else dropped).append(cid)
     return kept, dropped
+
+
+def strip_citations(text: str, ids) -> str:
+    """Remove the given episode-id citations from answer text (PROTOCOL §3.12: invalid
+    citations are dropped from `citations` AND stripped from the answer's text — the
+    answerer may not display invented evidence either).
+
+    Only EPISODE-ID-SHAPED tokens (_EP_ID) are removed: the model's citations array is
+    free-form, and deleting an arbitrary dropped string (an entity name, a year) would
+    mangle valid prose. Bracketed forms ("[ep_x]", "[ep_a, ep_x]") lose just the id.
+    Cleanup is scoped to the removal sites via a marker — the rest of the answer's
+    formatting (markdown line breaks, aligned quotes) is untouched."""
+    to_strip = [cid for cid in (ids or [])
+                if isinstance(cid, str) and _EP_ID.fullmatch(cid)]
+    if not text or not to_strip:
+        return text
+    mark = "\x00"
+    text = text.replace(mark, "")
+    for cid in to_strip:
+        text = re.sub(rf"(?<![A-Za-z0-9_#]){re.escape(cid)}(?![A-Za-z0-9_#])",
+                      mark, text)
+    text = re.sub(rf"\[\s*{mark}\s*(?:,\s*{mark}\s*)*\]", mark, text)  # emptied [..]
+    text = re.sub(rf"\[\s*(?:{mark}\s*,\s*)+", "[", text)  # "[×, ×, ep_a]" → "[ep_a]"
+    text = re.sub(rf",\s*{mark}\s*(?=[,\]])", "", text)  # "[ep_a, ×]" / "[a, ×, b]"
+    text = re.sub(rf"\s*{mark}\s*([.,;:!?])", r"\1", text)  # "× ." → "."
+    text = re.sub(rf"\s*{mark}\s*", " ", text)           # what remains → one space
+    return text.strip()
 
 
 def _extractive(store: GraphStore, query: str, ep_ids: list[str],
@@ -884,7 +926,9 @@ class OpenAIAnswerer:
             ep_ids, facts, blob = self.builder.build(result)
         base = RagAnswer(query=result.query, answer="", backend=self.name,
                          as_of=result.as_of, context_episodes=ep_ids,
-                         facts=[f.render() for f in facts], object_ids=result.object_ids,
+                         facts=[f.render() for f in facts],
+                         fact_rows=[f.to_row() for f in facts],
+                         context_text=blob, object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph),
                          retargeted=list(self.builder.last_retargeted))
         # Per-provider model resolution: an explicit config override wins; an unchanged
@@ -951,8 +995,14 @@ class OpenAIAnswerer:
                 "response truncated by the length limit")
         if not raw:
             raw = _EP_ID.findall(ans)
-        kept, dropped = _validate(raw, ep_ids)
-        base.answer = ans or "(no answer produced)"
+        # §3.12 validation universe: the context's episode ids PLUS the grounding
+        # episode ids of the context's facts — both visibly appear in the rendered
+        # block the answerer read, so citing either is legitimate evidence.
+        universe = ep_ids + [f.episode_id for f in facts if f.episode_id]
+        kept, dropped = _validate(raw, universe)
+        # §3.12: dropped citations leave the answer TEXT too, not just the list —
+        # the scrape above must run first or a citation-less tool reply loses its ids.
+        base.answer = strip_citations(ans, dropped) or "(no answer produced)"
         base.citations, base.dropped_citations = kept, dropped
         if dropped:
             base.notes.append(f"dropped {len(dropped)} uncontextual citation(s)")
@@ -990,12 +1040,15 @@ class RagAnswerer:
             "The query/answer path is live-only. kg auto-reads a project-root .env, or "
             "inject a client: get_answerer(..., client=fake).")
 
-    def run(self, query: str, k: int | None = None,
-            as_of: str | None = None) -> RagAnswer:
+    def run(self, query: str, k: int | None = None, as_of: str | None = None,
+            rerank: bool | None = None, mmr_lambda: float | None = None,
+            since: str | None = None, until: str | None = None) -> RagAnswer:
         if not query or not query.strip():
             return RagAnswer(query=query, answer="(empty query)",
                              backend=self._backend.name, as_of=as_of)
-        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of)
+        result = self.retriever.retrieve(query, k=k or self.config.top_k, as_of=as_of,
+                                         rerank=rerank, mmr_lambda=mmr_lambda,
+                                         since=since, until=until)
         ans = self._backend.answer(result)
         ans.ppr_pool = list(getattr(result, "ppr_pool", []) or [])
         ans.lane = getattr(result, "lane", "")            # surface the routed lane

@@ -17,6 +17,9 @@ sequentially in the main thread so shared state stays consistent.
 from __future__ import annotations
 
 import hashlib
+import html
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +75,61 @@ def _modality_of(label: str | None) -> Modality:
         return Modality((label or "text").lower())
     except ValueError:
         return Modality.FILE
+
+
+_BARE_URL = re.compile(r"^https?://\S+$")
+_HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _concise_title(text: str | None, limit: int = 80) -> str | None:
+    """One display line derived from analyzed text (PROTOCOL §7.2): first sentence,
+    whitespace collapsed, capped."""
+    flat = " ".join((text or "").split())
+    if not flat:
+        return None
+    first = re.split(r"(?<=[.!?])\s", flat, maxsplit=1)[0]
+    return first[:limit].rstrip() or None
+
+
+def _resolve_link_title(url: str, timeout: float = 4.0) -> str | None:
+    """Best-effort <title> of a captured link (PROTOCOL §7.2). Fail-soft: any network or
+    parse problem yields None — the snippet/description still carry the content.
+    KG_LINK_TITLES=0 disables the fetch entirely (hermetic/offline runs)."""
+    if os.environ.get("KG_LINK_TITLES", "1") == "0":
+        return None
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "you-kg/0.1"})
+        # The socket timeout is PER read — a tarpit dripping one byte per few seconds
+        # would keep a single resp.read(65536) alive for hours inside the sequential
+        # ingest loop. Chunked reads under a wall-clock deadline cap the whole fetch.
+        deadline = time.monotonic() + 2 * timeout
+        raw = b""
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            while len(raw) < 65536 and time.monotonic() < deadline:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                raw += chunk
+        m = _HTML_TITLE.search(raw.decode("utf-8", "ignore"))
+        return _concise_title(html.unescape(m.group(1)), limit=200) if m else None
+    except Exception:  # noqa: BLE001 — a dead link must never fail ingest
+        return None
+
+
+def derive_title(item: CorpusItem, ext: Extraction) -> str | None:
+    """PROTOCOL §7.2 title derivation at ingest. A capture-supplied title (the user's
+    written text, or an app-resolved source title) wins; a bare-link capture resolves
+    the page/video title; described media derive a concise title from the analyzed
+    description. Plain text notes carry no title — clients fall back to the snippet."""
+    if item.title:
+        return item.title
+    if item.text is None:                       # described media (image/audio/pdf/…)
+        return _concise_title(ext.description)
+    text = item.text.strip()
+    if _BARE_URL.match(text):                   # a captured bare link
+        return _resolve_link_title(text)
+    return None
 
 
 class Ingestor:
@@ -317,7 +375,8 @@ class Ingestor:
         node = episode_node(ep_id, modality=modality, source_ref=item.source_ref,
                             raw_text=raw, content_hash=h, ts=ts,
                             description=ext.description, ingested_at=now_iso(),
-                            media_paths=[item.image_path] if item.image_path else [])
+                            media_paths=[item.image_path] if item.image_path else [],
+                            title=derive_title(item, ext))
         node.name = item.title or item.id
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)

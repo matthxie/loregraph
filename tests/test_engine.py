@@ -112,6 +112,41 @@ def test_invalid_input_and_stubs():
     eng.close()
 
 
+def test_query_knob_normalization_units():
+    """§7.3: mmr_lambda clamps to [0,1] and falls back (never errors) on non-finite/
+    unparseable input; since/until accept a bare year (= its Jan-1 start) and compare
+    on the 10-char date prefix; garbage dates are InvalidInput."""
+    from kg.engine import _norm_event_date, _norm_mmr_lambda
+    assert _norm_mmr_lambda(None) is None
+    assert _norm_mmr_lambda(0.5) == 0.5
+    assert _norm_mmr_lambda(2.5) == 1.0
+    assert _norm_mmr_lambda(-1) == 0.0
+    assert _norm_mmr_lambda(float("nan")) is None
+    assert _norm_mmr_lambda("broad") is None
+    assert _norm_event_date(None, "since") is None
+    assert _norm_event_date("2025", "since") == "2025-01-01"
+    assert _norm_event_date("2026-07-08T09:15:00+00:00", "until") == "2026-07-08"
+    with pytest.raises(InvalidInput):
+        _norm_event_date("July 8", "since")
+
+
+def test_retrieve_since_until_event_window():
+    eng = _open()
+    eng.ingest(NoteInput(text="Met Becky at the climbing gym.",
+                         created_at="2026-07-01T10:00:00Z"))
+    eng.ingest(NoteInput(text="Becky is moving to Berlin.",
+                         created_at="2026-07-02T10:00:00Z"))
+    both = eng.retrieve("Becky", k=5)["episodes"]
+    assert len(both) == 2
+    late = eng.retrieve("Becky", k=5, since="2026-07-02")["episodes"]
+    assert late and all(h["when"][:10] >= "2026-07-02" for h in late)
+    early = eng.retrieve("Becky", k=5, until="2026-07-01")["episodes"]
+    assert early and all(h["when"][:10] <= "2026-07-01" for h in early)
+    yeared = eng.retrieve("Becky", k=5, since="2026")["episodes"]  # bare year = Jan-1
+    assert len(yeared) == 2
+    eng.close()
+
+
 def test_engine_writes_nothing_to_stdout(capsys):
     eng = _open()
     eng.ingest(NOTE)

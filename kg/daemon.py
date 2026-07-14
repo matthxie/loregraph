@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import signal
 import sys
@@ -119,6 +120,7 @@ class Daemon:
         self._embed_verified = None      # set by model.ensure for health.embedder.verified
         self._last_batch = None          # terminal per-spool states of the most recent drain
         self._draining = False
+        self._agent_running = False      # §9.2: one chat.agent at a time (-32005 BUSY)
         # stdout is one JSON value per line (§1); a lock keeps a progress notification from
         # splicing bytes into a response even though v1 dispatch is single-threaded.
         self._send_lock = threading.Lock()
@@ -198,6 +200,16 @@ class Daemon:
             raise RpcError(INVALID_PARAMS, f"param {name!r} has the wrong type")
         return v
 
+    def _int_param(self, params: dict, name: str, *, default: int,
+                   lo: int, hi: int) -> int:
+        """A strict integer param: bools and non-integral floats → -32602 (JSON has no
+        int/float split, so 8.0 passes but 2.5 and true don't); the value is clamped to
+        [lo, hi] so a hostile k=0/-1 can't reach slicing/`or`-default pitfalls downstream."""
+        v = self._param(params, name, default=default, types=(int, float))
+        if isinstance(v, bool) or int(v) != v:
+            raise RpcError(INVALID_PARAMS, f"param {name!r} must be an integer")
+        return max(lo, min(hi, int(v)))
+
     # ------------------------------------------------------------------ wire shaping
     @staticmethod
     def _snippet(text) -> str:
@@ -205,12 +217,40 @@ class Daemon:
         return " ".join((text or "").split())[:200]
 
     @staticmethod
-    def _wire_facts(lines) -> list[dict]:
-        """The engine hands facts as pre-rendered FactLine strings (kg/rag.py); the wire Fact
-        object (§3) is structured, but the only field this v0 engine can honestly fill is
-        `rendered`, so each line rides as {"rendered": line}. Structured fact fields are an
-        engine followup — see BUILD_REPORT."""
-        return [{"rendered": ln} for ln in (lines or []) if isinstance(ln, str)]
+    def _wire_facts(items) -> list[dict]:
+        """Wire Fact objects (§3). The engine now serves structured rows (source/
+        predicate/target/status/…/rendered) — those pass through verbatim. Pre-rendered
+        strings (the agent's evidence trail may still carry some) keep the v0
+        {"rendered": line} shape so no fact is ever dropped."""
+        out: list[dict] = []
+        for it in items or []:
+            if isinstance(it, dict):
+                out.append(it)
+            elif isinstance(it, str):
+                out.append({"rendered": it})
+        return out
+
+    def _knob_params(self, params: dict) -> dict:
+        """The §3.3/§7.3 per-call query knobs shared by retrieve and chat.answer:
+        rerank (bool), mmr_lambda (float|null — non-finite falls back to the engine
+        default downstream, never an error), since/until (ISO date/datetime or bare
+        year; anything else → -32004 INVALID_INPUT per §4). Inputs only — never echoed."""
+        rerank = self._param(params, "rerank", default=False, types=bool)
+        # §7.3: mmr_lambda is deliberately NOT type-gated — "a non-finite / unparseable
+        # value falls back to the default (the engine already tolerates numeric strings
+        # and NaN/inf)". The engine's normalizer parses or discards it; -32602 here
+        # would make the promised fallback unreachable.
+        knobs = {"rerank": bool(rerank), "mmr_lambda": params.get("mmr_lambda")}
+        for name in ("since", "until"):
+            v = self._param(params, name, default=None, types=str)
+            if v is not None:
+                s = v.strip()
+                if s and not (re.fullmatch(r"\d{4}", s)
+                              or re.match(r"^\d{4}-\d{2}-\d{2}", s)):
+                    raise RpcError(INVALID_INPUT, f"bad ISO date for {name!r}: {v!r}")
+                v = s or None
+            knobs[name] = v
+        return knobs
 
     @staticmethod
     def _wire_graph_preview(gp: dict, root_id: str) -> dict:
@@ -265,10 +305,11 @@ class Daemon:
             raise RpcError(INVALID_PARAMS, "param 'query' must be non-empty")
         k = int(self._param(params, "k", default=8, types=(int, float)))
         as_of = self._param(params, "as_of", default=None, types=str)
-        res = self.engine().retrieve(query, k=k, as_of=as_of)
-        episodes = [{"id": h.get("id"), "title": None,
+        res = self.engine().retrieve(query, k=k, as_of=as_of,
+                                     **self._knob_params(params))
+        episodes = [{"id": h.get("id"), "title": h.get("title") or None,
                      "created_at": h.get("when") or None,
-                     "snippet": self._snippet(h.get("text")),
+                     "snippet": self._snippet(h.get("text") or h.get("description")),
                      "score": h.get("score")}
                     for h in res.get("episodes", [])]
         return {
@@ -282,13 +323,17 @@ class Daemon:
         }
 
     def m_search(self, params: dict) -> dict:
-        # Keyword/BM25 search is an engine facade stub in v0 (kg.engine._STUB); delegating here
-        # surfaces its EngineError as -32603 until the engine implements it (BUILD_REPORT).
         terms = self._param(params, "terms", required=True, types=str)
-        k = int(self._param(params, "k", default=10, types=(int, float)))
+        if not terms.strip():
+            raise RpcError(INVALID_PARAMS, "param 'terms' must be non-empty")
+        k = self._int_param(params, "k", default=10, lo=1, hi=100)
         res = self.engine().search(terms, k=k)
-        return {"terms": terms, "episodes": res.get("episodes", []) if isinstance(res, dict)
-                else res}
+        episodes = [{"id": h.get("id"), "title": h.get("title") or None,
+                     "created_at": h.get("when") or None,
+                     "snippet": self._snippet(h.get("text") or h.get("description")),
+                     "score": h.get("score")}
+                    for h in res.get("episodes", [])]
+        return {"terms": res.get("terms", terms), "episodes": episodes}
 
     def m_facts(self, params: dict) -> dict:
         entity = self._param(params, "entity", required=True, types=str)
@@ -313,14 +358,16 @@ class Daemon:
             gp = {"nodes": [], "edges": []}
         text = det.get("text") or None
         return {
-            "id": det["id"], "note_id": note_id, "title": None,
+            "id": det["id"], "note_id": note_id, "title": det.get("title") or None,
             "created_at": det.get("created_at") or None,
             "recorded_at": det.get("ingested_at") or None,
-            "modality": "text", "source": det.get("source") or "capture",
-            "raw_text": text, "description": None, "media_paths": [],
+            "modality": det.get("modality") or "text",
+            "source": det.get("source") or "capture",
+            "raw_text": text, "description": det.get("description") or None,
+            "media_paths": det.get("media_paths") or [],
             "concepts": det.get("concepts", []), "entities": det.get("entities", []),
             "entity_categories": det.get("entity_categories", {}),
-            "graph_preview": gp, "facts": [],
+            "graph_preview": gp, "facts": det.get("facts", []),
         }
 
     def m_graph_preview(self, params: dict) -> dict:
@@ -344,31 +391,24 @@ class Daemon:
         return {"episodes": rows, "total": res.get("total", len(rows))}
 
     def _episode_list_row(self, e: dict) -> dict:
-        """One §7.2 EpisodeListRow. episodes_list gives only {id, created_at, preview}, so each
-        row is enriched from the detail verbs (Engine.episode for raw_text/entities/categories,
-        graph_preview for the mini-graph). Best-effort: an engine fault on one row leaves its
-        detail fields empty rather than failing the whole list."""
+        """One §7.2 EpisodeListRow. Engine.episodes_list serves full rows natively (the
+        same projection Engine.episode carries), so this is pure wire shaping: no per-row
+        detail round-trips. Snippet falls back to the analyzed description for media-only
+        notes (§7.2)."""
         ep_id = e.get("id")
-        row = {"id": ep_id, "title": None, "created_at": e.get("created_at") or None,
-               "snippet": self._snippet(e.get("preview")), "raw_text": None,
-               "media_paths": [], "modality": "text", "source": "capture",
-               "concepts": [], "entities": [], "entity_categories": {},
-               "graph_preview": {"nodes": [], "edges": []}}
-        try:
-            det = self.engine().episode(ep_id)
-            if det:
-                text = det.get("text") or None
-                row["raw_text"] = text
-                row["snippet"] = self._snippet(text or e.get("preview"))
-                row["source"] = det.get("source") or "capture"
-                row["entities"] = det.get("entities", [])
-                row["entity_categories"] = det.get("entity_categories", {})
-                row["concepts"] = det.get("concepts", [])
-            row["graph_preview"] = self._wire_graph_preview(
-                self.engine().graph_preview(ep_id), ep_id)
-        except EngineError:
-            pass
-        return row
+        text = e.get("text") or None
+        return {"id": ep_id, "title": e.get("title") or None,
+                "created_at": e.get("created_at") or None,
+                "snippet": self._snippet(text or e.get("description")),
+                "raw_text": text,
+                "description": e.get("description") or None,
+                "media_paths": e.get("media_paths") or [],
+                "modality": e.get("modality") or "text",
+                "source": e.get("source") or "capture",
+                "concepts": e.get("concepts", []), "entities": e.get("entities", []),
+                "entity_categories": e.get("entity_categories", {}),
+                "graph_preview": self._wire_graph_preview(
+                    e.get("graph_preview") or {}, ep_id)}
 
     # ------------------------------------------------------------------ chat.answer
     def m_chat_answer(self, params: dict) -> dict:
@@ -378,7 +418,8 @@ class Daemon:
         k = int(self._param(params, "k", default=8, types=(int, float)))
         as_of = self._param(params, "as_of", default=None, types=str)
         try:
-            ans = self.engine().answer(question, k=k, as_of=as_of)
+            ans = self.engine().answer(question, k=k, as_of=as_of,
+                                       **self._knob_params(params))
         except ProviderUnavailable as e:
             # The whole-request degradation path (§3.12): the client falls back to `retrieve`
             # and renders the context block itself.
@@ -398,6 +439,68 @@ class Daemon:
                 "rendered_text": ctx.get("rendered_text", ""),
             },
         }
+
+    # ------------------------------------------------------------------ chat.agent
+    def m_chat_agent(self, params: dict) -> dict:
+        """Agentic answering (§9.2): bounded tool loop over the engine's read verbs.
+        Probe safety (§9.1): `chat.agent {}` answers -32602 (missing 'question') with
+        ZERO side effects — every param validates before the engine is touched. One
+        run at a time (-32005 BUSY); §9.3 agent.progress notifications stream during
+        the run, then exactly one terminal done/failed just before the response."""
+        question = self._param(params, "question", required=True, types=str)
+        if not question.strip():
+            raise RpcError(INVALID_PARAMS, "param 'question' must be non-empty")
+        k = self._int_param(params, "k", default=8, lo=1, hi=100)
+        as_of = self._param(params, "as_of", default=None, types=str)
+        max_steps = self._param(params, "max_steps", default=None, types=(int, float))
+        if max_steps is not None:
+            try:
+                bad = isinstance(max_steps, bool) or int(max_steps) != max_steps
+            except (ValueError, OverflowError):     # json.loads accepts NaN/Infinity
+                bad = True
+            if bad:
+                raise RpcError(INVALID_PARAMS, "param 'max_steps' must be an integer")
+            max_steps = max(0, int(max_steps))
+        if self._agent_running:
+            raise RpcError(BUSY, "a chat.agent run is already in flight")
+        self._agent_running = True
+        seq = 0
+
+        def _progress(note: dict) -> None:
+            nonlocal seq
+            seq += 1
+            self.notify("agent.progress", {"seq": seq, **note})
+
+        try:
+            try:
+                ans = self.engine().agent(question, k=k, as_of=as_of,
+                                          max_steps=max_steps, progress=_progress)
+            except ProviderUnavailable as e:
+                # §9.2 degradation chain: the client falls back to chat.answer
+                # (and typically one more step down to retrieve).
+                _progress({"state": "failed"})
+                raise RpcError(PROVIDER_UNAVAILABLE, f"provider_unavailable: {e}",
+                               {"fallback": "chat.answer"})
+            except Exception:
+                _progress({"state": "failed"})
+                raise
+            _progress({"state": "done"})
+            ctx = ans.get("context", {})
+            return {
+                "answer": ans.get("answer", ""),
+                "citations": ans.get("citations", []),
+                "invalid_citations": ans.get("invalid_citations", []),
+                "context": {
+                    "episode_ids": ctx.get("episodes", []),
+                    "facts": self._wire_facts(ctx.get("facts")),
+                    "conflicts": [],
+                    "rendered_text": ctx.get("rendered_text", ""),
+                },
+                "trace": ans.get("trace", []),
+                "steps": ans.get("steps", 0),
+            }
+        finally:
+            self._agent_running = False
 
     # ------------------------------------------------------------------ capture / inbox
     def m_capture(self, params: dict) -> dict:
@@ -723,6 +826,7 @@ class Daemon:
         "graph.preview": m_graph_preview,
         "episodes.list": m_episodes_list,
         "chat.answer": m_chat_answer,
+        "chat.agent": m_chat_agent,
         "capture": m_capture,
         "inbox.status": m_inbox_status,
         "inbox.drain": m_inbox_drain,

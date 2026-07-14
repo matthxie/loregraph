@@ -58,7 +58,8 @@ def _node(gp, nid):
 
 
 def test_episode_root_carries_fact_edges_and_stub_counts(eng):
-    ep = eng.episodes_list()["episodes"][0]["id"]      # the TURING episode
+    ep = eng.episodes_list()["episodes"][-1]["id"]     # the TURING episode (oldest;
+    #                                                    §7.2 rows are newest-first)
     gp = eng.graph_preview(ep)
     root = _node(gp, ep)
     assert root["kind"] == "episode" and root["hop"] == 0
@@ -130,8 +131,8 @@ def test_concept_root_and_not_found(eng):
 def test_episode_detail_splits_concepts_from_entities(eng):
     """episode() reports CONCEPT-type nodes in `concepts` (topical strings), never folded
     into `entities`/`entity_categories` — so clients can count them as their own category."""
-    eps = eng.episodes_list()["episodes"]
-    turing = eng.episode(eps[0]["id"])                 # "Alan Turing … Bletchley Park … Enigma"
+    eps = eng.episodes_list()["episodes"]              # newest-first (§7.2)
+    turing = eng.episode(eps[-1]["id"])                # "Alan Turing … Bletchley Park … Enigma"
     assert set(turing["entities"]) == {"Alan Turing", "Bletchley Park"}
     assert turing["concepts"] == ["Enigma"]
     assert "Enigma" not in turing["entities"]
@@ -139,9 +140,24 @@ def test_episode_detail_splits_concepts_from_entities(eng):
     assert turing["entity_categories"]["Alan Turing"] == "person"
     assert turing["entity_categories"]["Bletchley Park"] == "place"
 
-    paper = eng.episode(eps[1]["id"])                  # "Turing wrote a paper about the Enigma"
+    paper = eng.episode(eps[0]["id"])                  # "Turing wrote a paper about the Enigma"
     assert set(paper["entities"]) == {"Alan Turing"}
     assert paper["concepts"] == ["Enigma"]
+
+
+def test_episode_detail_serves_grounded_facts(eng):
+    """episode() carries the §3.6 facts this note grounds — the fact rows whose
+    provenance episode_id is this note, with the structured §3.5 field shape."""
+    eps = eng.episodes_list()["episodes"]
+    turing_id = eps[-1]["id"]                          # the fact-bearing TURING note
+    facts = eng.episode(turing_id)["facts"]
+    assert len(facts) == 1
+    f = facts[0]
+    assert (f["source"], f["predicate"], f["target"]) == \
+        ("Alan Turing", "worked_at", "Bletchley Park")
+    assert f["status"] == "asserted" and f["episode_id"] == turing_id
+    assert "worked_at" in f["rendered"]
+    assert eng.episode(eps[0]["id"])["facts"] == []    # the PAPER note grounds none
 
 
 def test_wire_shape_carries_predicate_and_stubs(eng):

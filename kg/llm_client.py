@@ -281,12 +281,19 @@ def _tool_call(name: str, arguments: str, call_id: str = "call_0"):
 
 def _forced_tool_name(kw: dict) -> str | None:
     """The function name a ``tool_choice`` forces, or the sole tool's name when tools are
-    present without an explicit forcing choice; None when the call wants free-form content."""
+    present without ANY explicit choice; None when the call wants free-form content. An
+    explicit non-forcing choice ("auto"/"none", or {"type": "auto"}) means the model picks
+    freely — required for the multi-tool agent loop, where forcing tools[0] every turn
+    would wedge the run on the first tool."""
     choice = kw.get("tool_choice")
-    if isinstance(choice, dict) and choice.get("type") == "function":
-        name = choice.get("function", {}).get("name")
-        if name:
-            return name
+    if isinstance(choice, dict):
+        if choice.get("type") == "function":
+            name = choice.get("function", {}).get("name")
+            if name:
+                return name
+        return None
+    if isinstance(choice, str):
+        return None
     tools = kw.get("tools") or []
     if tools:
         try:
@@ -537,7 +544,7 @@ class CodexClient:
                            "no prose, no code fences:\n"
                            + json.dumps(schema if schema is not None else {}))
             prompt = f"{prompt}\n\n{instruction}" if prompt else instruction
-        text = self._exec(prompt)
+        text = self._exec(prompt, timeout=kw.get("timeout"))
         if name:
             span = _first_json_object(text)
             arguments = span if span is not None else "{}"
@@ -547,10 +554,13 @@ class CodexClient:
                 finish_reason="tool_calls")
         return _sdk_response(content=text, tool_calls=None, finish_reason="stop")
 
-    def _exec(self, prompt: str) -> str:
+    def _exec(self, prompt: str, timeout: float | None = None) -> str:
         """Run one ``codex exec``, capturing the final assistant message. Raises
         ``ProviderUnavailable`` when the CLI is missing / not logged in and ``ProviderError`` on
-        a non-zero exit or empty output."""
+        a non-zero exit or empty output. ``timeout`` tightens (never widens) the per-exec
+        cap — the agent loop passes its remaining budget so one call can't blow the run's
+        deadline (§9.2)."""
+        cap = min(float(timeout), self.EXEC_TIMEOUT) if timeout else self.EXEC_TIMEOUT
         bin_ = _codex_binary()
         if not bin_:
             raise ProviderUnavailable(
@@ -563,9 +573,9 @@ class CodexClient:
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                                   env=_codex_child_env(), cwd=call_dir,
-                                  timeout=self.EXEC_TIMEOUT)
+                                  timeout=cap)
         except subprocess.TimeoutExpired:
-            raise ProviderError(f"codex exec timed out after {self.EXEC_TIMEOUT}s")
+            raise ProviderError(f"codex exec timed out after {cap:.0f}s")
         except OSError as e:
             raise ProviderUnavailable(f"could not launch codex: {e}")
         text = ""
@@ -697,7 +707,7 @@ class ClaudeClient:
                            "no prose, no code fences:\n"
                            + json.dumps(schema if schema is not None else {}))
             prompt = f"{prompt}\n\n{instruction}" if prompt else instruction
-        text = self._exec(prompt, model=kw.get("model"))
+        text = self._exec(prompt, model=kw.get("model"), timeout=kw.get("timeout"))
         if name:
             span = _first_json_object(text)
             arguments = span if span is not None else "{}"
@@ -707,10 +717,14 @@ class ClaudeClient:
                 finish_reason="tool_calls")
         return _sdk_response(content=text, tool_calls=None, finish_reason="stop")
 
-    def _exec(self, prompt: str, model: str | None = None) -> str:
+    def _exec(self, prompt: str, model: str | None = None,
+              timeout: float | None = None) -> str:
         """Run one ``claude -p``, reading the final assistant message out of the JSON
         envelope. Raises ``ProviderUnavailable`` when the CLI is missing / not logged in and
-        ``ProviderError`` on a non-zero exit, an error result, or empty output."""
+        ``ProviderError`` on a non-zero exit, an error result, or empty output. ``timeout``
+        tightens (never widens) the per-exec cap — the agent loop passes its remaining
+        budget so one call can't blow the run's deadline (§9.2)."""
+        cap = min(float(timeout), self.EXEC_TIMEOUT) if timeout else self.EXEC_TIMEOUT
         bin_ = _claude_binary()
         if not bin_:
             raise ProviderUnavailable(
@@ -727,9 +741,9 @@ class ClaudeClient:
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                                   env=_claude_child_env(), cwd=call_dir,
-                                  timeout=self.EXEC_TIMEOUT)
+                                  timeout=cap)
         except subprocess.TimeoutExpired:
-            raise ProviderError(f"claude -p timed out after {self.EXEC_TIMEOUT}s")
+            raise ProviderError(f"claude -p timed out after {cap:.0f}s")
         except OSError as e:
             raise ProviderUnavailable(f"could not launch claude: {e}")
         finally:
@@ -799,6 +813,8 @@ class AnthropicClient:
             params["system"] = system
         if kw.get("temperature") is not None:
             params["temperature"] = kw["temperature"]
+        if kw.get("timeout"):
+            params["timeout"] = kw["timeout"]
         tools = self._translate_tools(kw.get("tools"))
         if tools:
             params["tools"] = tools
@@ -812,7 +828,11 @@ class AnthropicClient:
     def _split_messages(messages: list) -> tuple[str, list]:
         """Anthropic takes the system prompt as a top-level string, not a message; pull system
         turns out and translate the rest, mapping ``image_url`` data-URL blocks to anthropic
-        image blocks (other image_urls become a text note — anthropic wants inline/base64)."""
+        image blocks (other image_urls become a text note — anthropic wants inline/base64).
+        Multi-turn tool history round-trips too: an assistant message's ``tool_calls`` become
+        ``tool_use`` blocks and a ``role:"tool"`` result becomes a user-turn ``tool_result``
+        block referencing its ``tool_call_id`` — without these the agent loop's transcript
+        would silently desync. Consecutive same-role turns merge (the API wants alternation)."""
         system_parts: list[str] = []
         out: list[dict] = []
         for m in messages:
@@ -824,9 +844,17 @@ class AnthropicClient:
                 if isinstance(content, str):
                     system_parts.append(content)
                 continue
+            if role == "tool":
+                result = content if isinstance(content, str) else json.dumps(content or "")
+                out.append({"role": "user", "content": [
+                    {"type": "tool_result",
+                     "tool_use_id": m.get("tool_call_id") or "call_0",
+                     "content": result}]})
+                continue
             blocks: list[dict] = []
             if isinstance(content, str):
-                blocks.append({"type": "text", "text": content})
+                if content:
+                    blocks.append({"type": "text", "text": content})
             elif isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):
@@ -837,9 +865,33 @@ class AnthropicClient:
                         url = block.get("image_url", {}).get("url", "")
                         img = AnthropicClient._image_block(url)
                         blocks.append(img)
+            if role == "assistant":
+                for tc in m.get("tool_calls") or []:
+                    fn = (tc.get("function", {}) if isinstance(tc, dict)
+                          else getattr(tc, "function", None))
+                    name = (fn.get("name") if isinstance(fn, dict)
+                            else getattr(fn, "name", "")) or ""
+                    raw_args = (fn.get("arguments") if isinstance(fn, dict)
+                                else getattr(fn, "arguments", "")) or "{}"
+                    try:
+                        args = json.loads(raw_args)
+                    except (TypeError, json.JSONDecodeError):
+                        args = {}
+                    tc_id = (tc.get("id") if isinstance(tc, dict)
+                             else getattr(tc, "id", None)) or "call_0"
+                    blocks.append({"type": "tool_use", "id": tc_id,
+                                   "name": name, "input": args})
+            if not blocks:
+                continue
             out.append({"role": "assistant" if role == "assistant" else "user",
                         "content": blocks})
-        return "\n\n".join(system_parts), out
+        merged: list[dict] = []
+        for m in out:
+            if merged and merged[-1]["role"] == m["role"]:
+                merged[-1]["content"].extend(m["content"])
+            else:
+                merged.append(m)
+        return "\n\n".join(system_parts), merged
 
     @staticmethod
     def _image_block(url: str) -> dict:

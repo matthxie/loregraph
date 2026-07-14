@@ -23,7 +23,7 @@ import os
 import pytest
 
 _PROVIDER_ENV = ("KG_LLM", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY",
-                 "CLAUDE_API_KEY", "KG_CODEX_BIN", "KG_CLAUDE_BIN")
+                 "CLAUDE_API_KEY", "KG_CODEX_BIN", "KG_CLAUDE_BIN", "KG_LINK_TITLES")
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +31,7 @@ def _isolate_provider_env():
     saved = {k: os.environ.get(k) for k in _PROVIDER_ENV}
     os.environ["KG_CODEX_BIN"] = ""    # mask the real CLIs (see module docstring)
     os.environ["KG_CLAUDE_BIN"] = ""
+    os.environ["KG_LINK_TITLES"] = "0"  # never fetch link titles in tests (hermetic)
     try:
         yield
     finally:

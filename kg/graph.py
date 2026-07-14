@@ -42,6 +42,7 @@ class KnowledgeGraph:
         self._answerer = None
         self._answerer_key: tuple | None = None
         self._searcher: Searcher | None = None
+        self._kw_seeder = None          # lazy Seeder for keyword_search (warm BM25 corpus)
 
     # ------------------------------------------------------------------ open
     @classmethod
@@ -111,22 +112,42 @@ class KnowledgeGraph:
         return retriever.retrieve(text, k=k, as_of=as_of)
 
     # ---------------------------------------------------------------- search
-    def search(self, text: str, *, k: int | None = None,
-               as_of: str | None = None) -> SearchResult:
+    def search(self, text: str, *, k: int | None = None, as_of: str | None = None,
+               rerank: bool | None = None, mmr_lambda: float | None = None,
+               since: str | None = None, until: str | None = None) -> SearchResult:
         """Everything ask() does EXCEPT the answering LLM call: the hybrid retriever
         routes the question and ranks the relevant memories, and the context builder
         assembles the same evidence the answerer would see — returned as structured
         hits (episode id, score, time, text) plus the relevant facts, search-engine
         style, for feeds/UI. `.context` carries the exact prompt blob ask()'s LLM
-        would read. Fully offline: no OPENAI_API_KEY needed."""
+        would read. Fully offline: no OPENAI_API_KEY needed. The per-call knobs
+        (PROTOCOL §3.3/§7.3) ride through to the retriever untouched."""
         if self._searcher is None:
             self._searcher = Searcher(self.store, self.embedder, self.canon,
                                       self.config)
-        return self._searcher.run(text, k=k, as_of=as_of)
+        return self._searcher.run(text, k=k, as_of=as_of, rerank=rerank,
+                                  mmr_lambda=mmr_lambda, since=since, until=until)
+
+    def keyword_search(self, terms: str, *, k: int = 10) -> list[tuple[str, float]]:
+        """Pure lexical top-k (PROTOCOL §3.4): raw BM25 scores over the composite
+        episode docs (raw text, title, description, entity/concept surfaces, media
+        file-type tokens). No embedder, no graph walk — exact names and phrases.
+        Reuses the hoisted Searcher's warm seeder when it exists so the (now wider)
+        corpus isn't built and held twice."""
+        seeder = getattr(getattr(self._searcher, "retriever", None), "seeder", None)
+        if seeder is None:
+            from .retrieval import Seeder
+            if self._kw_seeder is None:
+                self._kw_seeder = Seeder(self.store, self.embedder, self.canon,
+                                         self.config)
+            seeder = self._kw_seeder
+        return seeder.bm25_search(terms, k=k, normalized=False)
 
     # ------------------------------------------------------------------- ask
     def ask(self, text: str, *, backend: str | None = None, k: int | None = None,
-            as_of: str | None = None, model: str | None = None, client=None) -> RagAnswer:
+            as_of: str | None = None, model: str | None = None, client=None,
+            rerank: bool | None = None, mmr_lambda: float | None = None,
+            since: str | None = None, until: str | None = None) -> RagAnswer:
         """Graph-RAG answer (docs/ARCHITECTURE.md §5): the hybrid retriever routes the
         question, augments state/evolution lanes with fact-bearing episodes, and reranks the
         hard lanes, then ONE LLM call answers over the context with citations. The LLM never
@@ -138,14 +159,16 @@ class KnowledgeGraph:
                      (("rag_backend", backend), ("rag_model", model)) if vv}
         if overrides:
             cfg = replace(cfg, **overrides)
+        knobs = {"rerank": rerank, "mmr_lambda": mmr_lambda,
+                 "since": since, "until": until}
         if client is not None:   # injected (test) client → no caching, exact old semantics
             return get_answerer(self.store, self.embedder, self.canon, cfg,
-                                client=client).run(text, k=k, as_of=as_of)
+                                client=client).run(text, k=k, as_of=as_of, **knobs)
         akey = (cfg.rag_backend, cfg.rag_model)
         if self._answerer is None or self._answerer_key != akey:
             self._answerer = get_answerer(self.store, self.embedder, self.canon, cfg)
             self._answerer_key = akey
-        return self._answerer.run(text, k=k, as_of=as_of)
+        return self._answerer.run(text, k=k, as_of=as_of, **knobs)
 
     # ----------------------------------------------------------------- helpers
     def explain(self, result: RetrievalResult, max_objects: int = 5) -> str:

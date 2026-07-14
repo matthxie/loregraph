@@ -17,6 +17,7 @@ contained T (point-in-time retrieval). Structural edges (mention/episode/tag) ar
 """
 from __future__ import annotations
 
+import os
 import re
 import weakref
 from dataclasses import dataclass, field
@@ -127,18 +128,46 @@ class Seeder:
         self._bm25_corpus: list[list[str]] = []
         self._bm25_version: int = -1
 
+    def _episode_doc(self, n) -> str:
+        """The §3.4 composite corpus doc for one episode: raw text + title + the
+        analyzed media/link description + entity/concept surface names + file
+        name/extension tokens from media_paths ("png", "pdf", …). Wire shapes and
+        score semantics are unchanged — a wider corpus just matches more."""
+        parts = [n.raw_text or "", n.title or "", n.description or ""]
+        parts.extend(n.tags or [])           # denormalised canonical tag/concept names
+        seen: set[str] = set()
+        for mid, _d in self.store.neighbors(n.id, etypes={EdgeType.MENTIONED_IN},
+                                            direction="in"):
+            for eid, _d2 in self.store.neighbors(mid, etypes={EdgeType.RESOLVES_TO},
+                                                 direction="out"):
+                if eid in seen:
+                    continue
+                seen.add(eid)
+                ent = self.store.get_node(eid)
+                if ent is not None and ent.valid:
+                    parts.append(ent.name)
+        for p in n.media_paths or []:
+            base = os.path.basename(p)
+            parts.append(base)               # _TOK splits "img_2024.png" → img 2024 png
+            ext = os.path.splitext(base)[1].lstrip(".")
+            if ext:
+                parts.append(ext)
+        return " ".join(p for p in parts if p)
+
     def _ensure_bm25(self):
-        # Rebuild only when the EPISODE set has changed since the last build (episode
-        # text is immutable, so nothing else can stale the corpus). Retrievers are
-        # long-lived (hoisted onto KnowledgeGraph), so across queries this is a no-op.
-        version = getattr(self.store, "episode_version", None)
+        # Rebuild when the store has mutated since the last build. The composite doc
+        # (title, description, entity/tag surfaces) is sensitive to post-ingest
+        # mutation — canonical renames/merges, title backfill — which bumps
+        # store.version but NOT episode_version, so the wider gate is required.
+        # Retrievers are long-lived (hoisted onto KnowledgeGraph), so across pure
+        # read queries this stays a no-op.
+        version = getattr(self.store, "version", None)
         if self._bm25 is not None and version == self._bm25_version:
             return
         self._bm25_version = version
         corpus, ids = [], []
         for n in sorted(self.store.nodes_of_type(NodeType.EPISODE), key=lambda n: n.id):
-            surface = n.raw_text or n.description or n.name or ""
-            corpus.append(_TOK.findall(surface.lower()))
+            corpus.append(_TOK.findall(self._episode_doc(n).lower()))
             ids.append(n.id)
         self._bm25_ids = ids
         self._bm25_corpus = corpus
@@ -152,25 +181,31 @@ class Seeder:
             return
         self._bm25 = BM25Okapi(corpus)
 
-    def bm25_search(self, query: str, k: int | None = None) -> list[tuple[str, float]]:
-        """Top-k (episode_id, max-normalized score) over episode raw-text by lexical
+    def bm25_search(self, query: str, k: int | None = None, *,
+                    normalized: bool = True) -> list[tuple[str, float]]:
+        """Top-k (episode_id, score) over the composite episode docs by lexical
         relevance. BM25 when `rank_bm25` is installed, else a deterministic token-overlap
-        scan so lexical search still works fully offline."""
+        scan so lexical search still works fully offline. Scores are max-normalized for
+        seed fusion (the default); `normalized=False` serves the raw BM25 scale the
+        `search` verb reports (PROTOCOL §3.4)."""
         k = k or self.config.seed_k
         self._ensure_bm25()
         toks = _TOK.findall((query or "").lower())
         if not toks or not self._bm25_ids:
             return []
-        if self._bm25:
-            scores = self._bm25.get_scores(toks)
-        else:
+        scores = self._bm25.get_scores(toks) if self._bm25 else None
+        if scores is None or (float(scores.max()) if len(scores) else 0.0) <= 0:
+            # rank_bm25 missing — or degenerate on a tiny corpus (a term in half or
+            # more of very few docs gets idf ≤ 0, zeroing every score). Token-overlap
+            # keeps exact-name search alive on small personal stores.
             want = set(toks)
             scores = np.array([sum(1 for t in doc if t in want)
                                for doc in self._bm25_corpus], dtype=np.float64)
         peak = float(scores.max()) if len(scores) else 0.0
         if peak <= 0:
             return []
-        scores = scores / peak
+        if normalized:
+            scores = scores / peak
         out = []
         # ids are pre-sorted (corpus build), so argsort's stable ties are id-ordered
         for i in np.argsort(-scores, kind="stable")[:k]:
@@ -496,7 +531,8 @@ class PPRRetriever:
         self.seeder = Seeder(store, embedder, canon, config)
 
     def retrieve(self, query: str, k: int | None = None,
-                 as_of: str | None = None) -> RetrievalResult:
+                 as_of: str | None = None,
+                 mmr_lambda: float | None = None) -> RetrievalResult:
         k = k or self.config.top_k
         if not query or not query.strip():
             return RetrievalResult(query=query, mode=self.mode, as_of=as_of)
@@ -534,13 +570,15 @@ class PPRRetriever:
         cand.sort(key=lambda x: (-x[1], x[0]))    # id tie-break: order-insensitive
         cand = cand[: max(k * 3, k)]
         with prof_span("query.mmr_rerank"):
-            ranked = self._rerank(query, cand, seeds, G, k)
+            ranked = self._rerank(query, cand, seeds, G, k, mmr_lambda=mmr_lambda)
         res.objects = ranked
         res.subgraph = set(seeds) | {oid for oid, _ in ranked}
         return res
 
-    def _rerank(self, query, cand, seeds, G, k):
-        """MMR diversity + node-distance to seeds on top of PPR scores (graphiti)."""
+    def _rerank(self, query, cand, seeds, G, k, mmr_lambda: float | None = None):
+        """MMR diversity + node-distance to seeds on top of PPR scores (graphiti).
+        `mmr_lambda` (PROTOCOL §7.3): a per-call relevance⇄diversity dial, clamped to
+        [0, 1]; None keeps the engine's configured default."""
         if not cand:
             return []
         seed_objs = [s for s in seeds if s in G]
@@ -551,7 +589,8 @@ class PPRRetriever:
         selected: list[tuple[str, float]] = []
         selected_vecs: list = []
         remaining = [oid for oid, _ in cand]
-        lam = self.config.mmr_lambda
+        lam = self.config.mmr_lambda if mmr_lambda is None \
+            else max(0.0, min(1.0, float(mmr_lambda)))
         while remaining and len(selected) < k:
             best, best_score = None, -1e9
             for oid in remaining:
@@ -677,6 +716,10 @@ class HybridRetriever:
         self.facts = FactIndex(store)
         self._reranker = (CrossEncoderReranker(config.rerank_model)
                           if getattr(config, "rerank", True) else None)
+        self._forced_reranker = None    # lazily built for per-call rerank=True only —
+        #                                 never installed as self._reranker, so a forced
+        #                                 call can't flip lane-gated CE on for later
+        #                                 default calls when config.rerank is off
 
     @property
     def rerank_active(self) -> bool | None:
@@ -790,13 +833,22 @@ class HybridRetriever:
         return (out[:cut] + picks + out[cut:])[:k]
 
     def retrieve(self, query: str, k: int | None = None,
-                 as_of: str | None = None) -> RetrievalResult:
+                 as_of: str | None = None, rerank: bool | None = None,
+                 mmr_lambda: float | None = None, since: str | None = None,
+                 until: str | None = None) -> RetrievalResult:
+        """Per-call knobs (PROTOCOL §3.3/§7.3), all optional and additive:
+        `rerank=True` blends the cross-encoder into EVERY lane (building it lazily if
+        the config left it off); None/False keep the engine's lane-gated default —
+        the internal hard-lane CE is baseline ranking quality, not the wire knob.
+        `mmr_lambda` dials the PPR MMR stage (clamped [0,1]; None ⇒ config default).
+        `since`/`until` bound candidates to an event-time window, compared on the
+        10-char date prefix, before lane trims and ranking."""
         k = k or self.config.top_k
         lane = route(query) if getattr(self.config, "route", True) else "single"
         base_pool = max(int(getattr(self.config, "rerank_pool", 32)), k * 3)
         pool = base_pool * 2 if lane == MULTIHOP else base_pool   # multihop widens the pool
 
-        base = self.ppr.retrieve(query, k=pool, as_of=as_of)
+        base = self.ppr.retrieve(query, k=pool, as_of=as_of, mmr_lambda=mmr_lambda)
         cand_ids: list[str] = list(base.object_ids)
         ent_ids = self._entity_seeds(base.seeds)
 
@@ -808,15 +860,31 @@ class HybridRetriever:
                     if ep not in cand_ids and n and n.valid and n.ntype == NodeType.EPISODE:
                         cand_ids.append(ep)
 
+        # §7.3 event-time window: filter on the 10-char date prefix (inputs are
+        # normalized upstream — bare years arrive as their Jan-1 start).
+        def _in_window(eid: str) -> bool:
+            d = self._event_time(eid)[:10]
+            if not d:
+                return False
+            return (not since or d >= since[:10]) and (not until or d <= until[:10])
+        if (since or until) and cand_ids:
+            cand_ids = [eid for eid in cand_ids if _in_window(eid)]
+
         # RECENCY: restrict to the most recent candidates by event time before ranking.
         if lane == RECENCY and cand_ids:
             cand_ids = sorted(cand_ids, key=self._event_time, reverse=True)[: max(k * 2, k)]
 
-        # Conditional rerank: only the hard lanes; single/recency keep PPR / event-time order.
+        # Conditional rerank: only the hard lanes; single/recency keep PPR / event-time
+        # order — unless the caller forces the CE everywhere (rerank=True).
         rerank_lanes = set(getattr(self.config, "rerank_lanes", ("state", "multihop")))
-        if self._reranker is not None and cand_ids and lane in rerank_lanes:
+        reranker = self._reranker
+        if rerank and reranker is None:
+            if self._forced_reranker is None:
+                self._forced_reranker = CrossEncoderReranker(self.config.rerank_model)
+            reranker = self._forced_reranker
+        if reranker is not None and cand_ids and (rerank or lane in rerank_lanes):
             with prof_span("query.cross_encoder"):
-                ranked = self._reranker.rerank(
+                ranked = reranker.rerank(
                     query, [(ep, self._snippet(ep)) for ep in cand_ids], k)
             # PPR guarantee: the raw PPR pool's top-N must survive the cross-encoder —
             # the CE can demote an episode the graph ranked #1 out of the top-k entirely.
@@ -832,6 +900,11 @@ class HybridRetriever:
 
         ranked = self._session_dedup(ranked, k)
         ranked = self._reserve_slots(query, ranked, base, cand_ids, k, as_of)
+        if since or until:
+            # _reserve_slots can inject from the UNFILTERED pool (seed reserve /
+            # date-window boost) — the window is a hard §7.3 bound, so enforce it
+            # again on the final ranking.
+            ranked = [eid for eid in ranked if _in_window(eid)]
 
         res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,
                               seeds=list(base.seeds), seed_scores=dict(base.seed_scores),
@@ -839,6 +912,10 @@ class HybridRetriever:
         res.objects = [(ep, float(len(ranked) - i)) for i, ep in enumerate(ranked)]
         res.lane = lane            # type: ignore[attr-defined]
         res.entity_ids = ent_ids   # type: ignore[attr-defined]
+        # The context builder re-injects episodes (sibling expansion, provenance
+        # promotion) after this ranking; it reads the window off the result so those
+        # additions honour the same §7.3 bound.
+        res.window = (since, until)  # type: ignore[attr-defined]
         # Raw PPR pool (episode_id, real diffusion score) BEFORE lane trims / cross-encoder
         # rerank — the failure-triage layer reads gold's rank + score margin off this to
         # split "never retrievable" from "retrievable but ranked out".

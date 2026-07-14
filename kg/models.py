@@ -148,6 +148,8 @@ class Node:
 
     # ---- Episode ----
     modality: Modality | None = None
+    title: str | None = None              # display title (PROTOCOL §7.2): resolved link/page
+    #                                       title, or derived from the analyzed description
     raw_text: str | None = None          # the embedding / retrieval surface
     description: str | None = None        # image: the VLM one-liner
     content_hash: str | None = None
@@ -270,10 +272,11 @@ class Edge:
 def episode_node(node_id: str, *, modality: Modality, source_ref: str,
                  raw_text: str | None, content_hash: str, ts: str,
                  description: str | None = None, ingested_at: str = "",
-                 media_paths: list[str] | None = None) -> Node:
+                 media_paths: list[str] | None = None,
+                 title: str | None = None) -> Node:
     return Node(
         id=node_id, ntype=NodeType.EPISODE, name=source_ref, modality=modality,
-        source_ref=source_ref, raw_text=raw_text, description=description,
+        title=title, source_ref=source_ref, raw_text=raw_text, description=description,
         content_hash=content_hash, created_at=ts, last_modified=ts,
         ingested_at=ingested_at or ts, media_paths=list(media_paths or []),
     )
