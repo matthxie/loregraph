@@ -32,7 +32,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import ledger
+from . import __version__, ledger
 from .errors import (EngineError, InvalidInput, ModelUnavailable, NotFound,
                      ProviderUnavailable, StoreError)
 
@@ -41,7 +41,10 @@ PROTOCOL_VERSION = 1
 # moves; the minor advertises the v1.1 additive surface. 1 ⇒ v1 core + §7 methods are served,
 # but §8 recs (which would be minor 2) are not — capability-probing (-32601) is the fallback.
 PROTOCOL_MINOR = 1
-ENGINE_VERSION = "0.1.0"
+# The version announced in the ready handshake comes from the installed package
+# metadata (stamped by the release pipeline), via kg.__version__ — never a literal,
+# which would announce the same number forever regardless of the wheel installed.
+ENGINE_VERSION = __version__
 
 # JSON-RPC / PROTOCOL §4 error codes.
 PARSE_ERROR = -32700
