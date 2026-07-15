@@ -1,5 +1,6 @@
-"""chat.agent contract tests (PROTOCOL §9.2/§9.3) — kg/agent.py loop, Engine.agent
-facade, and the daemon's chat.agent registration.
+"""chat.agent contract tests (PROTOCOL §9.2/§9.3) — kg/agent.py loop and the
+Engine.agent facade. The daemon-registration halves (probe safety, BUSY, progress
+notifications, param validation) live with the app-owned daemon in the brainbrain repo.
 
 Fully offline: the provider LLM is a scripted OpenAI-SDK-shaped client; embeddings use
 the real local bge model, same policy as the rest of the suite.
@@ -15,7 +16,6 @@ import types
 import pytest
 
 from kg.agent import MAX_STEPS, run_agent
-from kg.daemon import Daemon
 from kg.engine import Engine, NoteInput
 from kg.errors import InvalidInput, ProviderUnavailable
 
@@ -270,91 +270,3 @@ def test_engine_agent_provider_none_raises():
     with pytest.raises(ProviderUnavailable):
         e.agent("anything")
     e.close()
-
-
-# --------------------------------------------------------------------------- #
-# daemon registration (§9.1/§9.3): probe safety, BUSY, progress, degradation
-# --------------------------------------------------------------------------- #
-@pytest.fixture
-def daemon(monkeypatch):
-    monkeypatch.setenv("KG_LLM", "mock")
-    d = Daemon(tempfile.mkdtemp())
-    sent: list[dict] = []
-    d._send = sent.append
-    return d, sent
-
-
-def _call(d, sent, method, params, rid):
-    d._handle_line(json.dumps({"jsonrpc": "2.0", "id": rid,
-                               "method": method, "params": params}))
-    return [m for m in sent if m.get("id") == rid][-1]
-
-
-def test_probe_answers_32602_with_zero_side_effects(daemon):
-    d, sent = daemon
-    r = _call(d, sent, "chat.agent", {}, 1)
-    assert r["error"]["code"] == -32602 and "question" in r["error"]["message"]
-    assert d._engine is None                     # the probe never opened the engine
-    assert not any(m.get("method") == "agent.progress" for m in sent)
-
-
-def test_run_emits_steps_then_exactly_one_terminal_done(daemon):
-    d, sent = daemon
-    _call(d, sent, "capture", {"text": "Met Becky at the gym.",
-                               "created_at": "2026-07-01T10:00:00Z"}, 2)
-    _call(d, sent, "inbox.drain", {}, 3)
-    sent.clear()
-    r = _call(d, sent, "chat.agent", {"question": "where did I meet Becky?"}, 4)
-    assert sorted(r["result"].keys()) == ["answer", "citations", "context",
-                                          "invalid_citations", "steps", "trace"]
-    assert sorted(r["result"]["context"].keys()) == ["conflicts", "episode_ids",
-                                                     "facts", "rendered_text"]
-    notes = [m["params"] for m in sent if m.get("method") == "agent.progress"]
-    assert [n["seq"] for n in notes] == list(range(1, len(notes) + 1))
-    terminal = [n for n in notes if n["state"] in ("done", "failed")]
-    assert len(terminal) == 1 and terminal[0] is notes[-1]
-    assert terminal[0]["state"] == "done"
-
-
-def test_second_concurrent_run_answers_busy(daemon):
-    d, sent = daemon
-    d._agent_running = True
-    r = _call(d, sent, "chat.agent", {"question": "x"}, 5)
-    assert r["error"]["code"] == -32005
-    d._agent_running = False
-
-
-def test_provider_unavailable_degrades_to_chat_answer(daemon):
-    d, sent = daemon
-    d.engine().set_provider({"kind": "none"})
-    sent.clear()
-    r = _call(d, sent, "chat.agent", {"question": "x"}, 6)
-    assert r["error"]["code"] == -32003
-    assert r["error"]["data"] == {"fallback": "chat.answer"}
-    notes = [m["params"] for m in sent if m.get("method") == "agent.progress"]
-    assert [n["state"] for n in notes] == ["failed"]   # exactly one terminal
-
-
-def test_max_steps_param_validation(daemon):
-    d, sent = daemon
-    r = _call(d, sent, "chat.agent", {"question": "x", "max_steps": 2.5}, 7)
-    assert r["error"]["code"] == -32602
-
-
-def test_retrieve_knob_param_validation(daemon):
-    d, sent = daemon
-    r = _call(d, sent, "retrieve", {"query": "x", "since": "not-a-date"}, 20)
-    assert r["error"]["code"] == -32004                # §4: bad ISO date
-    r = _call(d, sent, "chat.answer", {"question": "x", "until": "later"}, 21)
-    assert r["error"]["code"] == -32004
-    r = _call(d, sent, "retrieve", {"query": "x", "rerank": "yes"}, 22)
-    assert r["error"]["code"] == -32602                # rerank must be a bool
-
-
-def test_k_param_validation(daemon):
-    d, sent = daemon
-    for bad in (2.5, True):
-        r = _call(d, sent, "chat.agent", {"question": "x", "k": bad}, 8)
-        assert r["error"]["code"] == -32602, bad
-        r = _call(d, sent, "search", {"terms": "x", "k": bad}, 9)
-        assert r["error"]["code"] == -32602, bad

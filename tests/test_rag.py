@@ -217,12 +217,6 @@ def test_context_builder_enforces_since_until_window():
     assert early.id not in blob
 
 
-def test_wire_facts_serves_rows_and_wraps_strings():
-    from kg.daemon import Daemon
-    rows = Daemon._wire_facts([{"source": "a", "rendered": "r"}, "plain line", 7])
-    assert rows == [{"source": "a", "rendered": "r"}, {"rendered": "plain line"}]
-
-
 def test_sys_prompt_orders_timeframe_answer_first():
     """07741c44: the reader led with the current state and the judge graded the first
     clause, missing the earlier timeframe the question actually asked about."""

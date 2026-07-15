@@ -10,7 +10,6 @@ import tempfile
 
 import pytest
 
-from kg.daemon import Daemon
 from kg.engine import Engine, NoteInput
 from kg.errors import NotFound
 from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation,
@@ -158,21 +157,3 @@ def test_episode_detail_serves_grounded_facts(eng):
     assert f["status"] == "asserted" and f["episode_id"] == turing_id
     assert "worked_at" in f["rendered"]
     assert eng.episode(eps[0]["id"])["facts"] == []    # the PAPER note grounds none
-
-
-def test_wire_shape_carries_predicate_and_stubs(eng):
-    alan = _entity(eng, "Alan Turing")
-    wire = Daemon._wire_graph_preview(eng.graph_preview(alan.id), alan.id)
-    root = next(n for n in wire["nodes"] if n["id"] == alan.id)
-    assert root == {"id": alan.id, "label": "Alan Turing", "kind": "entity",
-                    "hop": 0, "external_connections": 0, "entity_category": "person"}
-    fact = next(e for e in wire["edges"] if e["kind"] == "RELATED_TO")
-    assert fact["label"] == "worked_at"                # predicate on the wire label
-    assert all(e["label"] == "" for e in wire["edges"] if e["kind"] == "MENTIONS")
-    # Alan's one-hop neighbourhood has no concept (Enigma is only co-mentioned, not a
-    # fact partner); the episode-rooted preview carries all three node kinds.
-    assert {n["kind"] for n in wire["nodes"]} == {"entity", "episode"}
-    ep = eng.episodes_list()["episodes"][0]["id"]
-    wire_ep = Daemon._wire_graph_preview(eng.graph_preview(ep), ep)
-    assert {n["kind"] for n in wire_ep["nodes"]} <= {"entity", "episode", "concept"}
-    assert "concept" in {n["kind"] for n in wire_ep["nodes"]}
