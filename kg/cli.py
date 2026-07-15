@@ -7,7 +7,6 @@
     query          retrieve for a question (auto-routes local↔global; --as-of for time travel)
     ask            answer a question: PPR retrieves a context, ONE LLM call answers (§5)
     demo           ingest the synthetic Becky/Alex stream and show temporal evolution
-    daemon         run the persistent JSON-RPC-over-stdio daemon (desktop app backend)
     stats          print node/edge counts
     inspect        dump one node + its neighbours (fact windows for RELATED_TO)
     eval           recall@k / MRR ablation across retrieval modes
@@ -271,17 +270,6 @@ def cmd_demo(args):
     ask("Where does Becky live and who does she work with?", as_of="2022")
 
 
-def cmd_daemon(args):
-    """Exec the persistent daemon (JSON-RPC over stdio, the desktop app's backend). Thin
-    passthrough — kg.daemon owns the protocol and lifecycle; the CLI only forwards --data
-    (+ --log-level) and returns the daemon's exit code as this process's."""
-    from . import daemon
-    argv = ["--data", args.data]
-    if getattr(args, "log_level", None):
-        argv += ["--log-level", args.log_level]
-    raise SystemExit(daemon.main(argv))
-
-
 def cmd_stats(args):
     g = _open(args)
     print(json.dumps(g.stats(), indent=2))
@@ -480,14 +468,6 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use the first-person personal-web stream (self anchor) instead "
                           "of the Becky/Alex stream")
     pde.set_defaults(func=cmd_demo)
-
-    pdm = sub.add_parser("daemon", help="run the persistent JSON-RPC-over-stdio daemon "
-                                        "(desktop app backend); this process becomes it")
-    pdm.add_argument("--data", required=True,
-                     help="daemon data dir (graph store, spool, receipts); its parent must exist")
-    pdm.add_argument("--log-level", default="info", dest="log_level",
-                     choices=["debug", "info", "warn", "error"])
-    pdm.set_defaults(func=cmd_daemon)
 
     ps = sub.add_parser("stats", help="node/edge counts")
     ps.set_defaults(func=cmd_stats)
