@@ -102,6 +102,7 @@ def _run_pairs(cfg: Config, pairs: list[tuple], kind: str) -> dict:
 
 
 def run_gate(cfg: Config) -> dict:
+    from .llm_client import resolve_model
     rel = _run_pairs(cfg, PREDICATE_PAIRS, "relation")
     ent = _run_pairs(cfg, ENTITY_PAIRS, "entity")
     # The gate passes iff no inverse/antonym predicate pair wrongly merged AND no
@@ -114,7 +115,8 @@ def run_gate(cfg: Config) -> dict:
             "embedder": cfg.embedder,
             "embed_model": cfg.embed_model,
             "l3_enabled": cfg.l3_enabled,
-            "l3_model": cfg.l3_model if cfg.l3_enabled else None,
+            "l3_model": (resolve_model(cfg.l3_model) or "cli-default")
+            if cfg.l3_enabled else None,
         },
         "gate_pass": gate_pass,
         "relation": rel,

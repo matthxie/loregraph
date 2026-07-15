@@ -63,11 +63,17 @@ def _extractor_prompt_digest() -> str:
 
 
 def _config_digest(config: Config) -> str:
+    from .llm_client import resolve_model
     h = hashlib.sha256()
     for field in INGEST_RELEVANT_FIELDS:
+        value = getattr(config, field)
+        if field in ("llm_model", "l3_model"):
+            # hash the resolved model, not the raw field: on openai an unset (None)
+            # field hashes as 'gpt-4o-mini', keeping pre-None cache entries valid
+            value = resolve_model(value)
         h.update(field.encode("utf-8"))
         h.update(b"=")
-        h.update(repr(getattr(config, field)).encode("utf-8"))
+        h.update(repr(value).encode("utf-8"))
         h.update(b";")
     return h.hexdigest()
 

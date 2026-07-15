@@ -68,6 +68,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _resolved_models(cfg) -> dict:
+    """The models the run will actually call, not the raw config fields."""
+    from .llm_client import RAG_OPENAI_DEFAULT, resolve_model
+    return {"extractor": resolve_model(cfg.llm_model) or "cli-default",
+            "agent": resolve_model(cfg.rag_model, openai_default=RAG_OPENAI_DEFAULT)
+            or "cli-default",
+            "l3_judge": cfg.judge_model, "embedder": cfg.embed_model}
+
+
 # --------------------------------------------------------------------------- #
 # Graph-state probes (all read-only, cheap)
 # --------------------------------------------------------------------------- #
@@ -870,8 +879,7 @@ def run_testrun(*, store_path: str = os.path.join("store", "testrun.db"),
         "run_id": run_id, "label": label or run_id, "created_at": _now(),
         "git": _git_info(),
         "backends": backends,
-        "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
-                   "l3_judge": cfg.judge_model, "embedder": cfg.embed_model},
+        "models": _resolved_models(cfg),
         "dataset": {"input": f"longmemeval:{tier}", "n_input": len(items),
                     "queries": os.path.basename(questions_path), "n_queries": len(questions)},
         "config": {"k": kk, "agent_backend": cfg.rag_backend, "mode": "shared",
@@ -1164,8 +1172,7 @@ def run_per_instance(*, tier: str = DEFAULT_TIER,
         "run_id": run_id, "label": label or run_id, "created_at": _now(),
         "git": _git_info(),
         "backends": backends,
-        "models": {"extractor": cfg.llm_model, "agent": cfg.rag_model,
-                   "l3_judge": cfg.judge_model, "embedder": cfg.embed_model},
+        "models": _resolved_models(cfg),
         "dataset": {"input": f"longmemeval:{tier} (per-instance)", "n_input": total_sessions,
                     "queries": os.path.basename(_tier_questions_path(tier)),
                     "n_queries": len(instances)},

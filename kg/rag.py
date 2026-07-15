@@ -26,7 +26,7 @@ from .canonicalize import Canonicalizer
 from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex, FactLine
-from .llm_client import llm_available, make_client, resolve_model
+from .llm_client import RAG_OPENAI_DEFAULT, llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .profiler import span as prof_span
@@ -931,10 +931,8 @@ class OpenAIAnswerer:
                          context_text=blob, object_ids=result.object_ids,
                          seeds=result.seeds, touched=sorted(result.subgraph),
                          retargeted=list(self.builder.last_retargeted))
-        # Per-provider model resolution: an explicit config override wins; an unchanged
-        # rag_model (the Config default "gpt-5-mini") resolves to the active provider's
-        # default — None for the CLI providers (codex/claude pick their own model).
-        model = resolve_model(self.config.rag_model, "gpt-5-mini")
+        # explicit rag_model wins; unset resolves per provider (openai → gpt-5-mini)
+        model = resolve_model(self.config.rag_model, openai_default=RAG_OPENAI_DEFAULT)
         # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to

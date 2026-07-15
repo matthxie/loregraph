@@ -517,10 +517,8 @@ class OpenAIExtractor:
 
     def _call(self, content_blocks: list) -> Extraction:
         import json
-        # Per-provider model resolution: an explicit config override wins; an unchanged
-        # llm_model (the Config default "gpt-4o-mini") resolves to the active provider's
-        # default — None for the CLI providers (codex/claude pick their own model).
-        model = resolve_model(self.config.llm_model, "gpt-4o-mini")
+        # explicit llm_model wins; unset resolves to the active provider's default
+        model = resolve_model(self.config.llm_model)
         with prof_span("extract.llm"):
             msg = call_with_backoff(lambda: self.client.chat.completions.create(
                 model=model,

@@ -23,7 +23,12 @@ link-biased (under-merge) per §9 risk 1.
 ## Models (§0)
 
 - `llm_model` — the extraction LLM (and default for the L3 adjudicator via `--model`).
-- `rag_model` — the answerer used by `kg ask`.
+  Default `None` = the active provider's default (openai → `gpt-4o-mini`; codex/claude →
+  the CLI's own model). An explicit value always wins, even one equal to a provider
+  default — resolution is in `kg/llm_client.py:resolve_model`.
+- `rag_model` — the answerer used by `kg ask`. Default `None` = the answerer's
+  per-provider default (openai → `gpt-5-mini`, `RAG_OPENAI_DEFAULT`); an explicit value
+  always wins.
 - `embed_model` / `embed_dim` — sentence-transformers embedder. bge-small and MiniLM are
   both 384-dim; the hashing fallback matches, so `embed_dim` only changes if the model does.
 - `judge_model` — LLM-as-judge grading for `testrun`/`ablate`/`guard_eval` scoring only.

@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 @dataclass
 class Config:
     # ══════════ TIER 1 — primary ══════════════════════════════════════════════
-    llm_model: str = "gpt-4o-mini"                # extraction LLM
-    rag_model: str = "gpt-5-mini"                 # answerer used by `kg ask`
+    llm_model: str | None = None                  # extraction LLM
+    rag_model: str | None = None                  # answerer used by `kg ask`
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384                          # must match embed_model's output dim
     extractor_backend: str = "auto"               # "auto" = LLM on every entry when a signed-in
@@ -92,7 +92,7 @@ class Config:
 
     # -- L3 selective LLM canonicalization tie-breaker (ship-disabled) ---------
     l3_enabled: bool = False
-    l3_model: str = "gpt-4o-mini"
+    l3_model: str | None = None       # None = provider default (see llm_model note above)
     rel_gray_floor: float = 0.90      # gray zone lower bound fed to the L3 adjudicator
 
     # -- derived edges ----------------------------------------------------------

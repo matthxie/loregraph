@@ -429,9 +429,8 @@ class Canonicalizer:
         else:
             prompt = _L3_ENT_PROMPT.format(kind=kind, surface=surface, candidates=lines)
         verdict, reason = "NEW", ""
-        # explicit config override if the user changed it, else the active provider's
-        # default (None for CLI providers → the CLI's own default model).
-        model = resolve_model(self.config.l3_model, "gpt-4o-mini")
+        # explicit l3_model wins; unset resolves to the active provider's default
+        model = resolve_model(self.config.l3_model)
         try:
             with prof_span("canon.l3_llm"):
                 msg = call_with_backoff(lambda: client.chat.completions.create(

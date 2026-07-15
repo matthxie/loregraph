@@ -119,8 +119,10 @@ def cmd_extract_dump(args):
     cfg = _config(args)
     ext = get_extractor(cfg)
     items = load_longmemeval(args.tier, limit=args.limit)
-    label = args.label or (cfg.llm_model if ext.name == "llm" else ext.name)
-    print(f"extracting {len(items)} items  (extractor={ext.name}, model={cfg.llm_model}, "
+    from .llm_client import resolve_model
+    model = resolve_model(cfg.llm_model) or "cli-default"
+    label = args.label or (model if ext.name == "llm" else ext.name)
+    print(f"extracting {len(items)} items  (extractor={ext.name}, model={model}, "
           f"label={label!r}) ...")
     records, errors = extract_corpus(ext, items, cfg)
     summary = summarize(records, label)

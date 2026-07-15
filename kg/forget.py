@@ -248,8 +248,9 @@ class Eraser:
 
     # ------------------------------------------------------------- escalation
     def _chat(self, prompt: str, max_tokens: int = 300) -> str:
+        from .llm_client import resolve_model
         resp = self.client.chat.completions.create(
-            model=self.config.llm_model, max_tokens=max_tokens,
+            model=resolve_model(self.config.llm_model), max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}])
         return (resp.choices[0].message.content or "").strip()
 

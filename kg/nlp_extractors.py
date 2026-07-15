@@ -404,10 +404,8 @@ class _LlmRelations:
             return []
         ent_list = ", ".join(e.name for e in entities[:60])
         prompt = (f"ENTITIES: {ent_list}\n\nCONTENT:\n{text[:self.config.extract_max_chars]}")
-        # Per-provider model resolution, same as OpenAIExtractor._call: an explicit config
-        # override wins; the unchanged default resolves to the active provider's default —
-        # None for the CLI providers (codex/claude pick their own model).
-        model = resolve_model(self.config.llm_model, "gpt-4o-mini")
+        # explicit llm_model wins; unset resolves to the active provider's default
+        model = resolve_model(self.config.llm_model)
         try:
             msg = self.client.chat.completions.create(
                 model=model, max_tokens=self.config.extract_max_tokens,

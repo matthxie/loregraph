@@ -74,6 +74,9 @@ _CLAUDE_CANDIDATES = ("~/.claude/local/claude", "~/.local/bin/claude",
 # the subscription CLIs pick their own default and a foreign model id would be rejected.
 _DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
 
+# the answerer's OpenAI default (extraction/L3 use the provider default above)
+RAG_OPENAI_DEFAULT = "gpt-5-mini"
+
 
 # --------------------------------------------------------------------------- #
 # Provider selection (env-backed, so scattered call sites all agree)
@@ -105,17 +108,19 @@ def default_model(kind: str | None = None) -> str | None:
     return _DEFAULT_MODELS.get((kind or "").strip().lower())
 
 
-def resolve_model(configured: str | None, unchanged_default: str | None = None,
+def resolve_model(configured: str | None, openai_default: str | None = None,
                   provider: dict | None = None) -> str | None:
-    """The model a call site should actually request: the user's explicit config override
-    when they changed it (``configured`` differs from the Config field's dataclass default,
-    ``unchanged_default``), else the active provider's ``default_model``. This keeps a stale
-    per-provider default (e.g. a Config born ``gpt-4o-mini``) from being force-fed to a
-    provider that can't serve it."""
-    if configured and configured != unchanged_default:
+    """The model a call site should actually request: an explicit ``configured`` value
+    always wins (Config model fields default to None = "no preference"). Otherwise the
+    active provider's ``default_model``, except ``openai_default`` lets a call site pick
+    its own OpenAI model (the answerer wants gpt-5-mini, extraction gpt-4o-mini)."""
+    if configured:
         return configured
     provider = provider or current_provider()
-    return default_model(provider.get("kind"))
+    kind = (provider.get("kind") or "").strip().lower()
+    if kind == "openai" and openai_default:
+        return openai_default
+    return default_model(kind)
 
 
 def current_provider() -> dict:
