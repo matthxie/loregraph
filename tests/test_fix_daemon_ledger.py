@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest import mock
 
 import pytest
 
@@ -41,9 +42,11 @@ class _FlakyEngine:
     def __init__(self, fail_times=1):
         self.calls = 0
         self.fail_times = fail_times
+        self.last_note = None
 
     def ingest(self, note):
         self.calls += 1
+        self.last_note = note
         if self.calls <= self.fail_times:
             raise RuntimeError("boom")
         return _Res()
@@ -130,6 +133,41 @@ def test_load_spool_drops_escaping_leaf(tmp_path):
     assert msg["media"] == [os.path.join(sdir, "att01_ok.bin")]
 
 
+def test_commit_media_returns_durable_relative_paths(tmp_path):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.webp"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    paths = ledger.commit_media(str(tmp_path), "op-abc123", [str(first), str(second)])
+
+    assert paths == ["media/op-abc123.png", "media/op-abc123_1.webp"]
+    assert (tmp_path / paths[0]).read_bytes() == b"first"
+    assert (tmp_path / paths[1]).read_bytes() == b"second"
+
+
+def test_commit_media_rolls_back_partial_copy(tmp_path):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    original = ledger.shutil.copy2
+    copies = 0
+
+    def fail_second(source, destination):
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            raise OSError("injected copy failure")
+        return original(source, destination)
+
+    with mock.patch.object(ledger.shutil, "copy2", side_effect=fail_second):
+        with pytest.raises(OSError):
+            ledger.commit_media(str(tmp_path), "op-rollback", [str(first), str(second)])
+
+    assert not list((tmp_path / "media").glob("op-rollback*"))
+
+
 def test_wire_pending_drops_escaping_leaf(tmp_path):
     secret = tmp_path / "secret.txt"
     secret.write_text("top secret")
@@ -179,6 +217,26 @@ def test_drain_retry_does_not_duplicate_raw_row(tmp_path):
 
     rows = _raw_rows(str(tmp_path))
     assert [r["spool_id"] for r in rows] == [sid]     # exactly one raw row
+
+
+def test_drain_commits_media_before_receipt_deletes_spool(tmp_path):
+    source = tmp_path / "source.png"
+    source.write_bytes(b"image")
+    captured = ledger.spool(str(tmp_path), text="with image", media=[str(source)])
+    sid = captured["spool_id"]
+    engine = _FlakyEngine(fail_times=0)
+    d = _daemon(tmp_path, engine=engine)
+
+    spool = ledger.load_spool(str(tmp_path), sid)
+    receipt = d._drain_one(_FakeNote, sid, spool)
+
+    assert receipt["status"] == "ingested"
+    assert not os.path.isdir(os.path.join(str(tmp_path), "ingest", sid))
+    note = engine.last_note
+    assert note.media_paths == [f"media/{sid}.png"]
+    assert note.attachments == [os.path.join(str(tmp_path), f"media/{sid}.png")]
+    assert os.path.isfile(note.attachments[0])
+    assert _raw_rows(str(tmp_path))[0]["attachments"] == note.media_paths
 
 
 def test_full_drain_retry_via_m_inbox_drain(tmp_path):

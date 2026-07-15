@@ -619,12 +619,16 @@ class Daemon:
         source = spool.get("source") or "capture"
         media = spool.get("media", [])
         replaces = spool.get("replaces") or None
+        media_paths = ledger.commit_media(self.data_dir, sid, media)
+        readable_media = [os.path.join(self.data_dir, *path.split("/"))
+                          for path in media_paths]
         ledger.append_raw_once(self.data_dir, sid, {
             "spool_id": sid, "created_at": created_at, "source": source, "text": text,
             "urls": spool.get("urls", []),
-            "attachments": [os.path.basename(m) for m in media]})
+            "attachments": media_paths})
         res = self.engine().ingest(NoteInput(text=text, created_at=created_at,
-                                             attachments=media, source=source))
+                                             attachments=readable_media,
+                                             media_paths=media_paths, source=source))
         note_id = res.episode_id[3:] if res.episode_id.startswith("ep_") else res.episode_id
         ledger.dump_extraction(self.data_dir, note_id, {
             "episode_id": res.episode_id, "entities": res.entities,

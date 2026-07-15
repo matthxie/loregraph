@@ -267,6 +267,49 @@ def load_spool(data_dir: str, spool_id: str) -> dict:
     return message
 
 
+def commit_media(data_dir: str, spool_id: str, media: list[str]) -> list[str]:
+    """Copy spool attachments into ``<data>/media`` before acknowledging the spool.
+
+    Returned paths are data-dir-relative. The copy is all-or-nothing so a failed set leaves
+    the spool retryable without a partial episode media set.
+    """
+    usable = [path for path in media if isinstance(path, str) and os.path.isfile(path)]
+    if not usable:
+        return []
+    media_dir = os.path.join(data_dir, "media")
+    os.makedirs(media_dir, exist_ok=True)
+    safe_spool_id = _sanitize_filename(os.path.basename(spool_id))
+    committed: list[str] = []
+    destinations: list[str] = []
+    try:
+        for index, source_path in enumerate(usable):
+            suffix = os.path.splitext(source_path)[1].lower()
+            if not suffix.startswith(".") or not suffix[1:].isalnum() or len(suffix) > 17:
+                suffix = ".bin"
+            stem = safe_spool_id if index == 0 else f"{safe_spool_id}_{index}"
+            leaf = f"{stem}{suffix}"
+            destination = os.path.join(media_dir, leaf)
+            destinations.append(destination)
+            staging = f"{destination}.tmp-{uuid.uuid4().hex[:8]}"
+            try:
+                shutil.copy2(source_path, staging)
+                os.replace(staging, destination)
+            finally:
+                try:
+                    os.remove(staging)
+                except OSError:
+                    pass
+            committed.append(f"media/{leaf}")
+    except OSError:
+        for destination in destinations:
+            try:
+                os.remove(destination)
+            except OSError:
+                pass
+        raise
+    return committed
+
+
 def write_receipt(data_dir: str, spool_id: str, note_ids: list[str], *, at: str,
                   discarded: bool = False, replaces: str | None = None) -> None:
     """Append one receipt line to <data_dir>/ingest/.processed.jsonl (fsynced — the receipt

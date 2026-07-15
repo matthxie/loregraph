@@ -84,6 +84,7 @@ class NoteInput:
     created_at: str                 # ISO-8601
     attachments: list[str] = field(default_factory=list)
     source: str = "app"
+    media_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -222,26 +223,28 @@ class Engine:
         if not isinstance(note.text, str):
             raise InvalidInput("note.text must be a string")
         attachments = list(note.attachments or [])
+        media_paths = list(note.media_paths or attachments)
+        readable_media = attachments or media_paths
         has_text = bool(note.text.strip())
         # a media-only note (empty text) is valid when it carries attachments; otherwise
         # empty text is nothing to ingest.
-        if not has_text and not attachments:
+        if not has_text and not readable_media:
             raise InvalidInput("note.text must be a non-empty string")
         if not note.created_at:
             raise InvalidInput("note.created_at is required (ISO-8601)")
         # salt the id with attachments so two media-only notes (empty text) at the same
         # timestamp don't collide on one nid and dedup each other away.
         nid = hashlib.sha256(
-            f"{note.created_at}\n{note.text}\n{chr(0).join(attachments)}"
+            f"{note.created_at}\n{note.text}\n{chr(0).join(media_paths)}"
             .encode("utf-8")).hexdigest()[:16]
-        # media-only → text=None routes through the described-media perception path and
-        # hashes on the artifact path; the attachments all persist as episode.media_paths.
+        # media-only → text=None routes through the described-media perception path. The
+        # readable attachment may be a temporary absolute path; only media_paths persist.
         item = CorpusItem(id=nid, modality="text" if has_text else "image",
                           source_ref=f"{note.source}/{nid}",
                           text=note.text if has_text else None,
-                          image_path=attachments[0] if attachments else None,
+                          image_path=readable_media[0] if readable_media else None,
                           created_at=note.created_at)
-        item.media_paths = attachments
+        item.media_paths = media_paths
         try:
             report = self._g.ingest([item])
             self._g.save()                      # durability: on disk before we return
@@ -254,6 +257,74 @@ class Engine:
         return IngestResult(episode_id=f"ep_{nid}", tasks=[],
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
+
+    def repair_legacy_media_paths(self) -> int:
+        """Reconnect media files to episodes written by the broken packaged drainer.
+
+        The append-only raw ledger still identifies those attachments, and the checked-in demo
+        fixture already contains their bytes. Only files that resolve inside ``media/`` are
+        restored.
+        """
+        self._check()
+        from . import ledger
+
+        raw_path = os.path.join(self._data_dir, "raw_inputs.jsonl")
+        media_dir = os.path.join(self._data_dir, "media")
+        if not os.path.isfile(raw_path) or not os.path.isdir(media_dir):
+            return 0
+
+        by_id: dict[str, list[str]] = {}
+        by_capture: dict[tuple[str, str], list[str]] = {}
+        try:
+            with open(raw_path, encoding="utf-8") as f:
+                rows = [json.loads(line) for line in f if line.strip()]
+        except (OSError, json.JSONDecodeError):
+            return 0
+
+        for row in rows:
+            if not isinstance(row, dict) or row.get("op"):
+                continue
+            recovered: list[str] = []
+            references = list(row.get("media_paths") or row.get("attachments") or [])
+            for reference in references:
+                leaf = reference.get("file") if isinstance(reference, dict) else reference
+                if not isinstance(leaf, str):
+                    continue
+                base = os.path.basename(leaf.replace("\\", "/"))
+                candidates = [base]
+                without_spool_prefix = re.sub(r"^att\d+_", "", base)
+                if without_spool_prefix != base:
+                    candidates.insert(0, without_spool_prefix)
+                for candidate in candidates:
+                    resolved = ledger.contained_leaf(media_dir, candidate)
+                    if resolved and os.path.isfile(resolved):
+                        relative = f"media/{os.path.basename(resolved)}"
+                        if relative not in recovered:
+                            recovered.append(relative)
+                        break
+            if not recovered:
+                continue
+            note_id = row.get("id")
+            if isinstance(note_id, str) and note_id:
+                by_id[f"ep_{note_id}"] = recovered
+            created_at = ledger.normalize_iso(str(row.get("created_at") or ""))
+            by_capture.setdefault((created_at, str(row.get("text") or "")), recovered)
+
+        repaired = 0
+        store = self._g.store
+        for node in list(store.nodes.values()):
+            if node.ntype != NodeType.EPISODE or node.media_paths:
+                continue
+            key = (ledger.normalize_iso(node.created_at or ""), node.raw_text or "")
+            paths = by_id.get(node.id) or by_capture.get(key)
+            if not paths:
+                continue
+            node.media_paths = list(paths)
+            store.touch_node(node.id)
+            repaired += 1
+        if repaired:
+            self._g.save()
+        return repaired
 
     def delete_episode(self, episode_id: str) -> None:
         self._check()

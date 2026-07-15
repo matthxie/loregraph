@@ -12,6 +12,7 @@ policy as tests/test_engine.py. Run: python -m pytest tests/test_fix_ingest_engi
 """
 from __future__ import annotations
 
+import json
 import tempfile
 
 import pytest
@@ -20,6 +21,7 @@ from kg.engine import Engine, NoteInput, _MockExtractor
 from kg.errors import InvalidInput, ProviderError
 from kg.extractors import UsageMeter
 from kg.ingest import _sha256
+from kg.models import Modality, episode_node
 
 
 def _open():
@@ -85,6 +87,40 @@ def test_text_note_with_attachments_keeps_text_and_media():
     ep = eng.episode(eng.ingest(note).episode_id)
     assert ep["text"] == "Photo from the Berlin trip."
     assert ep["media_paths"] == ["/tmp/berlin.jpg"]
+    eng.close()
+
+
+def test_readable_attachment_path_is_separate_from_persisted_media_path():
+    eng = _open()
+    note = NoteInput(text="Photo from the Berlin trip.",
+                     created_at="2026-07-02T10:00:00Z",
+                     attachments=["/tmp/spool/att01_berlin.jpg"],
+                     media_paths=["media/op-berlin.jpg"])
+    ep = eng.episode(eng.ingest(note).episode_id)
+    assert ep["media_paths"] == ["media/op-berlin.jpg"]
+    eng.close()
+
+
+def test_repair_legacy_media_paths_from_raw_ledger(tmp_path):
+    eng = Engine.open(str(tmp_path), {"kind": "mock"})
+    text = "Apple Corps image"
+    created_at = "2026-07-05T11:15:00+00:00"
+    ep_id = "ep_legacy-media"
+    eng._g.store.add_node(episode_node(
+        ep_id, modality=Modality.TEXT, source_ref="fixture", raw_text=text,
+        content_hash="legacy-media", ts=created_at,
+    ))
+    eng._g.save()
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "note_0010.png").write_bytes(b"image")
+    with open(tmp_path / "raw_inputs.jsonl", "w", encoding="utf-8") as f:
+        f.write(json.dumps({"created_at": created_at, "text": text,
+                            "attachments": ["att01_note_0010.png"]}) + "\n")
+
+    assert eng.repair_legacy_media_paths() == 1
+    assert eng.episode(ep_id)["media_paths"] == ["media/note_0010.png"]
+    assert eng.repair_legacy_media_paths() == 0
     eng.close()
 
 
