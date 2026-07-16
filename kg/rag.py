@@ -810,12 +810,33 @@ class ContextBuilder:
         # changed" can read the trajectory (the currently-valid FACTS above show only the
         # open state). Only fires when the router tagged this a STATE question AND there is
         # ended history — so plain `query`-mode results (no lane) are unaffected.
-        if getattr(result, "lane", "single") == STATE:
+        #
+        # history_all_lanes (offline eval variant A, amended): closed facts are invisible
+        # outside STATE (fact_active drops them from FACTS, and the block above is gated to
+        # STATE), so "Which companies have I worked for?" on the SINGLE lane never sees the
+        # ended employer. When the knob is on, every other lane gets the CLOSED lines only —
+        # the delta over FACTS; re-rendering the open lines measured ~90% duplication
+        # (docs/OFFLINE_EVAL.md §5.1). STATE keeps its full closed+open block unchanged.
+        lane = getattr(result, "lane", "single")
+        if lane == STATE or getattr(self.config, "history_all_lanes", False):
             ent_ids = getattr(result, "entity_ids", []) or ents
             hist = FactIndex(self.store).history(ent_ids)
             if any(h.invalid_at for h in hist):
-                lines += ["", "HISTORY (includes ENDED facts; read the trajectory in time order):"]
-                lines += [f"- {h.render()}" for h in hist]
+                if lane == STATE:
+                    lines += ["", "HISTORY (includes ENDED facts; read the trajectory "
+                                  "in time order):"]
+                    lines += [f"- {h.render()}" for h in hist]
+                else:
+                    closed = [h for h in hist if h.invalid_at]
+                    # an as-of view must not surface facts/events that start after T
+                    # (the FACTS section already enforces this via fact_active)
+                    if result.as_of:
+                        closed = [h for h in closed
+                                  if not h.valid_at or h.valid_at <= result.as_of]
+                    if closed:
+                        lines += ["", "HISTORY (ENDED facts and past events; the FACTS "
+                                      "above show only the currently-open state):"]
+                        lines += [f"- {h.render()}" for h in closed]
         return ctx_ids, facts, "\n".join(lines)
 
 

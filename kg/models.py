@@ -170,6 +170,7 @@ class Node:
     doc_frequency: int = 0                 # # episodes referencing it (IDF specificity)
     functional: bool = False               # RelationNode: single-valued (lives_in, employed_by)
     symmetric: bool = False                # RelationNode: orientation-free (works_with)
+    event: bool = False                    # RelationNode: dated occurrence (went_to, visited)
 
     # ---- Community ----
     members: list[str] = field(default_factory=list)
@@ -226,6 +227,12 @@ class Edge:
     # ---- bi-temporal fact fields (RELATED_TO; docs/TEMPORAL.md) ----
     valid_at: str = ""                    # valid-time start ("" = unknown)
     invalid_at: str = ""                  # valid-time end   ("" = ∞ / currently true)
+    event: bool = False                   # dated OCCURRENCE, not a state: [d,d] / [d1,d2]
+    #                                       windows render as "on d" / "d1 -> d2", never
+    #                                       "since/until/ended". Written by kg/temporal.py
+    #                                       when config.event_facts is on; absent (False) on
+    #                                       every pre-existing edge, which keeps rendering
+    #                                       exactly as before (no migration).
     belief: Belief = Belief.ASSERTED      # transaction-time belief state
     episode_id: str = ""                  # provenance: the episode that asserted this fact
     via: list[str] = field(default_factory=list)  # SHARED_*: the tag/entity NAMES that bridge
@@ -313,13 +320,15 @@ def tag_node(node_id: str, *, canonical: str, ts: str) -> Node:
 
 
 def relation_tag_node(node_id: str, *, canonical: str, ts: str,
-                      functional: bool = False, symmetric: bool = False) -> Node:
+                      functional: bool = False, symmetric: bool = False,
+                      event: bool = False) -> Node:
     """A canonical relationship-tag node (predicate vocabulary). Like TagNode it carries
     `aliases` + `doc_frequency`, plus per-predicate cardinality flags (docs/TEMPORAL.md
     §5): `functional` predicates (lives_in, employed_by) are single-valued so a new value
-    supersedes the old; `symmetric` predicates (works_with) store one orientation only."""
+    supersedes the old; `symmetric` predicates (works_with) store one orientation only;
+    `event` predicates (went_to, visited) name dated occurrences, not standing states."""
     return Node(id=node_id, ntype=NodeType.RELATION, name=canonical,
-                functional=functional, symmetric=symmetric,
+                functional=functional, symmetric=symmetric, event=event,
                 created_at=ts, last_modified=ts)
 
 

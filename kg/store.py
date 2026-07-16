@@ -181,6 +181,7 @@ class GraphStore:
             confirmed_by=list(edge.confirmed_by or []),
             closed_at=edge.closed_at, closed_by_episode=edge.closed_by_episode,
             retracted_at=edge.retracted_at, retracted_by_episode=edge.retracted_by_episode,
+            event=edge.event,
         )
         self._dirty_edges.add((edge.src, edge.dst, gkey))
         self._touch()
@@ -331,7 +332,7 @@ class GraphStore:
                 belief TEXT, episode_id TEXT, valid INTEGER, created_at TEXT, via TEXT,
                 seq INTEGER DEFAULT 0, closed_at TEXT, closed_by_episode TEXT,
                 retracted_at TEXT, retracted_by_episode TEXT, confirmed_by TEXT,
-                disputed_by TEXT,
+                disputed_by TEXT, event INTEGER DEFAULT 0,
                 PRIMARY KEY (src, dst, etype, rel_tag, valid_at, seq));
             CREATE TABLE IF NOT EXISTS vectors(
                 node_id TEXT, kind TEXT, vec BLOB, PRIMARY KEY (node_id, kind));
@@ -350,7 +351,8 @@ class GraphStore:
         for col, decl in (("via", "TEXT"), ("seq", "INTEGER DEFAULT 0"),
                           ("closed_at", "TEXT"), ("closed_by_episode", "TEXT"),
                           ("retracted_at", "TEXT"), ("retracted_by_episode", "TEXT"),
-                          ("confirmed_by", "TEXT"), ("disputed_by", "TEXT")):
+                          ("confirmed_by", "TEXT"), ("disputed_by", "TEXT"),
+                          ("event", "INTEGER DEFAULT 0")):
             try:
                 con.execute(f"ALTER TABLE edges ADD COLUMN {col} {decl}")
             except sqlite3.OperationalError:
@@ -401,9 +403,10 @@ class GraphStore:
                               d.get("closed_by_episode", ""), d.get("retracted_at", ""),
                               d.get("retracted_by_episode", ""),
                               json.dumps(d.get("confirmed_by") or []),
-                              json.dumps(d.get("disputed_by") or [])))
+                              json.dumps(d.get("disputed_by") or []),
+                              int(bool(d.get("event", False)))))
         cur.executemany(
-            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             edge_rows)
         vec_rows = []
         for kind, nid in sorted(self._dirty_vectors):
@@ -454,6 +457,7 @@ class GraphStore:
             retracted_by = row[18] if len(row) > 18 and row[18] is not None else ""
             confirmed_raw = row[19] if len(row) > 19 and row[19] is not None else ""
             disputed_raw = row[20] if len(row) > 20 and row[20] is not None else ""
+            event = bool(row[21]) if len(row) > 21 and row[21] is not None else False
             rel_tag = rel_tag or None
             is_fact = etype == EdgeType.RELATED_TO.value
             disc = valid_at if is_fact else ""
@@ -469,7 +473,8 @@ class GraphStore:
                 closed_at=closed_at, closed_by_episode=closed_by,
                 retracted_at=retracted_at, retracted_by_episode=retracted_by,
                 confirmed_by=(json.loads(confirmed_raw) if confirmed_raw else []),
-                disputed_by=(json.loads(disputed_raw) if disputed_raw else []))
+                disputed_by=(json.loads(disputed_raw) if disputed_raw else []),
+                event=event)
         for node_id, kind, blob in cur.execute("SELECT node_id, kind, vec FROM vectors"):
             vec = np.frombuffer(blob, dtype=np.float32)
             if vec.size:

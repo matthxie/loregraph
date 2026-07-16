@@ -51,6 +51,7 @@ class FactLine:
     disputed_by: list = field(default_factory=list)
     mentions: int = 1
     last_mentioned: str = ""
+    event: bool = False        # dated occurrence: render "on d" / "d1 -> d2", never state grammar
 
     @classmethod
     def from_edge(cls, store: GraphStore, src_id: str, dst_id: str,
@@ -78,13 +79,16 @@ class FactLine:
                    functional=bool(rel_node.functional) if rel_node else False,
                    disputed_by=list(data.get("disputed_by") or []),
                    mentions=1 + len(confirmed),
-                   last_mentioned=last_mentioned)
+                   last_mentioned=last_mentioned,
+                   event=bool(data.get("event", False)))
 
     def to_row(self) -> dict:
         """The wire Fact object (PROTOCOL §3): structured fields plus this line's
         rendered form. Store-empty strings cross as null per the §3 conventions."""
         return {"source": self.src, "predicate": self.rel, "target": self.dst,
-                "status": "ended" if self.invalid_at else "asserted",
+                # an event's closed window means "happened", not "ceased to hold"
+                "status": ("occurred" if self.event and self.invalid_at
+                           else "ended" if self.invalid_at else "asserted"),
                 "valid_from": self.valid_at or None,
                 "valid_to": self.invalid_at or None,
                 "recorded_at": self.recorded_at or None,
@@ -105,7 +109,19 @@ class FactLine:
         # so "since/until" is reserved for that; an open fact gets the honest "mentioned".
         # (Deliberate deviation from PROTOCOL §5.2's Rust line grammar; the explicit
         # "ended" marker keeps a closed line unmistakable next to the row's status.)
-        if self.valid_at and self.invalid_at:
+        if self.event and self.valid_at:
+            # OCCURRENCE grammar (edge stamped event=True by kg/temporal.py): the window
+            # is when it HAPPENED, so "since/until/ended" state grammar would misread a
+            # past event as a lapsed state. Same-day re-mentions confirm-collapse
+            # (confirmed_by), so the frequency stays visible; distinct dated occurrences
+            # are separate edges → separate lines.
+            if self.invalid_at and self.invalid_at[:10] != self.valid_at[:10]:
+                win.append(f"{self.valid_at[:10]} -> {self.invalid_at[:10]}")
+            else:
+                win.append(f"on {self.valid_at[:10]}")
+            if self.mentions > 1:
+                win.append(f"mentioned {self.mentions}x")
+        elif self.valid_at and self.invalid_at:
             win.append(f"since {self.valid_at[:10]}")
             win.append(f"until {self.invalid_at[:10]}")
             win.append("ended")
@@ -160,6 +176,18 @@ class FactIndex:
                     rows.append((
                         data.get("valid_at", ""), data.get("created_at", ""),
                         FactLine.from_edge(self.store, src_id, dst_id, data)))
-        # order by valid-time start, then transaction time; "" (unknown) sorts first
+        # order by valid-time start, then transaction time; "" (unknown) sorts first.
+        # CAP POLICY: the pre-fix cap kept the OLDEST `limit` rows (head of the ascending
+        # sort), silently cutting every recent closure on a hub with >limit facts in favor
+        # of old filler — inverted from what an evolution answer needs. The fix ranks the
+        # capped SELECTION by recency, with CLOSED rows kept preferentially: closures are
+        # the lines only this block carries (open rows mostly restate the FACTS section),
+        # so they must never lose their seat to newer open filler. The kept rows still
+        # read in ascending time order.
         rows.sort(key=lambda r: (r[0] or "", r[1] or ""))
-        return [fl for _, _, fl in rows[:limit]]
+        if limit and len(rows) > limit:
+            closed = [r for r in rows if r[2].invalid_at][-limit:]
+            spare = limit - len(closed)
+            open_rows = [r for r in rows if not r[2].invalid_at][-spare:] if spare else []
+            rows = sorted(closed + open_rows, key=lambda r: (r[0] or "", r[1] or ""))
+        return [fl for _, _, fl in rows[:limit]] if limit else []

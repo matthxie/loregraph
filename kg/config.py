@@ -37,6 +37,14 @@ class Config:
     rag_provenance_promote: bool = True   # pull a fact's source chunk into context
     rag_answer_events: str = "lanes"  # structured event enumeration: "off"|"lanes"|"all"
     rag_answer_events_lanes: tuple = ("multihop", "state")
+    history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
+    #                                   not just STATE (offline eval variant A, amended:
+    #                                   outside STATE only CLOSED lines render — open lines
+    #                                   duplicate the FACTS section ~90%)
+    event_facts: bool = False         # event-shaped predicates (went_to/visited/attended…)
+    #                                   write CLOSED [d,d] occurrence edges + event=True
+    #                                   instead of open [d,∞) states (docs/PIPELINE.md
+    #                                   sharp edge #1); off = pre-fix write semantics
     date_window_boost: bool = False   # reserve slots for episodes in a resolved date window
     rag_session_dedup: bool = False   # distinct sessions in the context-eligible prefix
     rag_resolve_reldates: bool = False    # annotate relative dates in episode text at render

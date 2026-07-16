@@ -505,9 +505,12 @@ class Engine:
                         invalid_at=data.get("invalid_at", ""),
                         episode_id=data.get("episode_id", ""),
                         mentions=1 + len(confirmed),
-                        last_mentioned=last_mentioned)
+                        last_mentioned=last_mentioned,
+                        event=bool(data.get("event", False)))
         return {"source": line.src, "predicate": line.rel, "target": line.dst,
-                "status": "ended" if data.get("invalid_at") else "asserted",
+                # an event's closed window means "happened", not "ceased to hold"
+                "status": ("occurred" if line.event and line.invalid_at
+                           else "ended" if data.get("invalid_at") else "asserted"),
                 "valid_from": data.get("valid_at") or None,
                 "valid_to": data.get("invalid_at") or None,
                 "recorded_at": data.get("created_at") or None,

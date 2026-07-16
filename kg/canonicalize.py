@@ -85,6 +85,16 @@ _FUNCTIONAL_SURFACES = ("lives_in", "located_in", "employed_by", "born_in",
 _SYMMETRIC_SURFACES = ("works_with", "collaborates_with", "married_to", "spouse_of",
                        "sibling_of", "friend_of", "is_friend_of", "friends_with",
                        "colleague_of", "partnered_with", "co_founder_of")
+# Event = a dated OCCURRENCE, not a standing state: "went to the park" happened on a day
+# and was over; storing it open [d, ∞) is temporally wrong (docs/PIPELINE.md sharp edge
+# #1). Deliberately CONSERVATIVE — a state predicate misclassified as event vanishes from
+# the current view, which is worse than a missed event staying open. "played"/"plays" is
+# pointedly EXCLUDED: _verb_stem folds both onto "play", so the habitual state ("plays
+# tennis on Tuesdays") would be misclassified; same-key collisions with a habitual
+# reading disqualify a verb from this list.
+_EVENT_SURFACES = ("went_to", "visited", "attended", "traveled_to", "travelled_to",
+                   "bought", "purchased", "ate", "ate_at", "watched", "hiked",
+                   "tried", "met_up", "met_up_with", "met_with", "flew_to")
 
 
 def _trailing_marker(s: str) -> str:
@@ -251,12 +261,19 @@ def relation_content_key(s: str) -> str:
 # Cardinality lexicons reduced to content keys (see _FUNCTIONAL_SURFACES above).
 FUNCTIONAL_KEYS = frozenset(relation_content_key(s) for s in _FUNCTIONAL_SURFACES)
 SYMMETRIC_KEYS = frozenset(relation_content_key(s) for s in _SYMMETRIC_SURFACES)
+EVENT_KEYS = frozenset(relation_content_key(s) for s in _EVENT_SURFACES)
 
 
 def predicate_cardinality(surface: str) -> tuple[bool, bool]:
     """(functional, symmetric) for a relation surface, by content key."""
     ck = relation_content_key(surface)
     return ck in FUNCTIONAL_KEYS, ck in SYMMETRIC_KEYS
+
+
+def predicate_is_event(surface: str) -> bool:
+    """True when the predicate names a dated occurrence (went_to/visited/attended…) rather
+    than a standing state, by the same content-key match _FUNCTIONAL_SURFACES uses."""
+    return relation_content_key(surface) in EVENT_KEYS
 
 
 def normalize_key(s: str) -> str:
@@ -695,7 +712,8 @@ class Canonicalizer:
         rid = self._new_id("rel")
         functional, symmetric = predicate_cardinality(surface)
         node = relation_tag_node(rid, canonical=display, ts=now_iso(),
-                                 functional=functional, symmetric=symmetric)
+                                 functional=functional, symmetric=symmetric,
+                                 event=predicate_is_event(surface))
         self.store.add_node(node)
         self.store.vectors.add("relation", rid, vec)
         self._relation_keys[key] = rid

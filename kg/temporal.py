@@ -172,6 +172,40 @@ def apply_fact(store: GraphStore, *, src: str, dst: str, rel_tag: str, status: s
                         data["closed_by_episode"] = episode_id
                 store.touch_edge(src, v, gkey)
 
+    # EVENT-SHAPED assertion (config.event_facts; docs/PIPELINE.md sharp edge #1): a dated
+    # occurrence, not a standing state — stored CLOSED so it can never masquerade as a
+    # currently-true fact. Classified with NO LLM: (a) the predicate is in the event
+    # lexicon (stamped on the RelationNode at canonicalization), or (b) the assertion
+    # arrives with BOTH bounds stated — a "[was in] Japan Nov 1-14" interval is
+    # event-shaped by construction whatever its predicate. Runs AFTER supersede so a
+    # bounded functional fact still displaces a standing value exactly as today.
+    event_shaped = bool(rel and getattr(rel, "event", False)) or \
+        bool(valid_from and valid_to)
+    if event_shaped and start and getattr(store.config, "event_facts", False):
+        # CONFIRM-ON-CLOSED dedup: the generic confirm below only matches OPEN facts, so a
+        # same-day re-mention of a closed occurrence would duplicate it. Match ANY believed
+        # edge (closed occurrence or legacy open event) with the same valid_at instead; a
+        # DIFFERENT date is a genuinely new occurrence and opens a new closed edge.
+        same_dated = [(v, gkey, data) for v, gkey, data
+                      in store.find_facts(src, dst, rel_tag, open_only=False)
+                      if data.get("valid_at", "") == start]
+        if same_dated:
+            for _v, gkey, data in same_dated:
+                data["confidence"] = max(float(data.get("confidence", 0.0)), confidence)
+                if episode_id:
+                    confirmed = data.setdefault("confirmed_by", [])
+                    if episode_id not in confirmed:
+                        confirmed.append(episode_id)
+                store.touch_edge(src, dst, gkey)
+            return "confirm"
+        # point event: [d, d]; an explicit bounded [d1, d2] passes through unchanged. The
+        # closed edge leaves the current view by design (fact_active untouched) — it is
+        # served by the HISTORY/delta block and rendered as an occurrence via the edge's
+        # event flag (kg/facts.py FactLine.render).
+        store.add_edge(_fact_edge(src, dst, rel_tag, start, valid_to or start,
+                                  provenance, confidence, episode_id, at, event=True))
+        return "open"
+
     # CONFIRM: an already-open (src,dst,rel) fact — strengthen, don't duplicate. BUT: for a
     # REPEATABLE predicate, if this occurrence carries an explicit date DIFFERENT from every
     # existing open occurrence's date, it is a genuinely new, separately-dated occurrence
@@ -251,8 +285,8 @@ def _incident_open_facts(store: GraphStore, endpoints: set[str], rel_tag: str):
 
 
 def _fact_edge(src, dst, rel_tag, valid_at, invalid_at, provenance, confidence,
-               episode_id, at) -> Edge:
+               episode_id, at, event: bool = False) -> Edge:
     return Edge(src=src, dst=dst, etype=EdgeType.RELATED_TO, provenance=provenance,
                 confidence=confidence, weight=confidence, rel_tag=rel_tag,
                 valid_at=valid_at, invalid_at=invalid_at, belief=Belief.ASSERTED,
-                episode_id=episode_id, created_at=at)
+                episode_id=episode_id, created_at=at, event=event)

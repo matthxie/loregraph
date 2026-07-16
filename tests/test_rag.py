@@ -188,8 +188,9 @@ def test_search_and_answer_carry_structured_fact_rows():
     row = res.fact_rows[0]
     assert set(row) == {"source", "predicate", "target", "status", "valid_from",
                         "valid_to", "recorded_at", "episode_id", "confidence",
-                        "provenance", "functional", "disputed_by", "rendered"}
-    assert row["status"] in ("asserted", "ended")
+                        "provenance", "functional", "disputed_by", "rendered",
+                        "mentions", "last_mentioned"}
+    assert row["status"] in ("asserted", "ended", "occurred")
     assert row["episode_id"] and row["episode_id"].startswith("ep_")
 
     ans = g.ask("Where does Becky live?", client=_FakeOpenAI("Berlin", []))
