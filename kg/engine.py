@@ -492,12 +492,20 @@ class Engine:
         rel = data.get("rel_tag")
         rel_node = store.get_node(rel) if rel else None
         sn, tn = store.get_node(src_id), store.get_node(dst_id)
+        confirmed = list(data.get("confirmed_by") or [])
+        last_mentioned = ""
+        for ep in confirmed:
+            ep_node = store.get_node(ep)
+            if ep_node is not None and ep_node.created_at > last_mentioned:
+                last_mentioned = ep_node.created_at
         line = FactLine(src=sn.name if sn else src_id,
                         rel=rel_node.name if rel_node else "related_to",
                         dst=tn.name if tn else dst_id,
                         valid_at=data.get("valid_at", ""),
                         invalid_at=data.get("invalid_at", ""),
-                        episode_id=data.get("episode_id", ""))
+                        episode_id=data.get("episode_id", ""),
+                        mentions=1 + len(confirmed),
+                        last_mentioned=last_mentioned)
         return {"source": line.src, "predicate": line.rel, "target": line.dst,
                 "status": "ended" if data.get("invalid_at") else "asserted",
                 "valid_from": data.get("valid_at") or None,
@@ -508,6 +516,8 @@ class Engine:
                 "provenance": (data.get("provenance") or "").lower() or None,
                 "functional": bool(rel_node.functional) if rel_node else False,
                 "disputed_by": data.get("disputed_by") or [],
+                "mentions": line.mentions,
+                "last_mentioned": line.last_mentioned or None,
                 "rendered": line.render()}
 
     def _entity_fact_rows(self, entity_id: str, *, as_of: str | None,

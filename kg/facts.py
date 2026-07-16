@@ -49,6 +49,8 @@ class FactLine:
     provenance: str = ""
     functional: bool = False
     disputed_by: list = field(default_factory=list)
+    mentions: int = 1
+    last_mentioned: str = ""
 
     @classmethod
     def from_edge(cls, store: GraphStore, src_id: str, dst_id: str,
@@ -58,6 +60,12 @@ class FactLine:
         rel = data.get("rel_tag")
         rel_node = store.get_node(rel) if rel else None
         sn, tn = store.get_node(src_id), store.get_node(dst_id)
+        confirmed = list(data.get("confirmed_by") or [])
+        last_mentioned = ""
+        for ep in confirmed:
+            ep_node = store.get_node(ep)
+            if ep_node is not None and ep_node.created_at > last_mentioned:
+                last_mentioned = ep_node.created_at
         return cls(src=sn.name if sn else src_id,
                    rel=rel_node.name if rel_node else "related_to",
                    dst=tn.name if tn else dst_id,
@@ -68,7 +76,9 @@ class FactLine:
                    confidence=data.get("confidence"),
                    provenance=data.get("provenance", ""),
                    functional=bool(rel_node.functional) if rel_node else False,
-                   disputed_by=list(data.get("disputed_by") or []))
+                   disputed_by=list(data.get("disputed_by") or []),
+                   mentions=1 + len(confirmed),
+                   last_mentioned=last_mentioned)
 
     def to_row(self) -> dict:
         """The wire Fact object (PROTOCOL §3): structured fields plus this line's
@@ -83,6 +93,8 @@ class FactLine:
                 "provenance": (self.provenance or "").lower() or None,
                 "functional": self.functional,
                 "disputed_by": self.disputed_by or [],
+                "mentions": self.mentions,
+                "last_mentioned": self.last_mentioned or None,
                 "rendered": self.render()}
 
     def render(self) -> str:
@@ -98,7 +110,13 @@ class FactLine:
             win.append(f"until {self.invalid_at[:10]}")
             win.append("ended")
         elif self.valid_at:
-            win.append(f"mentioned {self.valid_at[:10]}")
+            if self.mentions > 1:
+                # repeated undated assertions confirm-collapse into one edge; surface the
+                # frequency and the first->latest mention span so the answer LLM sees it
+                last = (self.last_mentioned or self.valid_at)[:10]
+                win.append(f"mentioned {self.mentions}x ({self.valid_at[:10]} -> {last})")
+            else:
+                win.append(f"mentioned {self.valid_at[:10]}")
         w = f" ({'; '.join(win)})" if win else ""
         prov = f" [{self.episode_id}]" if self.episode_id else ""
         return f"{self.src} --{self.rel}--> {self.dst}{w}{prov}"

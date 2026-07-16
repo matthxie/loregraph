@@ -17,12 +17,13 @@ from kg import Config, KnowledgeGraph
 from kg.corpus import CorpusItem
 from kg.extractors import (Extraction, ExtractedEntity, ExtractedFact, ExtractedRelation,
                           ScriptedExtractor, _parse_tool_payload, _split_compound)
-from kg.models import EdgeType, EntityType, NodeType
+from kg.models import EdgeType, EntityType, Modality, NodeType
 from kg.temporal import apply_fact
 from kg.canonicalize import Canonicalizer
 from kg.embedders import get_embedder
+from kg.facts import FactLine
 from kg.store import GraphStore
-from kg.models import entity_node
+from kg.models import entity_node, episode_node
 
 
 def cfg() -> Config:
@@ -219,3 +220,58 @@ def test_ingest_writes_distinct_quantity_nodes_per_occurrence():
     total = sum(nbr_node.value for nbr, _d in g.store.neighbors(me.id, etypes={EdgeType.RELATED_TO})
                if (nbr_node := g.store.get_node(nbr)) and nbr_node.entity_type == EntityType.QUANTITY)
     assert total == 2750.0
+
+
+# --------------------------------------------------------------------------- #
+# mention counts: confirm-collapsed facts surface frequency in the answer context
+# --------------------------------------------------------------------------- #
+EP_DATES = ["2026-03-01", "2026-05-10", "2026-07-14"]
+
+
+def _confirmed_fact_line():
+    """The same undated fact asserted from three episodes: one edge, twice confirmed."""
+    store, canon = _mini()
+    visited = canon.resolve_relation("visited")
+    for i, ts in enumerate(EP_DATES, 1):
+        store.add_node(episode_node(f"ep{i}", modality=Modality.TEXT, source_ref=f"u/{i}",
+                                    raw_text="I went to the market", content_hash=f"h{i}",
+                                    ts=ts))
+    actions = [apply_fact(store, src="e_me", dst="e_market", rel_tag=visited,
+                          status="asserted", at=ts, episode_id=f"ep{i}")
+               for i, ts in enumerate(EP_DATES, 1)]
+    assert actions == ["open", "confirm", "confirm"]
+    (dst, _gkey, data), = store.find_facts("e_me", "e_market", visited)
+    return FactLine.from_edge(store, "e_me", dst, data)
+
+
+def test_confirmed_fact_renders_mention_count_and_span():
+    line = _confirmed_fact_line()
+    assert line.mentions == 3
+    assert line.last_mentioned == "2026-07-14"
+    assert "mentioned 3x (2026-03-01 -> 2026-07-14)" in line.render()
+
+
+def test_confirmed_fact_to_row_carries_mention_fields():
+    row = _confirmed_fact_line().to_row()
+    assert row["mentions"] == 3
+    assert row["last_mentioned"] == "2026-07-14"
+    assert "mentioned 3x (2026-03-01 -> 2026-07-14)" in row["rendered"]
+
+
+def test_single_mention_line_renders_unchanged():
+    store, canon = _mini()
+    visited = canon.resolve_relation("visited")
+    store.add_node(episode_node("ep1", modality=Modality.TEXT, source_ref="u/1",
+                                raw_text="I went to the market", content_hash="h1",
+                                ts="2026-03-01"))
+    apply_fact(store, src="e_me", dst="e_market", rel_tag=visited,
+               status="asserted", at="2026-03-01", episode_id="ep1")
+    (dst, _gkey, data), = store.find_facts("e_me", "e_market", visited)
+    line = FactLine.from_edge(store, "e_me", dst, data)
+    assert line.mentions == 1
+    # byte-identical to a hand-constructed (pre-mentions) line: no count, no span
+    legacy = FactLine(src=line.src, rel=line.rel, dst=line.dst,
+                      valid_at=line.valid_at, episode_id=line.episode_id)
+    assert line.render() == legacy.render()
+    assert "(mentioned 2026-03-01)" in line.render()
+    assert "x (" not in line.render()
