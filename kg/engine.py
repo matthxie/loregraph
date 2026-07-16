@@ -115,7 +115,8 @@ class _MockExtractor:
     def __init__(self):
         self.meter = UsageMeter()
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
+    def extract_text(self, text: str, title: str = "",
+                     ref_date: str = "") -> Extraction:
         ents = []
         seen = set()
         for w in re.findall(r"\b[A-Z][a-z]{2,}\b", text):

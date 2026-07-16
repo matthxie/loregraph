@@ -114,6 +114,10 @@ class Extraction:
     relations: list[ExtractedRelation] = field(default_factory=list)
     facts: list[ExtractedFact] = field(default_factory=list)
     description: str | None = None  # images: the one-line VLM description
+    # How many pure-date entities/tags/relation-endpoints the deterministic post-filter
+    # removed (_filter_date_terms) — surfaced on the ingest report so the filter is
+    # observable, never silent.
+    date_drops: int = 0
 
     def merge(self, other: "Extraction") -> "Extraction":
         names = {e.name.lower() for e in self.entities}
@@ -156,13 +160,17 @@ class Extraction:
         for f in other.facts:
             if f.dedup_key() not in factset:
                 self.facts.append(f); factset.add(f.dedup_key())
+        self.date_drops += other.date_drops
         return self
 
 
 class Extractor(Protocol):
     name: str
 
-    def extract_text(self, text: str, title: str = "") -> Extraction: ...
+    # ref_date: the EPISODE's event date (item.created_at, "" when unknown). LLM backends
+    # hand it to the model so stated partial/relative dates ("January 2nd", "last March")
+    # resolve to ISO valid_from/valid_to; local NLP backends accept and ignore it.
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction: ...
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction: ...
 
 
@@ -182,6 +190,9 @@ GRAPH_TOOL = {
             "properties": {
                 "entities": {
                     "type": "array",
+                    "description": "Salient nameable entities. Dates, times, months, "
+                    "weekdays and years are NEVER entities — temporal information goes "
+                    "ONLY in a relation's valid_from/valid_to or a fact's date field.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -200,15 +211,22 @@ GRAPH_TOOL = {
                     },
                 },
                 "tags": {"type": "array", "items": {"type": "string"},
-                         "description": "5-12 lowercase topical tags."},
+                         "description": "5-12 lowercase topical tags. Never a date or "
+                         "time expression."},
                 "relations": {
                     "type": "array",
                     "description": "Directed relationships between entities.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "source": {"type": "string"},
-                            "target": {"type": "string"},
+                            "source": {"type": "string",
+                                       "description": "an entity or tag name — NEVER a "
+                                       "date/time expression (dates go in valid_from/"
+                                       "valid_to)"},
+                            "target": {"type": "string",
+                                       "description": "an entity or tag name — NEVER a "
+                                       "date/time expression (dates go in valid_from/"
+                                       "valid_to)"},
                             "labels": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -372,6 +390,145 @@ def _split_compound(value: str) -> list[str]:
     return [value]
 
 
+# --------------------------------------------------------------------------- #
+# Pure-date detection + post-filter (defense in depth: small models emit dates as
+# entities / relation endpoints no matter what the prompt says — e.g. the observed
+# `St. Mary's Church --attend--> January 2nd`. Deterministic, no LLM.)
+# --------------------------------------------------------------------------- #
+_MONTH_NUM = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12, "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_MONTH_PAT = (r"(?:january|february|march|april|may|june|july|august|september|"
+              r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)")
+_YEAR_PAT = r"(?:1[89]\d{2}|20\d{2})"
+
+# Matches a string that is a PURE date/time expression, whole-string, conservative on
+# purpose: bare month names ("May", "August") only count as dates when qualified
+# ("last March") or carrying a day/year, so person names are never swallowed; season/
+# period words ("spring", "week") require a last/next/this qualifier for the same reason.
+_DATE_EXPR_RE = re.compile(
+    r"""^(?:the\s+)?(?:(?P<qual>last|next|this|early|late|mid)[\s-]+)?(?:
+          (?P<iso>""" + _YEAR_PAT + r"""-[01]\d(?:-[0-3]\d)?)
+        | (?P<year>""" + _YEAR_PAT + r""")
+        | (?P<month>""" + _MONTH_PAT + r""")\.?
+          (?:\s+(?P<day>[0-3]?\d)(?:st|nd|rd|th)?)?
+          (?:,?\s+(?P<myear>""" + _YEAR_PAT + r"""))?
+        | (?P<day2>[0-3]?\d)(?:st|nd|rd|th)?\s+(?:of\s+)?
+          (?P<month2>""" + _MONTH_PAT + r""")\.?
+          (?:,?\s+(?P<myear2>""" + _YEAR_PAT + r"""))?
+        | (?P<weekday>(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)day)s?
+        | (?P<relword>yesterday|today|tonight|tomorrow)
+        | (?P<period>week|weekend|month|year|decade|night|morning|afternoon|evening|
+                     spring|summer|fall|autumn|winter)
+    )$""", re.I | re.X)
+
+
+def _match_date_expr(value: str) -> "re.Match | None":
+    """Whole-string match if `value` is a pure date/time expression, else None."""
+    m = _DATE_EXPR_RE.match(" ".join((value or "").split()))
+    if not m:
+        return None
+    qual = m.group("qual")
+    # bare month with no qualifier/day/year is likely a name ("May", "August") — keep it
+    if m.group("month") and not (qual or m.group("day") or m.group("myear")):
+        return None
+    if m.group("period") and not qual:      # bare "spring"/"week" — keep it
+        return None
+    day = m.group("day") or m.group("day2")
+    if day and not 1 <= int(day) <= 31:
+        return None
+    return m
+
+
+def _is_pure_date(value: str) -> bool:
+    return _match_date_expr(value) is not None
+
+
+def _resolve_date_iso(value: str, ref_date: str) -> str:
+    """Resolve a pure-date expression to an ISO date/year string, using `ref_date` (the
+    episode's event date) for the missing pieces. Returns "" when it can't be resolved
+    without guessing (weekdays, 'yesterday', 'last week', no reference year, …)."""
+    m = _match_date_expr(value)
+    if not m:
+        return ""
+    if m.group("iso"):
+        return m.group("iso")
+    if m.group("year"):
+        return m.group("year")
+    month = m.group("month") or m.group("month2")
+    if not month:
+        return ""                        # weekday / relative word — never guess
+    mnum = _MONTH_NUM[month.lower().rstrip(".")]
+    day = m.group("day") or m.group("day2")
+    year = m.group("myear") or m.group("myear2")
+    if not year:
+        ref = re.match(r"(\d{4})(?:-([01]\d))?", ref_date or "")
+        if not ref:
+            return ""
+        ry, rm = int(ref.group(1)), int(ref.group(2) or 0)
+        qual = (m.group("qual") or "").lower()
+        if qual == "last" and rm and mnum >= rm:
+            year = str(ry - 1)           # "last March" said in Jan–Mar → previous year
+        elif qual == "next" and rm and mnum <= rm:
+            year = str(ry + 1)
+        else:
+            year = str(ry)
+    return (f"{year}-{mnum:02d}-{int(day):02d}" if day else f"{year}-{mnum:02d}")
+
+
+def _filter_date_terms(ext: Extraction, ref_date: str = "") -> Extraction:
+    """Deterministic post-filter: dates are never graph terms. Drops pure-date entities
+    and tags (and anything typed EntityType.DATE), and drops any relation whose endpoint
+    is a pure-date expression. Before a dated relation is dropped, its date is SALVAGED:
+    if it resolves against `ref_date`, it fills the empty valid_from of a surviving
+    relation about the same non-date endpoint (same label when one matches, else the
+    single candidate). Everything removed is counted in ext.date_drops."""
+    drops = 0
+    kept_ents = []
+    date_ent_names: set[str] = set()     # dropped date-TYPED surfaces ("the summer of 1969")
+    for e in ext.entities:
+        if e.type == EntityType.DATE or _is_pure_date(e.name):
+            drops += 1
+            date_ent_names.add(e.name.strip().lower())
+        else:
+            kept_ents.append(e)
+    kept_tags = []
+    for t in ext.tags:
+        if _is_pure_date(t):
+            drops += 1
+        else:
+            kept_tags.append(t)
+    kept_rels: list[ExtractedRelation] = []
+    salvage: list[tuple[str, set[str], str]] = []   # (anchor_lower, labels_lower, iso)
+    for r in ext.relations:
+        s_date = _is_pure_date(r.source) or r.source.strip().lower() in date_ent_names
+        t_date = _is_pure_date(r.target) or r.target.strip().lower() in date_ent_names
+        if not s_date and not t_date:
+            kept_rels.append(r)
+            continue
+        drops += 1
+        if s_date and t_date:
+            continue
+        date_surface = r.source if s_date else r.target
+        anchor = (r.target if s_date else r.source).strip().lower()
+        if not r.valid_from and anchor:
+            iso = _resolve_date_iso(date_surface, ref_date)
+            if iso:
+                salvage.append((anchor, {l.lower() for l in r.labels}, iso))
+    for anchor, labels, iso in salvage:
+        cands = [r for r in kept_rels if not r.valid_from
+                 and anchor in (r.source.strip().lower(), r.target.strip().lower())]
+        labelled = [r for r in cands if labels & {l.lower() for l in r.labels}]
+        for r in (labelled or (cands if len(cands) == 1 else [])):
+            r.valid_from = iso
+    ext.entities, ext.tags, ext.relations = kept_ents, kept_tags, kept_rels
+    ext.date_drops += drops
+    return ext
+
+
 def _parse_tool_payload(payload: dict) -> Extraction:
     ents = []
     for e in payload.get("entities", []) or []:
@@ -455,9 +612,12 @@ class OpenAIExtractor:
         "buildings, 'thing' for everything else (organisations, objects, products, works, "
         "events, named abstractions).\n"
         "   Prefer the fullest proper name the content uses (\"John F. Kennedy\", not \"JFK\"). "
-        "Do not invent entities not in the content. A handful is fine; do not pad.\n\n"
+        "Do not invent entities not in the content. A handful is fine; do not pad.\n"
+        "   Dates, times, months, weekdays and years are NEVER entities — temporal "
+        "information goes ONLY in a relation's valid_from/valid_to or a fact's date "
+        "field, never in entities or tags.\n\n"
         "2) TAGS. Emit 5-12 lowercase topical tags describing what the content is ABOUT "
-        "(themes, not entities).\n\n"
+        "(themes, not entities). Never a date or time expression.\n\n"
         "3) RELATIONS. Emit the key DIRECTED relationships. RULES:\n"
         "   - Source and target are normally entities from step 1 — use the EXACT SAME "
         "surface string you wrote there. You MAY also use one of your step-2 tags as an "
@@ -483,7 +643,10 @@ class OpenAIExtractor:
         "was wrong that…', 'actually X never…'), use status 'retracted' instead (it was "
         "never true, vs 'ended' which was true and stopped). Set valid_from/valid_to ONLY "
         "when the text states a date; otherwise leave them empty (it defaults to 'as of this "
-        "content'). Do not guess dates.\n"
+        "content'). Do not guess dates. A date or time expression is NEVER a relation "
+        "endpoint: never emit e.g. source \"the church\", target \"January 2nd\", label "
+        "\"attended\" — the target must be the real entity, and the date goes in that "
+        "relation's valid_from.\n"
         "   - Few or no relations is fine if the content doesn't clearly state them.\n\n"
         "4) FACTS. Extract EVERY stated amount/count/measurement into facts[], no "
         "salience filter. One per OCCURRENCE — a repeat (2nd purchase/visit/class) or "
@@ -501,6 +664,16 @@ class OpenAIExtractor:
         "the narrator."
     )
 
+    # Prepended to the USER content (never _SYS, which stays static for the ingest-cache
+    # prompt digest) so the model can resolve stated partial/relative dates against the
+    # episode's event date. ref_date is item.created_at; "unknown" when the item has none.
+    @staticmethod
+    def _reference_date_line(ref_date: str) -> str:
+        return (f"This content is dated {ref_date or 'unknown'}. Resolve any partial or "
+                "relative dates stated in the text (e.g. 'January 2nd', 'last March') "
+                "against this date into ISO form for valid_from/valid_to. If the text "
+                "states no date, leave them empty — never guess.\n\n")
+
     def __init__(self, config: Config):
         self.config = config
         self.client = make_client()  # active provider (explicit KG_LLM, else auto-detected)
@@ -515,7 +688,7 @@ class OpenAIExtractor:
             return self._SYS + self._FIRST_PERSON_CLAUSE
         return self._SYS
 
-    def _call(self, content_blocks: list) -> Extraction:
+    def _call(self, content_blocks: list, ref_date: str = "") -> Extraction:
         import json
         # explicit llm_model wins; unset resolves to the active provider's default
         model = resolve_model(self.config.llm_model)
@@ -534,10 +707,11 @@ class OpenAIExtractor:
         self.meter.record("extract", model or "cli-default", msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":
-            return _parse_tool_payload(json.loads(tc[0].function.arguments))
+            return _filter_date_terms(
+                _parse_tool_payload(json.loads(tc[0].function.arguments)), ref_date)
         return Extraction()
 
-    def _reflexion(self, text: str, first: Extraction) -> Extraction:
+    def _reflexion(self, text: str, first: Extraction, ref_date: str = "") -> Extraction:
         if not self.config.reflexion:
             return first
         tags = ", ".join(first.tags) or "(none)"
@@ -545,6 +719,7 @@ class OpenAIExtractor:
         facts_found = ", ".join(
             f"{f.subject} {f.predicate} {f.value}{f.unit}" for f in first.facts) or "(none)"
         prompt = (
+            self._reference_date_line(ref_date) +
             f"Content:\n{text[:4000]}\n\n"
             f"First pass found these tags: {tags}\n"
             f"and these entities: {ents}\n"
@@ -561,18 +736,20 @@ class OpenAIExtractor:
             "arrays. Call emit_graph exactly once with only the missed items."
         )
         try:
-            extra = self._call([{"type": "text", "text": prompt}])
+            extra = self._call([{"type": "text", "text": prompt}], ref_date)
             return first.merge(extra)
         except Exception:
             return first
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
-        header = f"Title: {title}\n\n" if title else ""
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
+        header = self._reference_date_line(ref_date)
+        header += f"Title: {title}\n\n" if title else ""
         # Per-call input cap (config-driven). Sectioning keeps each slice <= long_doc_chars,
         # and extract_max_chars >= long_doc_chars, so this never truncates a section. It only
         # bites a single un-sectioned call whose text exceeds the cap.
-        first = self._call([{"type": "text", "text": header + text[:self.config.extract_max_chars]}])
-        return self._reflexion(text, first)
+        first = self._call([{"type": "text", "text": header + text[:self.config.extract_max_chars]}],
+                           ref_date)
+        return self._reflexion(text, first, ref_date)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         with open(image_path, "rb") as f:
@@ -593,15 +770,19 @@ class OpenAIExtractor:
 # Shared text-extraction helper (sectioning for long docs, §9 risk 4)
 # --------------------------------------------------------------------------- #
 def extract_text_sectioned(extractor: Extractor, text: str, title: str = "",
-                           long_doc_chars: int = 6000, max_sections: int = 6) -> Extraction:
+                           long_doc_chars: int = 6000, max_sections: int = 6,
+                           ref_date: str = "") -> Extraction:
     """One shot for normal docs; section-by-section union for very long ones, so the
     extractor never just truncates a long article. Shared by the ingest pipeline
-    (Ingestor._extract_text) and the `extract-dump` tool so they can't drift."""
+    (Ingestor._extract_text) and the `extract-dump` tool so they can't drift.
+    `ref_date` (the episode's event date) rides along to EVERY section call so long
+    docs resolve stated relative dates too."""
     if len(text) <= long_doc_chars:
-        return extractor.extract_text(text, title)
+        return extractor.extract_text(text, title, ref_date=ref_date)
     merged = Extraction()
     for i in range(0, min(len(text), long_doc_chars * max_sections), long_doc_chars):
-        part = extractor.extract_text(text[i:i + long_doc_chars], title if i == 0 else "")
+        part = extractor.extract_text(text[i:i + long_doc_chars], title if i == 0 else "",
+                                      ref_date=ref_date)
         merged.merge(part)
     return merged
 
@@ -629,8 +810,8 @@ class ScriptedExtractor:
     def _lookup(self, text: str) -> Extraction:
         return self._table.get(self._norm(text), Extraction())
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
-        return self._lookup(text)
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
+        return self._lookup(text)      # deterministic table — ref_date is irrelevant
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         return self._lookup(label_hint or image_path or "")
@@ -670,16 +851,16 @@ class CueGatedExtractor:
     def meter(self) -> UsageMeter:
         return self._llm.meter if self._llm is not None else self._fallback_meter
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
         self.n_seen += 1
         with prof_span("extract.local_nlp"):
-            local = self.local.extract_text(text, title)
+            local = self.local.extract_text(text, title, ref_date=ref_date)
         if self.escalate and has_cue(text):
             self.n_escalated += 1
             for kind in cue_kinds(text):
                 self.cue_counts[kind] = self.cue_counts.get(kind, 0) + 1
             try:
-                llm = self._llm_ext().extract_text(text, title)
+                llm = self._llm_ext().extract_text(text, title, ref_date=ref_date)
             except Exception:  # noqa: BLE001 — never sink ingest on one API error; keep the floor
                 return local
             return llm.merge(local)             # LLM base → its temporal fields win

@@ -204,6 +204,11 @@ class Ingestor:
         with prof_span("ingest.extract"):
             extractions, errors = self._extract_all([p[0] for p in pending])
         report.extraction_failures = len(errors)
+        date_drops = sum(ext.date_drops for ext in extractions if ext)
+        if date_drops:
+            report.notes.append(f"date-term filter dropped {date_drops} pure-date "
+                                "entity/tag/relation item(s) (dates belong in "
+                                "valid_from/valid_to, not the graph)")
         if errors:
             report.notes.append(f"extraction failed for {len(errors)} item(s); "
                                 f"first error: {errors[0]}")
@@ -362,7 +367,8 @@ class Ingestor:
             try:
                 if item.text is None:  # described media (image/audio/pdf/…): perceive it
                     return self.extractor.extract_image(item.image_path, item.label_hint), None
-                return self._extract_text(item.text, item.title), None
+                return self._extract_text(item.text, item.title,
+                                          item.created_at or ""), None
             except Exception as e:  # noqa: BLE001 — keep the batch alive, record the error
                 return None, f"{item.id}: {e!r}"
         with ThreadPoolExecutor(max_workers=self.config.semaphore_limit) as pool:
@@ -371,8 +377,9 @@ class Ingestor:
         errors = [p[1] for p in pairs if p[1]]
         return extractions, errors
 
-    def _extract_text(self, text: str, title: str) -> Extraction:
-        return extract_text_sectioned(self.extractor, text, title, self.config.long_doc_chars)
+    def _extract_text(self, text: str, title: str, created_at: str = "") -> Extraction:
+        return extract_text_sectioned(self.extractor, text, title,
+                                      self.config.long_doc_chars, ref_date=created_at)
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
         if item.text is None:  # described media — the extractor's description is the surface

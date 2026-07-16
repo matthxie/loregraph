@@ -388,7 +388,9 @@ _REL_SYS = (
     "Each relationship has 1-3 short lowercase labels read source→target (e.g. 'works_with', "
     "'located_in', 'spent_on', 'attended'). If a relationship ended (former/ex/no longer/left/"
     "until X), emit the base predicate with status 'ended'. Set valid_from/valid_to only if a date "
-    "is stated. Few or no relations is fine. Call emit_relations exactly once."
+    "is stated; never guess. A date or time expression is NEVER a relation endpoint — dates, "
+    "months, weekdays and years go ONLY in valid_from/valid_to, even if the entity list contains "
+    "one. Few or no relations is fine. Call emit_relations exactly once."
 )
 
 
@@ -398,12 +400,15 @@ class _LlmRelations:
         self.client = make_client()
         self.meter = UsageMeter()
 
-    def __call__(self, text: str, entities: list[ExtractedEntity]) -> list[ExtractedRelation]:
+    def __call__(self, text: str, entities: list[ExtractedEntity],
+                 ref_date: str = "") -> list[ExtractedRelation]:
         import json
+        from .extractors import OpenAIExtractor
         if len(entities) < 2:
             return []
         ent_list = ", ".join(e.name for e in entities[:60])
-        prompt = (f"ENTITIES: {ent_list}\n\nCONTENT:\n{text[:self.config.extract_max_chars]}")
+        prompt = (OpenAIExtractor._reference_date_line(ref_date) +
+                  f"ENTITIES: {ent_list}\n\nCONTENT:\n{text[:self.config.extract_max_chars]}")
         # explicit llm_model wins; unset resolves to the active provider's default
         model = resolve_model(self.config.llm_model)
         try:
@@ -419,6 +424,8 @@ class _LlmRelations:
             self.meter.record("extract", model or "cli-default", msg)
         except Exception:  # noqa: BLE001 — keep ingest alive; degrade to no relations
             return []
+        from .extractors import _filter_date_terms
+        from .extractors import Extraction as _Extraction
         names = {e.name.lower() for e in entities}
         out: list[ExtractedRelation] = []
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
@@ -437,7 +444,10 @@ class _LlmRelations:
                 status="ended" if str(r.get("status", "")).lower() == "ended" else "asserted",
                 valid_from=str(r.get("valid_from", "") or ""),
                 valid_to=str(r.get("valid_to", "") or "")))
-        return out
+        # same defense-in-depth as the main LLM path: a date endpoint (possible here —
+        # GLiNER's entity labels include 'date') drops the relation, salvaging the date
+        # into a surviving sibling's valid_from when it resolves against ref_date.
+        return _filter_date_terms(_Extraction(relations=out), ref_date).relations
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +472,7 @@ class NlpExtractor:
         self._llm = llm_relations
         self.meter = llm_relations.meter if llm_relations else UsageMeter()
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
         body = f"{title}. {text}" if title else text
         clean = _clean(body)
         if not clean.strip():
@@ -473,7 +483,7 @@ class NlpExtractor:
             tags = self._tag_fn(clean, doc)
             rels = self._relation_fn(doc, entities) if self._relation_fn else []
         if self._llm is not None:                    # LLM call OUTSIDE the lock (I/O-bound)
-            rels = rels + self._llm(clean, entities)
+            rels = rels + self._llm(clean, entities, ref_date)
         return Extraction(entities=entities, tags=tags, relations=rels)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
@@ -563,7 +573,8 @@ class Gliner2Extractor:
         self.ent_thr = getattr(config, "gliner2_entity_threshold", 0.5)
         self.rel_thr = getattr(config, "gliner2_relation_threshold", 0.5)
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
+        # ref_date accepted for protocol parity; the pure-local backend can't use it
         body = f"{title}. {text}" if title else text
         clean = _clean(body)
         if not clean.strip():
@@ -660,9 +671,9 @@ class Gliner2LlmExtractor:
         self._llm = OpenAIExtractor(config)
         self.meter = self._llm.meter            # cost attribution flows through the LLM's meter
 
-    def extract_text(self, text: str, title: str = "") -> Extraction:
-        a = self._g2.extract_text(text, title)
-        b = self._llm.extract_text(text, title)
+    def extract_text(self, text: str, title: str = "", ref_date: str = "") -> Extraction:
+        a = self._g2.extract_text(text, title, ref_date=ref_date)
+        b = self._llm.extract_text(text, title, ref_date=ref_date)
         return a.merge(b)                        # union of both extractions
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:

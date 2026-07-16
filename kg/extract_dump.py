@@ -44,7 +44,8 @@ def extract_corpus(extractor: Extractor, items: list[CorpusItem],
                 ext = extractor.extract_image(item.image_path, item.label_hint)
             else:
                 ext = extract_text_sectioned(extractor, item.text or "", item.title,
-                                             config.long_doc_chars)
+                                             config.long_doc_chars,
+                                             ref_date=item.created_at or "")
             return _record(item, ext), None
         except Exception as e:  # noqa: BLE001 — keep the batch alive, record the error
             rec = {"id": item.id, "title": item.title, "modality": item.modality,

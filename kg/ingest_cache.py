@@ -41,6 +41,7 @@ INGEST_RELEVANT_FIELDS = (
     "l3_enabled", "l3_model", "rel_gray_floor",
     "episode_knn_k", "episode_knn_floor", "shared_min_overlap", "shared_edges", "shared_hub_cap",
     "self_entity", "self_name",
+    "event_facts",   # changes what apply_fact writes ([d,d] event edges + edge flag)
 )
 
 
@@ -67,6 +68,10 @@ def _config_digest(config: Config) -> str:
     h = hashlib.sha256()
     for field in INGEST_RELEVANT_FIELDS:
         value = getattr(config, field)
+        if field == "event_facts" and not value:
+            # hashed only when ON: entries cached before the field existed stay
+            # valid for event_facts=False runs (same back-compat idea as resolve_model)
+            continue
         if field in ("llm_model", "l3_model"):
             # hash the resolved model, not the raw field: on openai an unset (None)
             # field hashes as 'gpt-4o-mini', keeping pre-None cache entries valid
