@@ -1,21 +1,43 @@
 """Extraction-layer date handling (the upstream feed for the event_facts write path).
 
-Three behaviors, all offline (fake client, no API key touched):
+Covered behaviors, all offline (fake client / scripted extractor, no API key touched):
   1. the extraction request carries the episode's reference date (item.created_at) so
      stated partial/relative dates can resolve to ISO valid_from/valid_to;
-  2. the deterministic post-filter (_filter_date_terms) drops pure-date entities/tags
-     and date-endpoint relations — salvaging a parseable date into a surviving sibling
-     relation's valid_from — and counts what it removed (Extraction.date_drops);
-  3. a normal, date-free extraction passes through untouched.
+  2. the deterministic filter (_filter_date_terms) drops pure-date AND bare-numeric
+     entities, pure-date tags, and relations with such endpoints — salvaging a
+     parseable date into a surviving CLEAN sibling relation's valid_from — and counts
+     what it removed (Extraction.date_drops);
+  3. the filter is applied by the INGESTOR (config.ingest_date_filter) to every
+     backend, scripted/local included — not per-extractor — and knob-off writes are
+     byte-identical to unfiltered extraction.
 """
 import json
+import os
+import tempfile
 from types import SimpleNamespace
 
+import pytest
+
+import kg.graph as kg_graph
 from kg.config import Config
+from kg.corpus import CorpusItem
 from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation,
                            OpenAIExtractor, ScriptedExtractor, _filter_date_terms,
-                           _is_pure_date, _resolve_date_iso, extract_text_sectioned)
-from kg.models import EntityType
+                           _is_bare_numeric, _is_pure_date, _resolve_date_iso,
+                           extract_text_sectioned)
+from kg.graph import KnowledgeGraph
+from kg.models import EdgeType, EntityType, NodeType
+from kg.store import fact_active
+
+
+@pytest.fixture(autouse=True)
+def _no_live_extractor(monkeypatch):
+    """kg auto-loads the project .env (real key) and KnowledgeGraph.__init__ eagerly
+    builds a live extractor. Drop the key and patch get_extractor so every graph in
+    this file is scripted — no OpenAI call is ever made."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(kg_graph, "get_extractor",
+                        lambda config: ScriptedExtractor({}))
 
 
 # --------------------------------------------------------------------------- #
@@ -48,7 +70,7 @@ def _extractor(monkeypatch, payload: dict) -> tuple[OpenAIExtractor, _FakeClient
 
 
 # --------------------------------------------------------------------------- #
-# 1. pure-date detection + resolution helpers
+# 1. pure-date / bare-numeric detection + resolution helpers
 # --------------------------------------------------------------------------- #
 def test_pure_date_detection():
     for s in ("January 2nd", "February 1st", "january 2nd, 2023", "2 January 2023",
@@ -59,6 +81,16 @@ def test_pure_date_detection():
     for s in ("St. Mary's Church", "May", "August", "Johnson and Johnson", "spring",
               "cathedral", "March on Washington", ""):
         assert not _is_pure_date(s), s
+
+
+def test_bare_numeric_detection():
+    for s in ("1", "42", "3rd", "$15", "1,500", "20%", "3.14"):
+        assert _is_bare_numeric(s), s
+    # 4-digit years stay classified as DATES, not bare numerics
+    assert not _is_bare_numeric("2023")
+    assert _is_pure_date("2023")
+    for s in ("Room 101", "Alice", "January 2nd", ""):
+        assert not _is_bare_numeric(s), s
 
 
 def test_date_resolution_against_reference():
@@ -74,10 +106,11 @@ def test_date_resolution_against_reference():
     assert _resolve_date_iso("next Tuesday", "2024-01-15") == ""
     assert _resolve_date_iso("yesterday", "2024-01-15") == ""
     assert _resolve_date_iso("January 2nd", "") == ""
+    assert _resolve_date_iso("1", "2024-01-15") == ""      # bare numeric ≠ a date
 
 
 # --------------------------------------------------------------------------- #
-# 2. the outgoing request carries the reference date + the no-date instructions
+# 2. the outgoing LLM request carries the reference date + the no-date instructions
 # --------------------------------------------------------------------------- #
 def test_request_contains_reference_date(monkeypatch):
     ext, fake = _extractor(monkeypatch, {"entities": [], "tags": []})
@@ -114,31 +147,47 @@ def test_sectioned_path_threads_ref_date():
 
 
 # --------------------------------------------------------------------------- #
-# 3. post-filter: date-target relation dropped + salvaged, date entity/tag dropped
+# 3. the filter itself: drop + salvage semantics (direct construction — the same
+#    object any backend hands the Ingestor)
 # --------------------------------------------------------------------------- #
-def test_date_target_relation_filtered_and_salvaged(monkeypatch):
-    payload = {
-        "entities": [
-            {"name": "me", "type": "person", "category": "person"},
-            {"name": "St. Mary's Church", "type": "place", "category": "place"},
-            {"name": "January 2nd", "type": "date", "category": "thing"},
-        ],
-        "tags": ["church", "2023", "faith"],
-        "relations": [
-            {"source": "me", "target": "St. Mary's Church", "labels": ["attend"]},
-            {"source": "St. Mary's Church", "target": "January 2nd", "labels": ["attend"]},
-        ],
-    }
-    ext, _ = _extractor(monkeypatch, payload)
-    out = ext.extract_text("I attended St. Mary's Church on January 2nd.",
-                           ref_date="2024-01-15")
-    assert [e.name for e in out.entities] == ["me", "St. Mary's Church"]
+def test_date_and_numeric_terms_filtered_salvage_prefers_clean_sibling():
+    ext = Extraction(
+        entities=[ExtractedEntity(name="Alice", type=EntityType.PERSON),
+                  ExtractedEntity(name="St. Mary's Church", type=EntityType.PLACE),
+                  ExtractedEntity(name="January 2nd", type=EntityType.DATE),
+                  ExtractedEntity(name="42", type=EntityType.CONCEPT)],
+        tags=["church", "2023", "faith"],
+        relations=[
+            ExtractedRelation(source="Alice", target="St. Mary's Church",
+                              labels=["attended"]),
+            # the live-run garbage sibling: bare-digit target — dropped, never salvaged to
+            ExtractedRelation(source="St. Mary's Church", target="1",
+                              labels=["attended"]),
+            ExtractedRelation(source="St. Mary's Church", target="January 2nd",
+                              labels=["attended"]),
+        ])
+    out = _filter_date_terms(ext, "2024-01-15")
+    assert [e.name for e in out.entities] == ["Alice", "St. Mary's Church"]
     assert out.tags == ["church", "faith"]                    # pure-date tag dropped
     assert len(out.relations) == 1
     r = out.relations[0]
-    assert (r.source, r.target) == ("me", "St. Mary's Church")
-    assert r.valid_from == "2024-01-02"          # salvaged from the dropped junk edge
-    assert out.date_drops == 3                   # 1 entity + 1 tag + 1 relation
+    assert (r.source, r.target) == ("Alice", "St. Mary's Church")
+    assert r.valid_from == "2024-01-02"     # salvaged onto the CLEAN sibling
+    assert out.date_drops == 5              # 2 entities + 1 tag + 2 relations
+
+
+def test_salvage_refuses_degenerate_sibling():
+    # the only sibling sharing the anchor is a self-loop — salvage must not touch it
+    ext = Extraction(relations=[
+        ExtractedRelation(source="St. Mary's Church", target="St. Mary's Church",
+                          labels=["attended"]),
+        ExtractedRelation(source="St. Mary's Church", target="January 2nd",
+                          labels=["attended"]),
+    ])
+    out = _filter_date_terms(ext, "2024-01-15")
+    assert len(out.relations) == 1
+    assert out.relations[0].valid_from == ""        # refused: degenerate (self-loop)
+    assert out.date_drops == 1
 
 
 def test_filter_respects_existing_valid_from_and_double_date_edges():
@@ -157,25 +206,85 @@ def test_filter_respects_existing_valid_from_and_double_date_edges():
     assert out.date_drops == 2
 
 
-def test_normal_extraction_passes_through(monkeypatch):
+# --------------------------------------------------------------------------- #
+# 4. ingest choke point: EVERY backend is filtered when the knob is on — here a
+#    SCRIPTED extractor (never passes through any LLM prompt/parse path)
+# --------------------------------------------------------------------------- #
+_TXT = "Alice attended St. Mary's Church on January 2nd."
+
+
+def _scripted_date_table() -> dict[str, Extraction]:
+    # fresh objects each call: the filter mutates the Extraction in place
+    return {_TXT: Extraction(
+        entities=[ExtractedEntity(name="Alice", type=EntityType.PERSON),
+                  ExtractedEntity(name="St. Mary's Church", type=EntityType.PLACE),
+                  ExtractedEntity(name="January 2nd", type=EntityType.DATE)],
+        tags=["church", "faith"],
+        relations=[
+            ExtractedRelation(source="Alice", target="St. Mary's Church",
+                              labels=["attended"]),
+            ExtractedRelation(source="St. Mary's Church", target="January 2nd",
+                              labels=["attended"]),
+        ])}
+
+
+def _ingest_scripted(ingest_date_filter: bool):
+    cfg = Config.default()
+    cfg.embedder = "st"     # real local bge — deterministic, free, no key/network once cached
+    cfg.ingest_date_filter = ingest_date_filter
+    g = KnowledgeGraph.open(os.path.join(tempfile.mkdtemp(), "kg.db"), cfg)
+    g.extractor = ScriptedExtractor(_scripted_date_table())
+    report = g.ingest([CorpusItem(id="d01", modality="text", source_ref="synthetic/d01",
+                                  title="church visit", text=_TXT,
+                                  created_at="2024-01-15T00:00:00+00:00")])
+    return g, report
+
+
+def _entity_names(g) -> set[str]:
+    return {n.name for n in g.store.nodes_of_type(NodeType.ENTITY)}
+
+
+def test_ingest_filters_scripted_extraction_with_knob_on():
+    g, report = _ingest_scripted(ingest_date_filter=True)
+    names = _entity_names(g)
+    assert "St. Mary's Church" in names and "Alice" in names
+    assert "January 2nd" not in names                 # date never became an entity
+    assert any("date-term filter" in n for n in report.notes)   # observable, not silent
+    # the junk edge's date was salvaged into the real relation's valid_from
+    alice = next(n.id for n in g.store.nodes_of_type(NodeType.ENTITY) if n.name == "Alice")
+    facts = [(g.store.get_node(d["rel_tag"]).name, g.store.get_node(nbr).name, d)
+             for nbr, d in g.store.neighbors(alice, etypes={EdgeType.RELATED_TO},
+                                             direction="both") if fact_active(d, None)]
+    assert [(p, o) for p, o, _ in facts] == [("attended", "St. Mary's Church")]
+    assert facts[0][2]["valid_at"] == "2024-01-02"
+
+
+def test_ingest_knob_off_writes_unfiltered_extraction():
+    g, report = _ingest_scripted(ingest_date_filter=False)
+    names = _entity_names(g)
+    # byte-identical to pre-knob behavior for scripted/local backends: the date
+    # entity and the date-endpoint relation land in the graph, and no filter note
+    assert "January 2nd" in names
+    assert not any("date-term filter" in n for n in report.notes)
+    church = next(n.id for n in g.store.nodes_of_type(NodeType.ENTITY)
+                  if n.name == "St. Mary's Church")
+    targets = {g.store.get_node(nbr).name
+               for nbr, d in g.store.neighbors(church, etypes={EdgeType.RELATED_TO},
+                                               direction="both")}
+    assert "January 2nd" in targets                   # junk edge preserved as today
+
+
+def test_llm_extractor_no_longer_filters_inline(monkeypatch):
+    """The per-extractor filter was removed: the LLM parse path now hands date junk
+    through untouched (the Ingestor is the single choke point)."""
     payload = {
-        "entities": [
-            {"name": "Marie Curie", "type": "person", "category": "person"},
-            {"name": "polonium", "type": "concept", "category": "thing"},
-        ],
-        "tags": ["chemistry", "radioactivity"],
-        "relations": [
-            {"source": "Marie Curie", "target": "polonium", "labels": ["discovered"],
-             "valid_from": "1898"},
-        ],
-        "facts": [{"subject": "Marie Curie", "predicate": "won", "value": 2,
-                   "unit": "nobel prizes"}],
+        "entities": [{"name": "January 2nd", "type": "date", "category": "thing"}],
+        "tags": ["2023"],
+        "relations": [{"source": "St. Mary's Church", "target": "January 2nd",
+                       "labels": ["attended"]}],
     }
     ext, _ = _extractor(monkeypatch, payload)
-    out = ext.extract_text("Marie Curie discovered polonium in 1898.",
-                           ref_date="2024-01-15")
-    assert [e.name for e in out.entities] == ["Marie Curie", "polonium"]
-    assert out.tags == ["chemistry", "radioactivity"]
-    assert len(out.relations) == 1 and out.relations[0].valid_from == "1898"
-    assert len(out.facts) == 1
-    assert out.date_drops == 0
+    out = ext.extract_text("…", ref_date="2024-01-15")
+    assert [e.name for e in out.entities] == ["January 2nd"]
+    assert out.tags == ["2023"]
+    assert len(out.relations) == 1 and out.date_drops == 0

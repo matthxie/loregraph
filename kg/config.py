@@ -45,6 +45,13 @@ class Config:
     #                                   write CLOSED [d,d] occurrence edges + event=True
     #                                   instead of open [d,∞) states (docs/PIPELINE.md
     #                                   sharp edge #1); off = pre-fix write semantics
+    ingest_date_filter: bool = False  # apply the deterministic date/numeric term filter
+    #                                   (_filter_date_terms) to EVERY extraction at ingest,
+    #                                   regardless of backend — catches date-endpoint junk
+    #                                   from the local NLP floor too. Default off: hashed
+    #                                   into the ingest-cache key only when ON, so all
+    #                                   existing cached stores stay valid until the next
+    #                                   paid re-ingest flips it on.
     date_window_boost: bool = False   # reserve slots for episodes in a resolved date window
     rag_session_dedup: bool = False   # distinct sessions in the context-eligible prefix
     rag_resolve_reldates: bool = False    # annotate relative dates in episode text at render

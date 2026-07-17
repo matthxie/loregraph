@@ -424,8 +424,6 @@ class _LlmRelations:
             self.meter.record("extract", model or "cli-default", msg)
         except Exception:  # noqa: BLE001 — keep ingest alive; degrade to no relations
             return []
-        from .extractors import _filter_date_terms
-        from .extractors import Extraction as _Extraction
         names = {e.name.lower() for e in entities}
         out: list[ExtractedRelation] = []
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
@@ -444,10 +442,9 @@ class _LlmRelations:
                 status="ended" if str(r.get("status", "")).lower() == "ended" else "asserted",
                 valid_from=str(r.get("valid_from", "") or ""),
                 valid_to=str(r.get("valid_to", "") or "")))
-        # same defense-in-depth as the main LLM path: a date endpoint (possible here —
-        # GLiNER's entity labels include 'date') drops the relation, salvaging the date
-        # into a surviving sibling's valid_from when it resolves against ref_date.
-        return _filter_date_terms(_Extraction(relations=out), ref_date).relations
+        # date/numeric endpoints are NOT filtered here: the Ingestor applies
+        # _filter_date_terms to every backend at its choke point (ingest_date_filter)
+        return out
 
 
 # --------------------------------------------------------------------------- #

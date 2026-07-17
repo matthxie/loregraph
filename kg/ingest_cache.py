@@ -42,6 +42,7 @@ INGEST_RELEVANT_FIELDS = (
     "episode_knn_k", "episode_knn_floor", "shared_min_overlap", "shared_edges", "shared_hub_cap",
     "self_entity", "self_name",
     "event_facts",   # changes what apply_fact writes ([d,d] event edges + edge flag)
+    "ingest_date_filter",   # changes what ingest writes (date/numeric terms dropped)
 )
 
 
@@ -68,9 +69,9 @@ def _config_digest(config: Config) -> str:
     h = hashlib.sha256()
     for field in INGEST_RELEVANT_FIELDS:
         value = getattr(config, field)
-        if field == "event_facts" and not value:
-            # hashed only when ON: entries cached before the field existed stay
-            # valid for event_facts=False runs (same back-compat idea as resolve_model)
+        if field in ("event_facts", "ingest_date_filter") and not value:
+            # hashed only when ON: entries cached before these fields existed stay
+            # valid for knob-off runs (same back-compat idea as resolve_model)
             continue
         if field in ("llm_model", "l3_model"):
             # hash the resolved model, not the raw field: on openai an unset (None)

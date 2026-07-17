@@ -384,6 +384,41 @@ def _judge(client, model: str, q: dict, answer: str, meter: UsageMeter) -> dict 
     return None
 
 
+_COUNT_UNIT = re.compile(r"(\d+)\s*(day|week|month|year)s?\b", re.I)
+
+
+def _date_arith_prejudge(q: dict, answer: str) -> dict | None:
+    """Deterministic verdict for date-arithmetic questions, replacing the LLM judge
+    when BOTH sides parse. The reference may list alternatives ("30 days. 31 days
+    (including the last day) is also acceptable") — the model answer is correct if,
+    for any unit both sides mention, its count matches ANY reference count (±1 for
+    days — the inclusive/exclusive last-day ambiguity; exact for coarser units).
+    Returns the judge-shaped verdict dict with method="date_arith", or None when the
+    question isn't date arithmetic / either side has no parseable count (falls
+    through to the LLM judge). A deterministic verdict is final — never overruled."""
+    from .route import _DATE_ARITH
+    if not _DATE_ARITH.search(str(q.get("query", "") or "")):
+        return None
+    reference = unicodedata.normalize("NFKC", str(q.get("answer", "") or ""))
+    got = unicodedata.normalize("NFKC", str(answer or ""))
+    want: dict[str, set[int]] = {}
+    for n, u in _COUNT_UNIT.findall(reference):
+        want.setdefault(u.lower(), set()).add(int(n))
+    have: dict[str, set[int]] = {}
+    for n, u in _COUNT_UNIT.findall(got):
+        have.setdefault(u.lower(), set()).add(int(n))
+    units = sorted(set(want) & set(have))
+    if not units:
+        return None                       # unparseable on a common unit → LLM judge
+    correct = any(abs(a - e) <= (1 if u == "day" else 0)
+                  for u in units for a in have[u] for e in want[u])
+    detail = "; ".join(f"answer {sorted(have[u])} vs reference {sorted(want[u])} {u}s"
+                       for u in units)
+    return {"correct": correct, "score": 1.0 if correct else 0.0,
+            "reason": f"deterministic date-arithmetic check: {detail}",
+            "method": "date_arith"}
+
+
 # --------------------------------------------------------------------------- #
 # Failure triage — pinpoint the EARLIEST broken pipeline link for each failed
 # question, from data already captured at answer time. Buckets (first match wins),
@@ -677,7 +712,12 @@ def _score_query(q: dict, ans, kk: int, store, jclient, cfg: Config,
                  if topk_list else 0.0)
     gold_ranks = [i + 1 for i, a in enumerate(ranked_art) if a in gold_art]
     proxy = _response_proxy(ans.answer, q.get("answer", ""))
-    jres = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter) if jclient else None
+    # date-arithmetic questions get a deterministic pre-judge (works offline too);
+    # only an unparseable case falls through to the LLM judge, and the deterministic
+    # verdict is never overruled by the LLM one.
+    jres = _date_arith_prejudge(q, ans.answer)
+    if jres is None and jclient:
+        jres = _judge(jclient, cfg.judge_model, q, ans.answer, judge_meter)
     diag = _diagnose(q, ans, store, cfg, kk, gold_art)
     # evidence accounting for the dashboard: was each gold id actually in the reader's
     # final context (not just the top-k retrieval list), and if missed, did retrieval
@@ -1254,6 +1294,9 @@ def _query_totals(qrecords: list[dict], judge_meter: UsageMeter, k: int) -> dict
         "citation_grounding": mean("citation_grounding"),
         "response_accuracy": round(sum(judged) / len(judged), 3) if judged else None,
         "response_token_recall": round(sum(proxies) / len(proxies), 3) if proxies else None,
+        # questions graded by the deterministic date-arithmetic pre-judge (no LLM call)
+        "prejudged_date_arith": sum(1 for r in qrecords
+                                    if (r.get("judge") or {}).get("method") == "date_arith"),
         "avg_steps": round(sum(r["steps"] for r in qrecords) / n, 2),
         "avg_touched": round(sum(r["n_touched"] for r in qrecords) / n, 1),
         "by_kind": by_kind,

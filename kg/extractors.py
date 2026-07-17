@@ -447,6 +447,24 @@ def _is_pure_date(value: str) -> bool:
     return _match_date_expr(value) is not None
 
 
+# Bare numerics ("1", "42", "3rd", "$15", "20%") are invalid entity names / relation
+# endpoints: quantities have their own typed facts[] lane, and a stray numeric endpoint
+# is exactly the garbage sibling a salvaged date once got parked on (`St. Mary's Church
+# --attended--> 1`). 4-digit years match _is_pure_date first and stay classified as dates.
+_BARE_NUM_RE = re.compile(r"^\$?\d[\d,.]*(?:st|nd|rd|th)?%?$")
+
+
+def _is_bare_numeric(value: str) -> bool:
+    v = " ".join((value or "").split())
+    return bool(_BARE_NUM_RE.match(v)) and not _is_pure_date(v)
+
+
+def _is_degenerate_endpoint(value: str) -> bool:
+    """Empty, pure-date, or bare-numeric — never a legitimate graph term."""
+    v = " ".join((value or "").split())
+    return not v or _is_pure_date(v) or _is_bare_numeric(v)
+
+
 def _resolve_date_iso(value: str, ref_date: str) -> str:
     """Resolve a pure-date expression to an ISO date/year string, using `ref_date` (the
     episode's event date) for the missing pieces. Returns "" when it can't be resolved
@@ -480,19 +498,24 @@ def _resolve_date_iso(value: str, ref_date: str) -> str:
 
 
 def _filter_date_terms(ext: Extraction, ref_date: str = "") -> Extraction:
-    """Deterministic post-filter: dates are never graph terms. Drops pure-date entities
-    and tags (and anything typed EntityType.DATE), and drops any relation whose endpoint
-    is a pure-date expression. Before a dated relation is dropped, its date is SALVAGED:
-    if it resolves against `ref_date`, it fills the empty valid_from of a surviving
-    relation about the same non-date endpoint (same label when one matches, else the
-    single candidate). Everything removed is counted in ext.date_drops."""
+    """Deterministic post-filter: dates and bare numerics are never graph terms. Drops
+    pure-date / bare-numeric entities (and anything typed EntityType.DATE), pure-date
+    tags, and any relation whose endpoint is such an expression. Before a dated relation
+    is dropped, its date is SALVAGED: if it resolves against `ref_date`, it fills the
+    empty valid_from of a surviving CLEAN relation about the same non-date endpoint
+    (same label when one matches, else the single candidate; a sibling with a
+    degenerate endpoint or identical src/dst is never a salvage target). Everything
+    removed is counted in ext.date_drops.
+
+    Applied by the Ingestor to EVERY extraction backend (behind config.ingest_date_filter)
+    so date junk from the local NLP floor is caught too, not just the LLM paths."""
     drops = 0
     kept_ents = []
-    date_ent_names: set[str] = set()     # dropped date-TYPED surfaces ("the summer of 1969")
+    dropped_names: set[str] = set()      # dropped surfaces ("the summer of 1969", "1")
     for e in ext.entities:
-        if e.type == EntityType.DATE or _is_pure_date(e.name):
+        if e.type == EntityType.DATE or _is_pure_date(e.name) or _is_bare_numeric(e.name):
             drops += 1
-            date_ent_names.add(e.name.strip().lower())
+            dropped_names.add(e.name.strip().lower())
         else:
             kept_ents.append(e)
     kept_tags = []
@@ -504,22 +527,30 @@ def _filter_date_terms(ext: Extraction, ref_date: str = "") -> Extraction:
     kept_rels: list[ExtractedRelation] = []
     salvage: list[tuple[str, set[str], str]] = []   # (anchor_lower, labels_lower, iso)
     for r in ext.relations:
-        s_date = _is_pure_date(r.source) or r.source.strip().lower() in date_ent_names
-        t_date = _is_pure_date(r.target) or r.target.strip().lower() in date_ent_names
-        if not s_date and not t_date:
+        s_bad = (_is_pure_date(r.source) or _is_bare_numeric(r.source)
+                 or r.source.strip().lower() in dropped_names)
+        t_bad = (_is_pure_date(r.target) or _is_bare_numeric(r.target)
+                 or r.target.strip().lower() in dropped_names)
+        if not s_bad and not t_bad:
             kept_rels.append(r)
             continue
         drops += 1
-        if s_date and t_date:
+        if s_bad and t_bad:
             continue
-        date_surface = r.source if s_date else r.target
-        anchor = (r.target if s_date else r.source).strip().lower()
+        date_surface = r.source if s_bad else r.target
+        anchor = (r.target if s_bad else r.source).strip().lower()
         if not r.valid_from and anchor:
-            iso = _resolve_date_iso(date_surface, ref_date)
+            iso = _resolve_date_iso(date_surface, ref_date)   # "" for bare numerics
             if iso:
                 salvage.append((anchor, {l.lower() for l in r.labels}, iso))
+
+    def _salvageable(r: ExtractedRelation) -> bool:
+        s, t = r.source.strip(), r.target.strip()
+        return (not r.valid_from and s.lower() != t.lower()
+                and not _is_degenerate_endpoint(s) and not _is_degenerate_endpoint(t))
+
     for anchor, labels, iso in salvage:
-        cands = [r for r in kept_rels if not r.valid_from
+        cands = [r for r in kept_rels if _salvageable(r)
                  and anchor in (r.source.strip().lower(), r.target.strip().lower())]
         labelled = [r for r in cands if labels & {l.lower() for l in r.labels}]
         for r in (labelled or (cands if len(cands) == 1 else [])):
@@ -688,7 +719,7 @@ class OpenAIExtractor:
             return self._SYS + self._FIRST_PERSON_CLAUSE
         return self._SYS
 
-    def _call(self, content_blocks: list, ref_date: str = "") -> Extraction:
+    def _call(self, content_blocks: list) -> Extraction:
         import json
         # explicit llm_model wins; unset resolves to the active provider's default
         model = resolve_model(self.config.llm_model)
@@ -707,8 +738,9 @@ class OpenAIExtractor:
         self.meter.record("extract", model or "cli-default", msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":
-            return _filter_date_terms(
-                _parse_tool_payload(json.loads(tc[0].function.arguments)), ref_date)
+            # date/numeric junk is NOT filtered here: the Ingestor applies
+            # _filter_date_terms to every backend at its choke point (ingest_date_filter)
+            return _parse_tool_payload(json.loads(tc[0].function.arguments))
         return Extraction()
 
     def _reflexion(self, text: str, first: Extraction, ref_date: str = "") -> Extraction:
@@ -736,7 +768,7 @@ class OpenAIExtractor:
             "arrays. Call emit_graph exactly once with only the missed items."
         )
         try:
-            extra = self._call([{"type": "text", "text": prompt}], ref_date)
+            extra = self._call([{"type": "text", "text": prompt}])
             return first.merge(extra)
         except Exception:
             return first
@@ -747,8 +779,7 @@ class OpenAIExtractor:
         # Per-call input cap (config-driven). Sectioning keeps each slice <= long_doc_chars,
         # and extract_max_chars >= long_doc_chars, so this never truncates a section. It only
         # bites a single un-sectioned call whose text exceeds the cap.
-        first = self._call([{"type": "text", "text": header + text[:self.config.extract_max_chars]}],
-                           ref_date)
+        first = self._call([{"type": "text", "text": header + text[:self.config.extract_max_chars]}])
         return self._reflexion(text, first, ref_date)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:

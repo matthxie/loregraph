@@ -29,7 +29,8 @@ from .chunkers import chunk_for
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
-from .extractors import Extraction, Extractor, extract_text_sectioned
+from .extractors import (Extraction, Extractor, _filter_date_terms,
+                         extract_text_sectioned)
 from .models import (Edge, EdgeType, EntityCategory, EntityType, Modality, NodeType,
                      Provenance, entity_category_for_type, episode_node, mention_node,
                      quantity_node, source_node)
@@ -204,6 +205,16 @@ class Ingestor:
         with prof_span("ingest.extract"):
             extractions, errors = self._extract_all([p[0] for p in pending])
         report.extraction_failures = len(errors)
+        # 2b. deterministic date/numeric term filter at the backend-blind choke point:
+        # EVERY extraction passes through (LLM, cue_gated local floor, gliner2, scripted),
+        # so date-endpoint junk can't leak in from paths the LLM prompt rules never saw.
+        # Config-gated (default off) because it changes what ingest writes: the cache key
+        # hashes the knob only when ON (ingest_cache.INGEST_RELEVANT_FIELDS), keeping
+        # existing cached stores valid until a paid re-ingest flips it on.
+        if getattr(self.config, "ingest_date_filter", False):
+            extractions = [ext if ext is None else
+                           _filter_date_terms(ext, item.created_at or "")
+                           for (item, _h, _ep), ext in zip(pending, extractions)]
         date_drops = sum(ext.date_drops for ext in extractions if ext)
         if date_drops:
             report.notes.append(f"date-term filter dropped {date_drops} pure-date "
