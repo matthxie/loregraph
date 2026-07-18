@@ -1,0 +1,71 @@
+# PR gate: run the full pytest suite before a PR can merge into main.
+#
+# The suite is offline by construction (tests/conftest.py masks the codex/claude CLIs
+# and API keys; every LLM call is mocked or scripted). The only network dependency is
+# the one-time Hugging Face download of the bge-small embedder, cached between runs.
+#
+# In a rush? Add the `skip-tests` label to the PR. The job is then skipped, and GitHub
+# counts a skipped required check as passing, so the merge unblocks immediately.
+# Removing the label (or pushing a new commit) re-runs the suite. Note the release
+# pipeline (release.yml) still fires on merge either way — a skipped PR ships an
+# untested wheel to the brainbrain bump PR, whose own checks become the last line
+# of defense.
+#
+# One-time setup after this lands on main: mark the `test` check as required on main
+# (Settings → Branches → branch protection, or a repo ruleset). Doing it before the
+# workflow exists on main would block unrelated PRs on a check that never reports.
+
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+    # labeled/unlabeled are included so toggling `skip-tests` re-evaluates the gate
+    # without needing an empty push.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# New pushes to a PR cancel the in-flight run for that same PR.
+concurrency:
+  group: pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-tests') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 to match the release pipeline (pyproject floor is 3.10).
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          # Static key: the model set (bge-small) changes rarely. Bump v1 -> v2 to
+          # force a re-download if the pinned embedder ever changes.
+          key: hf-models-${{ runner.os }}-v1
+
+      - name: Install dependencies
+        run: |
+          # CPU-only torch first: the default PyPI wheel drags in ~2 GB of CUDA
+          # libraries the GPU-less runner can't use, and pip won't downgrade an
+          # already-satisfied torch>=2.6 afterwards.
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet -e . pytest
+          # en_core_web_sm (spacy) is deliberately NOT downloaded: no test exercises
+          # the nlp_extractors floor. Add `python -m spacy download en_core_web_sm`
+          # here if one ever does.
+
+      - name: Run test suite
+        run: pytest tests -q --durations=10
