@@ -49,6 +49,22 @@ class Config:
     #                                   or sums, and a REDUCE call answers over the original
     #                                   context PLUS the computed table. QUERY-SIDE; off =
     #                                   byte-identical. NOT an ingest-cache field.
+    facts_projection: bool = False    # on flush/save, (re)generate two derived SQLite
+    #                                   tables (facts_view, agg_view) in the same db file,
+    #                                   rebuilt WHOLESALE from the RELATED_TO edges every
+    #                                   flush — a SQL-queryable projection of the graph's
+    #                                   fact/occurrence data. The LOAD path never reads them
+    #                                   (delete + reload = identical graph). QUERY-SIDE; off =
+    #                                   save() byte-identical, no extra tables. NOT an
+    #                                   ingest-cache field (docs/OFFLINE_EVAL.md Round 6b).
+    agg_evidence: bool = False        # on aggregate-shaped questions (is_aggregate_question),
+    #                                   append a "GRAPH TALLIES (may be incomplete…)" section
+    #                                   to the context: per-pair occurrence tallies for the
+    #                                   anchor entities, computed IN-MEMORY from believed
+    #                                   RELATED_TO edges (works without facts_projection and on
+    #                                   read-only stores). EVIDENCE, not an oracle — capped ~10
+    #                                   lines, caveat header. QUERY-SIDE; off = context
+    #                                   byte-identical (docs/OFFLINE_EVAL.md Round 6b).
     history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
     #                                   not just STATE (offline eval variant A, amended:
     #                                   outside STATE only CLOSED lines render — open lines

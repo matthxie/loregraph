@@ -631,6 +631,57 @@ class ContextBuilder:
                         return out
         return out
 
+    def _graph_tallies(self, entities: list[str], as_of: str | None,
+                       limit: int = 10) -> list[str]:
+        """(config.agg_evidence) Per-pair occurrence tallies among the anchor entities,
+        computed IN-MEMORY from the believed RELATED_TO edges (no dependency on the
+        facts_projection SQL tables, so this works on a read-only store too). Parallel
+        edges of one (src, rel_tag, dst) pair are grouped: the tally is the SUM of
+        1 + len(confirmed_by) across them (each parallel edge is a distinct occurrence,
+        each confirm a same-key re-mention). Retracted edges are excluded (never-true).
+        Ordered by occurrence count desc, capped at `limit` lines.
+
+        These are EVIDENCE, not truth: occurrence capture at ingest is partial, so a tally
+        can undercount. The caller frames them with an explicit incompleteness caveat."""
+        groups: dict[tuple, dict] = {}
+        seen: set[tuple] = set()   # edge identity, so a pair with both anchors isn't doubled
+        for eid in entities:
+            for direction in ("out", "in"):
+                for nbr, data in self.store.neighbors(eid, etypes={EdgeType.RELATED_TO},
+                                                      direction=direction):
+                    if data.get("belief", "asserted") != "asserted":
+                        continue
+                    src_id, dst_id = (eid, nbr) if direction == "out" else (nbr, eid)
+                    rel_tag = data.get("rel_tag")
+                    ident = (src_id, rel_tag, dst_id, data.get("valid_at", ""),
+                             int(data.get("seq", 0)))
+                    if ident in seen:
+                        continue
+                    seen.add(ident)
+                    g = groups.setdefault((src_id, rel_tag, dst_id),
+                                          {"n": 0, "dates": []})
+                    g["n"] += 1 + len(data.get("confirmed_by") or [])
+                    v = data.get("valid_at", "")
+                    if v:
+                        g["dates"].append(v[:10])
+        ordered = sorted(groups.items(), key=lambda kv: (-kv[1]["n"], kv[0]))
+        lines: list[str] = []
+        for (src_id, rel_tag, dst_id), g in ordered[:limit]:
+            sn = self.store.get_node(src_id)
+            dn = self.store.get_node(dst_id)
+            rn = self.store.get_node(rel_tag) if rel_tag else None
+            src = sn.name if sn else src_id
+            dst = dn.name if dn else dst_id
+            rel = rn.name if rn else "related_to"
+            n = g["n"]
+            span = ""
+            if g["dates"]:
+                lo, hi = min(g["dates"]), max(g["dates"])
+                span = f" ({lo})" if lo == hi else f" ({lo} -> {hi})"
+            unit = "occurrence" if n == 1 else "occurrences"
+            lines.append(f"{src} --{rel}--> {dst}: {n} {unit}{span}")
+        return lines
+
     def _select_episodes(self, ranked: list[str]) -> list[str]:
         """Top-n context episodes, with at most `rag_chunks_per_source` chunks of any
         one source (chunk ids are `ep_<source>#cNNN`) — otherwise a single chunked
@@ -988,6 +1039,21 @@ class ContextBuilder:
                         lines += ["", "HISTORY (ENDED facts and past events; the FACTS "
                                       "above show only the currently-open state):"]
                         lines += [f"- {h.render()}" for h in closed]
+
+        # GRAPH TALLIES (config.agg_evidence): on aggregate-shaped questions, append
+        # per-pair occurrence counts among the anchor entities as CORROBORATION. The header
+        # is deliberately worded to convey incompleteness — occurrence capture at ingest is
+        # partial, so a tally can undercount; the reader must treat it as evidence to verify
+        # against the episodes, never as a second source of truth. In-memory, so it needs
+        # neither the facts_projection tables nor a writable store.
+        if getattr(self.config, "agg_evidence", False) and \
+                is_aggregate_question(result.query):
+            ent_ids = getattr(result, "entity_ids", []) or ents
+            tallies = self._graph_tallies(ent_ids, result.as_of)
+            if tallies:
+                lines += ["", "GRAPH TALLIES (may be incomplete; verify against the "
+                              "episodes):"]
+                lines += tallies
         return ctx_ids, facts, "\n".join(lines)
 
 

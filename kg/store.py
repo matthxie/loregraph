@@ -367,13 +367,22 @@ class GraphStore:
         flush periodically and a crash loses at most one flush window)."""
         if not self.path:
             raise ValueError("GraphStore has no path; open(path) first")
-        if not (self._dirty_nodes or self._dirty_edges or self._dirty_vectors
-                or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows):
+        dirty = bool(self._dirty_nodes or self._dirty_edges or self._dirty_vectors
+                     or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows)
+        project = bool(getattr(self.config, "facts_projection", False))
+        # nothing changed AND no projection to (re)build → truly a no-op (byte-identical
+        # store file). The projection is rebuilt on EVERY flush when the knob is on, even
+        # with nothing dirty, so a freshly restored cache store gets the tables on its
+        # first flush regardless of what else moved.
+        if not dirty and not project:
             return
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self._init_db()
         con = self._connect()
         cur = con.cursor()
+        # The write-through below is driven entirely by the dirty/deleted sets — with
+        # nothing dirty (the projection-only reflush case) every statement is an empty
+        # no-op, so no `if dirty:` guard is needed to keep it correct.
         if self._deleted_nodes:
             gone = [(nid,) for nid in self._deleted_nodes]
             cur.executemany("DELETE FROM nodes WHERE id=?", gone)
@@ -419,6 +428,8 @@ class GraphStore:
             [(h, self.hash_cache[h], "")
              for h in sorted(self._dirty_cache) if h in self.hash_cache],
         )
+        if project:
+            self._rebuild_facts_projection(cur)
         con.commit()
         con.close()
         self._dirty_nodes.clear()
@@ -429,6 +440,61 @@ class GraphStore:
         self._deleted_edge_rows.clear()
 
     flush = save   # the ingest loop's periodic checkpoint is the same operation
+
+    # ------------------------------------------------ relational facts projection
+    def _rebuild_facts_projection(self, cur: sqlite3.Cursor) -> None:
+        """(config.facts_projection) Rebuild the two derived tables WHOLESALE from the
+        current RELATED_TO edges — a SQL-queryable projection of the graph's fact /
+        occurrence data. Wholesale (DROP + recreate) rather than incremental so a flush is
+        always a faithful snapshot: any edge that closed/retracted/merged/vanished since the
+        last flush simply isn't re-emitted, and no stale row can survive. Query-side only —
+        the LOAD path (`_load_rows`) never reads these tables, so deleting them and
+        reloading yields an identical graph.
+
+          facts_view — one row per RELATED_TO edge (open, closed, or retracted; `belief`
+            distinguishes them), names resolved through node payloads, `mentions` =
+            1 + len(confirmed_by).
+          agg_view — grouped over BELIEVED (non-retracted) rows only: n_occurrences =
+            SUM(mentions) across the parallel edges of a (src,rel,dst) pair, with the
+            first/last occurrence date (earliest/latest non-empty valid_from).
+        """
+        cur.execute("DROP TABLE IF EXISTS facts_view")
+        cur.execute("DROP TABLE IF EXISTS agg_view")
+        cur.execute(
+            "CREATE TABLE facts_view("
+            "src_name TEXT, rel_name TEXT, dst_name TEXT, valid_from TEXT, valid_to TEXT, "
+            "event INTEGER, confidence REAL, belief TEXT, episode_id TEXT, mentions INTEGER)")
+        rows = []
+        for u, v, d in self.g.edges(data=True):
+            if d.get("etype") != EdgeType.RELATED_TO.value:
+                continue
+            sn, dn = self.nodes.get(u), self.nodes.get(v)
+            rel = d.get("rel_tag")
+            rn = self.nodes.get(rel) if rel else None
+            rows.append((
+                sn.name if sn else u,
+                rn.name if rn else "related_to",
+                dn.name if dn else v,
+                d.get("valid_at", ""), d.get("invalid_at", ""),
+                int(bool(d.get("event", False))), d.get("confidence"),
+                d.get("belief", Belief.ASSERTED.value), d.get("episode_id", ""),
+                1 + len(d.get("confirmed_by") or [])))
+        cur.executemany(
+            "INSERT INTO facts_view VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+        cur.execute(
+            "CREATE TABLE agg_view("
+            "src_name TEXT, rel_name TEXT, dst_name TEXT, n_occurrences INTEGER, "
+            "first_date TEXT, last_date TEXT)")
+        # n_occurrences sums `mentions` across the parallel edges of a pair (each parallel
+        # edge is a distinct occurrence; each carries its own confirm count). NULLIF drops
+        # empty (unknown-date) valid_from values from the MIN/MAX so an undated edge doesn't
+        # win first_date as "".
+        cur.execute(
+            "INSERT INTO agg_view "
+            "SELECT src_name, rel_name, dst_name, SUM(mentions), "
+            "MIN(NULLIF(valid_from,'')), MAX(NULLIF(valid_from,'')) "
+            "FROM facts_view WHERE belief=? GROUP BY src_name, rel_name, dst_name",
+            (Belief.ASSERTED.value,))
 
     def _load(self) -> None:
         self._loading = True
