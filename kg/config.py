@@ -37,6 +37,18 @@ class Config:
     rag_provenance_promote: bool = True   # pull a fact's source chunk into context
     rag_answer_events: str = "lanes"  # structured event enumeration: "off"|"lanes"|"all"
     rag_answer_events_lanes: tuple = ("multihop", "state")
+    agg_reconcile: bool = False       # answer-time aggregation reconciliation: recompute the
+    #                                   aggregate from the reader's enumerated events[] and, on
+    #                                   a mismatch with the number stated in the answer text,
+    #                                   append a correction citing the enumeration. QUERY-SIDE;
+    #                                   off = answer flow byte-identical (docs/OFFLINE_EVAL.md
+    #                                   Round 6a). NOT an ingest-cache field.
+    agg_map_reduce: bool = False      # map-reduce aggregation lane: on MULTIHOP + aggregate-
+    #                                   shaped questions, one MAP LLM call per source session
+    #                                   enumerates matching items, CODE merges/dedups/counts
+    #                                   or sums, and a REDUCE call answers over the original
+    #                                   context PLUS the computed table. QUERY-SIDE; off =
+    #                                   byte-identical. NOT an ingest-cache field.
     history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
     #                                   not just STATE (offline eval variant A, amended:
     #                                   outside STATE only CLOSED lines render — open lines

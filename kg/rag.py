@@ -23,6 +23,12 @@ from dataclasses import dataclass, field
 
 from .backoff import call_with_backoff
 from .canonicalize import Canonicalizer
+from .completeness import (
+    find_amounts_in_text,
+    is_aggregate_question,
+    normalize_amount,
+    question_shape,
+)
 from .config import Config
 from .embedders import Embedder
 from .facts import FactIndex, FactLine
@@ -31,7 +37,7 @@ from .metering import UsageMeter
 from .models import EdgeType, NodeType
 from .profiler import span as prof_span
 from .retrieval import HybridRetriever, RetrievalResult
-from .route import STATE
+from .route import _DATE_ARITH, MULTIHOP, STATE
 from .store import GraphStore, fact_active
 
 _WS = re.compile(r"\s+")
@@ -403,6 +409,151 @@ _ANSWER_TOOL_EVENTS = {
                               "description": "episode ids you used, e.g. ep_2"},
             },
             "required": ["events", "calculation", "answer", "citations"],
+        },
+    },
+}
+
+
+# --------------------------------------------------------------------------- #
+# Answer-time aggregation (config.agg_reconcile / config.agg_map_reduce)
+# --------------------------------------------------------------------------- #
+# The reader's dominant multi-session failure is emitting a count/sum it never enumerated:
+# recall of the gold evidence is 1.0, the events[] enumeration is complete, and the single
+# reader call still miscounts (docs/OFFLINE_EVAL.md Round 6a). Both knobs move the arithmetic
+# out of the model and into CODE — reconcile audits the reader's own enumeration after the
+# fact; map-reduce enumerates per-session up front — while the model only phrases. Neither
+# ever states a number the code didn't compute or the enumeration doesn't support.
+_DESC_TOK = re.compile(r"[a-z0-9]+")
+_BARE_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _singular(w: str) -> str:
+    """Strip a single plural 's' ("subscriptions"→"subscription", "visits"→"visit") while
+    leaving genuine double-s words alone ("class" stays "class")."""
+    return w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+
+
+def _norm_desc_tokens(s: str) -> frozenset:
+    """Normalized content tokens of an event/item description for dedup — lowercased,
+    stopwords dropped, singularized, 1-2 char tokens dropped. So "the park visits" and
+    "park visit" collapse to the same key. The description half of the dedup key."""
+    return frozenset(_singular(w) for w in _DESC_TOK.findall((s or "").lower())
+                     if len(w) > 2 and w not in _RETARGET_STOP)
+
+
+def _dedup_events(events: list[dict]) -> list[dict]:
+    """Deduplicate enumerated events/items by (date, normalized description tokens),
+    first occurrence wins — a single occurrence re-mentioned in a later session (very
+    common in dated chat logs) must count once, not once per mention."""
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        date = str(e.get("date", "") or "").strip()[:10]
+        key = (date, _norm_desc_tokens(e.get("description", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    return out
+
+
+def _event_amount(e: dict) -> str | None:
+    """Best single normalized amount for one event/item: prefer an explicit amount/quantity
+    field, else parse the description. Returns None when nothing numeric is present."""
+    for field_name in ("amount", "quantity"):
+        v = e.get(field_name)
+        if v in (None, ""):
+            continue
+        amts = find_amounts_in_text(str(v))
+        if amts:
+            return amts[0]
+        m = _BARE_NUM.search(str(v))     # a raw "$"-less "120" in a dedicated amount field
+        if m:
+            return normalize_amount(m.group(0))
+    amts = find_amounts_in_text(e.get("description", "") or "")
+    return amts[0] if amts else None
+
+
+def _sum_events(events: list[dict]) -> tuple[float, list[str]]:
+    """Sum the parseable amounts across (already-deduped) events; also return one
+    "description (amount)" line per contributing event for the citation."""
+    total = 0.0
+    parts: list[str] = []
+    for e in events:
+        a = _event_amount(e)
+        if a is None:
+            continue
+        try:
+            total += float(a)
+        except ValueError:
+            continue
+        desc = str(e.get("description", "") or "").strip()
+        parts.append(f"{desc} ({a})" if desc else str(a))
+    return total, parts
+
+
+def _fmt_amount(total: float) -> str:
+    return f"${int(total)}" if total == int(total) else f"${total:.2f}"
+
+
+def _stated_count(text: str) -> int | None:
+    """The first integer stated in the answer text (the count to audit)."""
+    m = _BARE_NUM.search(text or "")
+    if not m:
+        return None
+    raw = m.group(0).replace(",", "")
+    try:
+        return int(float(raw))
+    except ValueError:
+        return None
+
+
+def _stated_sum(text: str) -> str | None:
+    """The first monetary amount stated in the answer text (the total to audit)."""
+    amts = find_amounts_in_text(text or "")
+    return amts[0] if amts else None
+
+
+# MAP stage (config.agg_map_reduce): one forced call per source session enumerates the
+# session's matching items in isolation, so no single call has to hold every session at once.
+_AGG_MAP_SYS = (
+    "You are extracting items from ONE chat session to help answer an aggregation "
+    "question. List EVERY item in THIS session that matches the question's criteria — one "
+    "entry per distinct occurrence, each with its date (use the episode/session date if the "
+    "text states the time relatively), a short description, the amount if it is a monetary "
+    "or numeric quantity, and a short verbatim quote proving it. Consider ONLY what THIS "
+    "session states — do not infer items from other sessions. If this session contains no "
+    "matching item, return an empty list."
+)
+_AGG_MAP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_items",
+        "description": "List every item in THIS session matching the question's criteria.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": "every matching item in this session; empty if none",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string",
+                                     "description": "when it happened (episode date if the "
+                                                    "text is relative)"},
+                            "description": {"type": "string"},
+                            "amount": {"type": "string",
+                                       "description": "monetary/numeric amount if any"},
+                            "verbatim_quote": {"type": "string"},
+                        },
+                        "required": ["date", "description", "verbatim_quote"],
+                    },
+                },
+            },
+            "required": ["items"],
         },
     },
 }
@@ -942,6 +1093,154 @@ class OpenAIAnswerer:
     def _finish_reason(msg) -> str | None:
         return getattr(msg.choices[0], "finish_reason", None) if msg.choices else None
 
+    def _token_kwargs(self, kwargs: dict, model: str) -> dict:
+        """Attach the right token-cap key (+temperature) for `model`, matching the main
+        answer call's gpt-5/o-series vs 4o-era split, so MAP calls use the same plumbing."""
+        if (model or "").startswith(("gpt-5", "o1", "o3", "o4")):
+            kwargs["max_completion_tokens"] = self.config.rag_max_tokens
+        else:
+            kwargs["max_tokens"] = self.config.rag_max_tokens
+            kwargs["temperature"] = 0
+        return kwargs
+
+    def _session_text(self, eids: list[str], as_of: str | None) -> str:
+        """Render the context chunks of ONE source session as the MAP call's input,
+        mirroring the EPISODES block's `[id] (date) name: snippet` shape."""
+        parts: list[str] = []
+        for eid in eids:
+            n = self.store.get_node(eid)
+            if not n:
+                continue
+            when = _when_with_delta(n.created_at, as_of)
+            snippet = self.builder._snippet(n, self.config.rag_episode_chars)
+            parts.append(f"[{eid}] {when} {n.name}: {snippet}")
+        return "\n".join(parts)
+
+    def _agg_map_call(self, query: str, session_text: str, model: str) -> list[dict]:
+        """One MAP call over a single session; returns its enumerated items ([] on any
+        call/parse failure — map is best-effort, the reduce still answers). Metered."""
+        kwargs = self._token_kwargs({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _AGG_MAP_SYS},
+                {"role": "user", "content": f"QUESTION: {query}\n\nSESSION:\n{session_text}"},
+            ],
+            "tools": [_AGG_MAP_TOOL],
+            "tool_choice": {"type": "function", "function": {"name": "list_items"}},
+        }, model)
+        try:
+            with prof_span("query.agg_map"):
+                msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
+            self.meter.record("rag.map", model or "cli-default", msg, label=query[:40])
+        except Exception:  # noqa: BLE001 — a failed map session contributes no items
+            return []
+        tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
+        if not tc or tc[0].function.name != "list_items":
+            return []
+        try:
+            payload = json.loads(tc[0].function.arguments)
+        except (ValueError, TypeError):
+            return []
+        items = payload.get("items", [])
+        return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+    def _agg_map_reduce(self, result: RetrievalResult, ctx_ids: list[str],
+                        model: str) -> tuple[str, str]:
+        """MAP (per source session) + CODE (merge/dedup/count-or-sum). Returns
+        (reduce_addendum, note): the addendum is appended to the reduce call's context so
+        the final answer is phrased over the computed aggregate; the empty-list case yields
+        an abstention-safe addendum (a computed 0 is only an answer when the question asks
+        'how many')."""
+        groups: dict[str, list[str]] = {}
+        order: list[str] = []
+        for eid in ctx_ids:
+            base = eid.split("#", 1)[0]
+            if base not in groups:
+                groups[base] = []
+                order.append(base)
+            groups[base].append(eid)
+
+        raw_items: list[dict] = []
+        for base in order:
+            for it in self._agg_map_call(result.query,
+                                         self._session_text(groups[base], result.as_of),
+                                         model):
+                it["_source"] = base
+                raw_items.append(it)
+
+        merged = _dedup_events(raw_items)
+        shape = question_shape(result.query)
+
+        if not merged:
+            if shape == "count":
+                addendum = (
+                    "\n\n--- COMPUTED AGGREGATION (per-session extraction) ---\n"
+                    "The per-session extraction found no matching items across the retrieved "
+                    "sessions. If the context genuinely contains none, the count is 0; "
+                    "otherwise say the information is insufficient.")
+            else:
+                addendum = (
+                    "\n\n--- COMPUTED AGGREGATION (per-session extraction) ---\n"
+                    "The per-session extraction found no matching amounts across the "
+                    "retrieved sessions. If the needed figures are not in the context above, "
+                    "say the information is insufficient — do not guess a total.")
+            return addendum, f"agg_map_reduce: 0 items across {len(order)} session(s)"
+
+        lines = ["", "--- COMPUTED AGGREGATION (per-session extraction, deduplicated) ---",
+                 "Enumerated items:"]
+        for i, it in enumerate(merged, 1):
+            amt = _event_amount(it)
+            amt_s = f" | amount {amt}" if amt is not None else ""
+            date = str(it.get("date", "") or "").strip()[:10]
+            lines.append(f"{i}. {date} | {it.get('description', '')}{amt_s}  "
+                         f"[{it.get('_source', '')}]")
+        if shape == "sum":
+            total, _parts = _sum_events(merged)
+            lines.append(f"Computed sum over the enumerated items: {_fmt_amount(total)}.")
+        else:
+            lines.append(f"Computed count of enumerated items: {len(merged)}.")
+        lines.append("Answer the question using this computed aggregate unless the EPISODES "
+                     "above clearly contradict it. Cite the episode ids.")
+        note = (f"agg_map_reduce: {len(raw_items)} raw -> {len(merged)} deduped item(s) "
+                f"across {len(order)} session(s)")
+        return "\n" + "\n".join(lines), note
+
+    def _reconcile_answer(self, answer: str, events: list[dict],
+                          query: str) -> tuple[str, str | None]:
+        """agg_reconcile: recompute the aggregate from the reader's enumerated events[] and,
+        on a mismatch with the number stated in the answer text, append a correction citing
+        the enumeration. No enumeration (empty events) → untouched; match → untouched.
+
+        Date-arithmetic questions ("how many weeks since…", "how many months ago…") match
+        is_aggregate_question via "how many" but are NOT occurrence counts — the router
+        already splits them off to STATE via _DATE_ARITH. Reconcile reuses that exact regex
+        to skip them, so it never miscounts a date difference as a tally (map-reduce excludes
+        them structurally by gating on the MULTIHOP lane)."""
+        if not events or _DATE_ARITH.search(query or ""):
+            return answer, None
+        shape = question_shape(query)
+        merged = _dedup_events(events)
+        if shape == "count":
+            computed = len(merged)
+            stated = _stated_count(answer)
+            if stated is None or stated == computed:
+                return answer, None
+            descs = "; ".join(d for d in (str(e.get("description", "") or "").strip()
+                                          for e in merged) if d)
+            corr = (f" (Correction: the enumerated events list {computed} matching item(s)"
+                    f"{': ' + descs if descs else ''}.)")
+            return answer.rstrip() + corr, f"agg_reconcile: stated {stated} != {computed}"
+        if shape == "sum":
+            total, parts = _sum_events(merged)
+            computed = normalize_amount(str(total))
+            stated = _stated_sum(answer)
+            if stated is None or stated == computed:
+                return answer, None
+            corr = (f" (Correction: the enumerated events sum to {_fmt_amount(total)}"
+                    f"{': ' + '; '.join(parts) if parts else ''}.)")
+            return answer.rstrip() + corr, f"agg_reconcile: stated {stated} != {computed}"
+        return answer, None
+
     def answer(self, result: RetrievalResult) -> RagAnswer:
         with prof_span("query.build_context"):
             ep_ids, facts, blob = self.builder.build(result)
@@ -954,6 +1253,19 @@ class OpenAIAnswerer:
                          retargeted=list(self.builder.last_retargeted))
         # explicit rag_model wins; unset resolves per provider (openai → gpt-5-mini)
         model = resolve_model(self.config.rag_model, openai_default=RAG_OPENAI_DEFAULT)
+        # agg_map_reduce: on MULTIHOP + aggregate-shaped questions, run the MAP (per-session
+        # enumeration) + CODE (merge/dedup/count-or-sum) stages up front and fold the
+        # computed table into the reduce call's context. The final answer call below IS the
+        # REDUCE — it reuses the same client/backoff/length-retry/fallback plumbing; only its
+        # user message changes. Off (or wrong lane/shape) → addendum is "", so the content is
+        # byte-identical to the plain single call.
+        reduce_addendum = ""
+        if (getattr(self.config, "agg_map_reduce", False)
+                and getattr(result, "lane", "single") == MULTIHOP
+                and is_aggregate_question(result.query)):
+            with prof_span("query.agg_map_reduce"):
+                reduce_addendum, agg_note = self._agg_map_reduce(result, ep_ids, model)
+            base.notes.append(agg_note)
         # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens)
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to
@@ -962,7 +1274,7 @@ class OpenAIAnswerer:
             "model": model,
             "messages": [
                 {"role": "system", "content": _RAG_SYS},
-                {"role": "user", "content": blob},
+                {"role": "user", "content": blob + reduce_addendum},
             ],
             "tools": [self._answer_tool(result)],
             "tool_choice": {"type": "function", "function": {"name": "submit_answer"}},
@@ -1025,6 +1337,16 @@ class OpenAIAnswerer:
         base.citations, base.dropped_citations = kept, dropped
         if dropped:
             base.notes.append(f"dropped {len(dropped)} uncontextual citation(s)")
+        # agg_reconcile: audit the stated number against the reader's OWN enumerated
+        # events[] (populated by the events schema on multihop/state lanes) and append a
+        # correction on mismatch. Non-aggregate questions and empty enumerations are left
+        # untouched, so with the knob off (or off-lane) the answer is unchanged.
+        if getattr(self.config, "agg_reconcile", False) and \
+                is_aggregate_question(result.query):
+            base.answer, recon_note = self._reconcile_answer(
+                base.answer, base.events, result.query)
+            if recon_note:
+                base.notes.append(recon_note)
         return base
 
 
