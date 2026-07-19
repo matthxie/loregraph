@@ -29,6 +29,7 @@ from .chunkers import chunk_for
 from .config import Config
 from .corpus import CorpusItem
 from .embedders import Embedder
+from .fact_vectors import sync_fact_vectors
 from .extractors import (Extraction, Extractor, _filter_date_terms,
                          extract_text_sectioned)
 from .models import (Edge, EdgeType, EntityCategory, EntityType, Modality, NodeType,
@@ -47,6 +48,7 @@ class IngestReport:
     mentions: int = 0
     facts: int = 0              # fact-edge actions (open/close/supersede/confirm)
     quantity_facts: int = 0     # typed amount/count/measurement occurrences written
+    fact_vectors: int = 0       # statement/aggregate fact surfaces embedded (config.fact_vectors)
     extraction_failures: int = 0
     seconds: float = 0.0
     extractor: str = ""
@@ -56,8 +58,9 @@ class IngestReport:
     def __str__(self) -> str:
         warn = (f"  ⚠ {self.extraction_failures} extraction failures"
                 if self.extraction_failures else "")
+        fv = f" fact_vectors={self.fact_vectors}" if self.fact_vectors else ""
         return (f"episodes={self.ingested} mentions={self.mentions} facts={self.facts} "
-                f"quantities={self.quantity_facts} "
+                f"quantities={self.quantity_facts}{fv} "
                 f"skipped={self.skipped} failed={self.failed} in {self.seconds:.1f}s  "
                 f"(extractor={self.extractor}, embedder={self.embedder}){warn}")
 
@@ -288,6 +291,21 @@ class Ingestor:
         # 5. derive Episode↔Episode edges for the NEW episodes only (incremental)
         with prof_span("ingest.derive_edges"):
             self._derive_episode_edges(new_eps)
+
+        # 5b. (config.fact_vectors) statement-granularity retrieval vectors: embed the
+        #     new/changed fact-line + distilled-aggregate surfaces in ONE batch and
+        #     reconcile the kind="fact" index. Runs once at the end of the batch (after all
+        #     fact writes + canonical renames are settled), embeds only missing surfaces
+        #     (incremental), and prunes surfaces orphaned by a rename/retraction. $0 local.
+        if getattr(self.config, "fact_vectors", False):
+            with prof_span("ingest.embed_facts"):
+                fv = sync_fact_vectors(self.store, self.embedder, prune=True)
+            report.fact_vectors = fv["added"]
+            if fv["removed"]:
+                report.notes.append(
+                    f"fact-vectors: pruned {fv['removed']} surface(s) whose text changed "
+                    "(canonical rename) or left the believed set — re-embedded on flush")
+
         if self.store.path:
             self.store.flush()
 

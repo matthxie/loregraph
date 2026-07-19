@@ -43,7 +43,15 @@ INGEST_RELEVANT_FIELDS = (
     "self_entity", "self_name",
     "event_facts",   # changes what apply_fact writes ([d,d] event edges + edge flag)
     "ingest_date_filter",   # changes what ingest writes (date/numeric terms dropped)
+    "fact_vectors",   # changes what ingest writes (kind="fact" statement/aggregate vectors)
 )
+
+# Ingest-relevant knobs added AFTER stores were first cached: hashed into the key only
+# when ON, so entries cached before the knob existed stay valid for knob-off runs (the same
+# back-compat idea as resolve_model). Flipping one ON is a new store shape → a new key → a
+# (paid) re-ingest, EXCEPT fact_vectors, whose $0 output can be added to an existing cached
+# store in place via `kg backfill-fact-vectors` (kg/fact_vectors.py) with no re-extraction.
+_HASH_ONLY_WHEN_ON = ("event_facts", "ingest_date_filter", "fact_vectors")
 
 
 def _extractor_prompt_digest() -> str:
@@ -69,7 +77,7 @@ def _config_digest(config: Config) -> str:
     h = hashlib.sha256()
     for field in INGEST_RELEVANT_FIELDS:
         value = getattr(config, field)
-        if field in ("event_facts", "ingest_date_filter") and not value:
+        if field in _HASH_ONLY_WHEN_ON and not value:
             # hashed only when ON: entries cached before these fields existed stay
             # valid for knob-off runs (same back-compat idea as resolve_model)
             continue

@@ -62,6 +62,16 @@ class KnowledgeGraph:
     def ingest_object(self, item: CorpusItem) -> IngestReport:
         return self.ingest([item])
 
+    def backfill_fact_vectors(self) -> dict:
+        """Compute any MISSING statement/aggregate fact vectors (kind="fact") for the
+        loaded store — pure local embedding ($0), additive & idempotent, incremental (only
+        surfaces not already indexed). Touches only the vectors table, never nodes/edges/
+        config, so it does NOT invalidate the ingest cache key: the cached benchmark stores
+        (built with fact_vectors off) can be enriched in place without a paid re-ingest.
+        Mutations persist on the next save(). Returns the reconciliation counts."""
+        from .fact_vectors import backfill_fact_vectors
+        return backfill_fact_vectors(self.store, self.embedder)
+
     # ------------------------------------------------------------ communities
     def build_communities(self) -> int:
         return build_communities(self.store, self.embedder, self.config)

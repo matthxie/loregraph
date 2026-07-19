@@ -80,6 +80,7 @@ class GraphStore:
         self._dirty_nodes: set[str] = set()
         self._dirty_edges: set[tuple[str, str, str]] = set()   # (src, dst, gkey)
         self._dirty_vectors: set[tuple[str, str]] = set()      # (kind, node_id)
+        self._deleted_vectors: set[tuple[str, str]] = set()    # (node_id, kind) rows to DELETE
         self._dirty_cache: set[str] = set()                    # content hashes
         self._deleted_nodes: set[str] = set()
         self._deleted_edge_rows: set[tuple] = set()   # full SQL PKs to DELETE (see touch_edge)
@@ -88,6 +89,19 @@ class GraphStore:
     def _mark_vector(self, kind: str, node_id: str) -> None:
         if not self._loading:
             self._dirty_vectors.add((kind, node_id))
+
+    def remove_vector(self, kind: str, node_id: str) -> bool:
+        """Drop one vector from the in-memory index AND schedule its SQL row for deletion on
+        the next flush. Used by the fact-vector reconciliation (kg/fact_vectors.py) to prune
+        a surface orphaned by a canonical rename or a retraction. There is no on_remove hook
+        (VectorIndex.remove is persistence-agnostic), so callers that need the deletion
+        persisted must go through here. Returns False when the id wasn't indexed."""
+        if not self.vectors.remove(kind, node_id):
+            return False
+        self._deleted_vectors.add((node_id, kind))
+        self._dirty_vectors.discard((kind, node_id))   # a pending add is now moot
+        self._touch()
+        return True
 
     def add_hash(self, content_hash: str, node_id: str) -> None:
         self.hash_cache[content_hash] = node_id
@@ -368,7 +382,8 @@ class GraphStore:
         if not self.path:
             raise ValueError("GraphStore has no path; open(path) first")
         dirty = bool(self._dirty_nodes or self._dirty_edges or self._dirty_vectors
-                     or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows)
+                     or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows
+                     or self._deleted_vectors)
         project = bool(getattr(self.config, "facts_projection", False))
         # nothing changed AND no projection to (re)build → truly a no-op (byte-identical
         # store file). The projection is rebuilt on EVERY flush when the knob is on, even
@@ -393,6 +408,9 @@ class GraphStore:
             cur.executemany(
                 "DELETE FROM edges WHERE src=? AND dst=? AND etype=? AND rel_tag=? "
                 "AND valid_at=? AND seq=?", sorted(self._deleted_edge_rows))
+        if self._deleted_vectors:      # pruned fact surfaces (renames/retractions)
+            cur.executemany("DELETE FROM vectors WHERE node_id=? AND kind=?",
+                            sorted(self._deleted_vectors))
         cur.executemany(
             "INSERT OR REPLACE INTO nodes(id, ntype, payload) VALUES (?,?,?)",
             [(n.id, n.ntype.value, n.to_payload())
@@ -438,6 +456,7 @@ class GraphStore:
         self._dirty_cache.clear()
         self._deleted_nodes.clear()
         self._deleted_edge_rows.clear()
+        self._deleted_vectors.clear()
 
     flush = save   # the ingest loop's periodic checkpoint is the same operation
 

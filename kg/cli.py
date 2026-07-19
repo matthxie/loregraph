@@ -272,6 +272,18 @@ def cmd_demo(args):
     ask("Where does Becky live and who does she work with?", as_of="2022")
 
 
+def cmd_backfill_fact_vectors(args):
+    import time
+    g = _open(args)
+    t0 = time.time()
+    rep = g.backfill_fact_vectors()
+    g.save()
+    print(f"backfilled fact vectors into {args.store}: +{rep['added']} embedded, "
+          f"{rep['removed']} pruned  "
+          f"({rep['statements']} statement + {rep['aggregates']} aggregate surface(s); "
+          f"{rep['total']} total)  in {time.time() - t0:.1f}s")
+
+
 def cmd_stats(args):
     g = _open(args)
     print(json.dumps(g.stats(), indent=2))
@@ -470,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use the first-person personal-web stream (self anchor) instead "
                           "of the Becky/Alex stream")
     pde.set_defaults(func=cmd_demo)
+
+    pbf = sub.add_parser("backfill-fact-vectors",
+                         help="compute missing statement/aggregate fact vectors (kind='fact') "
+                              "for an existing store — local embed ($0), idempotent, "
+                              "incremental; does not invalidate the ingest cache")
+    pbf.set_defaults(func=cmd_backfill_fact_vectors)
 
     ps = sub.add_parser("stats", help="node/edge counts")
     ps.set_defaults(func=cmd_stats)

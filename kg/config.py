@@ -65,6 +65,15 @@ class Config:
     #                                   read-only stores). EVIDENCE, not an oracle — capped ~10
     #                                   lines, caveat header. QUERY-SIDE; off = context
     #                                   byte-identical (docs/OFFLINE_EVAL.md Round 6b).
+    fact_vectors: bool = False        # embed a statement-granularity surface per believed
+    #                                   RELATED_TO edge ("<src> <rel> <dst>") + a distilled
+    #                                   frequency surface per recurring (src,rel,dst) group,
+    #                                   stored under vector kind="fact" — makes each fact a
+    #                                   first-class retrieval target (docs/OFFLINE_EVAL.md
+    #                                   Round 7a, sharp edge #6). Local embed ($0). AFFECTS
+    #                                   WHAT INGEST WRITES → it IS an ingest-cache field
+    #                                   (hashed only when ON; existing off caches stay valid,
+    #                                   backfilled via `kg backfill-fact-vectors`).
     history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
     #                                   not just STATE (offline eval variant A, amended:
     #                                   outside STATE only CLOSED lines render — open lines
