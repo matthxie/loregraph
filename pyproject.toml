@@ -21,6 +21,7 @@ dependencies = [
     "torch>=2.6",              # sentence-transformers backend
     "openai>=1.0",             # default LLM provider (KG_LLM=openai); mock/none/codex need no SDK
     "python-dotenv>=1.0",      # optional .env loading (import-guarded, but cheap and expected)
+    "trafilatura>=1.8",        # main-text extraction from fetched URLs (strips page boilerplate)
     # The default `cue_gated` extractor's local floor is gliner_yake_cooccur
     # (kg/nlp_extractors.py): with any real provider (KG_LLM=codex/openai) the daemon
     # imports these at drain time — they ARE the serving path, not eval tooling.

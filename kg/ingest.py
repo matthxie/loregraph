@@ -124,6 +124,9 @@ def derive_title(item: CorpusItem, ext: Extraction) -> str | None:
     description. Plain text notes carry no title — clients fall back to the snippet."""
     if item.title:
         return item.title
+    if item.modality == "link":                 # a fetched URL: the real page title wins,
+        return (_concise_title(ext.page_title, limit=200)  # else a title from the subject line
+                or _concise_title(ext.description))
     if item.text is None:                       # described media (image/audio/pdf/…)
         return _concise_title(ext.description)
     text = item.text.strip()
@@ -360,6 +363,8 @@ class Ingestor:
         and skip it, losing the note's extraction forever."""
         def work(item: CorpusItem) -> tuple[Extraction | None, str | None]:
             try:
+                if item.modality == "link":  # a saved URL: fetch + subject-scoped extraction
+                    return self.extractor.extract_url(item.source_ref or item.text or ""), None
                 if item.text is None:  # described media (image/audio/pdf/…): perceive it
                     return self.extractor.extract_image(item.image_path, item.label_hint), None
                 return self._extract_text(item.text, item.title), None
@@ -419,6 +424,20 @@ class Ingestor:
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)
         self.store.add_hash(h, ep_id)
+
+        # LINK provenance: preserve the full fetched body as an un-rankable SOURCE node so the
+        # raw page stays auditable + re-extractable without polluting retrieval (SOURCE nodes
+        # are never embedded/ranked/BM25-indexed). The lean description is the retrieval surface.
+        if ext.source_text:
+            src_id = f"src_{ep_id}"
+            if not self.store.has_node(src_id):
+                self.store.add_node(source_node(
+                    src_id, source_ref=item.source_ref or "", raw_text=ext.source_text,
+                    content_hash=_sha256("source", ext.source_text), ts=ts,
+                    title=node.title or "", ingested_at=now_iso()))
+            self.store.add_edge(Edge(src=ep_id, dst=src_id, etype=EdgeType.PART_OF,
+                                    provenance=Provenance.DERIVED, confidence=1.0,
+                                    weight=float(getattr(self.config, "part_of_weight", 0.3))))
 
         def _note(msg: str) -> None:
             if report is not None:

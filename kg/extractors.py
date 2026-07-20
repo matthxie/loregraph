@@ -21,8 +21,14 @@ representative of the live graph. Extraction is now live-only.
 from __future__ import annotations
 
 import base64
+import html
+import os
 import re
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Protocol
 
 from .backoff import call_with_backoff
@@ -113,7 +119,13 @@ class Extraction:
     tags: list[str] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
     facts: list[ExtractedFact] = field(default_factory=list)
-    description: str | None = None  # images: the one-line VLM description
+    description: str | None = None  # described media: the one-line VLM / page description
+    # LINK ingest only: the full fetched page body, preserved verbatim so ingest can write an
+    # un-rankable SOURCE provenance node (auditable + re-extractable) without embedding it.
+    source_text: str | None = None
+    # LINK ingest only: the fetched page <title>, so derive_title can prefer it (the real page
+    # title) over a title derived from the subject description — carried here to avoid a 2nd fetch.
+    page_title: str | None = None
 
     def merge(self, other: "Extraction") -> "Extraction":
         names = {e.name.lower() for e in self.entities}
@@ -164,6 +176,7 @@ class Extractor(Protocol):
 
     def extract_text(self, text: str, title: str = "") -> Extraction: ...
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction: ...
+    def extract_url(self, url: str) -> Extraction: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -431,6 +444,182 @@ def _parse_tool_payload(payload: dict) -> Extraction:
 
 
 # --------------------------------------------------------------------------- #
+# URL ingest: fetch page signals + subject-scoped extraction prompt
+# --------------------------------------------------------------------------- #
+# kg.ingest owns an identical _HTML_TITLE, but importing it here would be circular
+# (ingest imports extractors), so the same tiny pattern is redefined locally.
+_HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_META_RE = re.compile(
+    r"<meta\s+[^>]*?(?:property|name)\s*=\s*[\"']([^\"']+)[\"'][^>]*?"
+    r"content\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE | re.DOTALL)
+_META_RE_REV = re.compile(  # content=... before property/name (attribute order varies)
+    r"<meta\s+[^>]*?content\s*=\s*[\"']([^\"']*)[\"'][^>]*?"
+    r"(?:property|name)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE | re.DOTALL)
+_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+class _BodyTextParser(HTMLParser):
+    """Stdlib fallback reader: collect visible text, skipping script/style/nav chrome.
+    Used only when trafilatura is unavailable (fail-soft, PROTOCOL boilerplate-strip)."""
+    _SKIP = {"script", "style", "noscript", "template", "svg", "head"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data):
+        if self._skip_depth == 0 and data.strip():
+            self._parts.append(data.strip())
+
+    def text(self) -> str:
+        return " ".join(self._parts)
+
+
+def _strip_tags(raw: str | None) -> str:
+    return html.unescape(_TAG_RE.sub(" ", raw or "")).strip() if raw else ""
+
+
+def _main_text(html_doc: str) -> str:
+    """Main body text with boilerplate stripped. trafilatura when available; else a stdlib
+    html.parser reader; else the tag-stripped raw body — never raises."""
+    try:
+        import trafilatura
+        got = trafilatura.extract(html_doc, include_comments=False, include_tables=False)
+        if got and got.strip():
+            return got.strip()
+    except Exception:  # noqa: BLE001 — missing dep or a parse quirk must fail soft
+        pass
+    try:
+        p = _BodyTextParser()
+        p.feed(html_doc)
+        got = p.text()
+        if got.strip():
+            return got.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return _strip_tags(html_doc)
+
+
+def fetch_page(url: str, timeout: float = 4.0, max_bytes: int = 2_000_000) -> dict:
+    """Fetch a URL and return its structural signals + main body text:
+    {url, domain, title, og_title, meta_description, h1, body}. Fail-soft — any network
+    or parse problem yields just {url, domain}. Chunked reads under a wall-clock deadline
+    (mirrors kg/ingest.py:_resolve_link_title) so a tarpit can't hang ingest.
+    KG_LINK_FETCH=0 disables the network fetch entirely (hermetic/offline runs)."""
+    domain = urllib.parse.urlparse(url).netloc
+    signals = {"url": url, "domain": domain, "title": "", "og_title": "",
+               "meta_description": "", "h1": "", "body": ""}
+    if os.environ.get("KG_LINK_FETCH", "1") == "0":
+        return signals
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "you-kg/0.1"})
+        deadline = time.monotonic() + 2 * timeout
+        raw = b""
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            while len(raw) < max_bytes and time.monotonic() < deadline:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                raw += chunk
+        doc = raw.decode("utf-8", "ignore")
+    except Exception:  # noqa: BLE001 — a dead link must never fail ingest
+        return signals
+    metas: dict[str, str] = {}
+    for pat, order in ((_META_RE, "kv"), (_META_RE_REV, "vk")):
+        for a, b in pat.findall(doc):
+            key, val = (a, b) if order == "kv" else (b, a)
+            metas.setdefault(key.strip().lower(), _strip_tags(val))
+    tm = _HTML_TITLE.search(doc)
+    h1m = _H1_RE.search(doc)
+    signals["title"] = _strip_tags(tm.group(1)) if tm else ""
+    signals["og_title"] = metas.get("og:title", "")
+    signals["meta_description"] = metas.get("description") or metas.get("og:description", "")
+    signals["h1"] = _strip_tags(h1m.group(1)) if h1m else ""
+    signals["body"] = _main_text(doc)
+    return signals
+
+
+_URL_INSTRUCTION = (
+    "You are extracting a knowledge-graph record for a saved web page. You are given the\n"
+    "page's URL/domain, title, og:title, meta description, headings, and main body text.\n\n"
+    "Capture WHAT THIS PAGE IS ABOUT — its primary subject — not an inventory of everything\n"
+    "named on it.\n\n"
+    "1. Identify the SINGLE primary subject: the entity, product, organization, or topic the\n"
+    "   page is fundamentally about. The domain, title, og:title, and H1 are the strongest\n"
+    "   signals; the body confirms. For a company's or product's own site, the subject is that\n"
+    "   company/product.\n\n"
+    "2. Write `description`: ONE specific, self-contained sentence stating what the primary\n"
+    "   subject is. This is the page's only retrieval surface — a reader who never sees the\n"
+    "   page must understand what it is from this line alone.\n\n"
+    "3. ENTITIES. Emit the primary subject as an entity, then the subject's salient DOMAIN\n"
+    "   CONCEPTS, topics, and features as `concept`-typed entities (category 'thing') — e.g.\n"
+    "   'corporate card', 'spend management', 'finance automation', 'receipt capture'. Type\n"
+    "   these exactly as the rest of the graph types ideas / fields / methods / categories, so\n"
+    "   the same concept RESOLVES to one shared node when it recurs on another page. Use short\n"
+    "   canonical names ('corporate card', not 'unlimited virtual + physical corporate cards').\n"
+    "   Be reasonably COMPLETE about the subject: what it is, its category, what it does, its\n"
+    "   features / products / offerings, and where it operates.\n\n"
+    "4. TAGS. Emit 5-12 lowercase topical themes describing what the page is about.\n\n"
+    "5. RELATIONS. Connect the primary subject to the concepts / entities above. EVERY relation\n"
+    "   endpoint MUST be a `name` you already listed under entities or tags — never coin a new\n"
+    "   phrase as a relation target (that mints junk nodes). Put stated amounts / counts /\n"
+    "   measurements in `facts`, not relations.\n\n"
+    "EXCLUDE noise that is NOT about the primary subject — do NOT extract:\n"
+    "- OTHER entities merely mentioned in passing: partners, competitors, banks/brands\n"
+    "  name-dropped, examples, comparisons.\n"
+    "- Cross-links, \"related articles\", \"you may also like\", recommended/related products.\n"
+    "- Navigation, legal/boilerplate, cookie/privacy notices, author bios, ads.\n\n"
+    "A DIFFERENT, secondary entity may be included ONLY if the page states a CONCRETE\n"
+    "relationship between it and the primary subject (e.g. \"CardCo is issued by BankX\") —\n"
+    "then emit it as a relation with the primary subject as one endpoint. If it is merely\n"
+    "named nearby, drop it.\n\n"
+    "Stay ON the primary subject, but don't be stingy about it: a record that omits what the\n"
+    "page actually says about its own subject is too lean. Only when a detail clearly belongs\n"
+    "to something OTHER than the primary subject, leave it out.\n"
+    "Emit exactly one emit_graph call."
+)
+
+
+def _assemble_url_block(signals: dict, body_cap: int) -> str:
+    """One text block: the page signals + the subject-scoped extraction instruction."""
+    body = (signals.get("body") or "")[:body_cap]
+    lines = [
+        f"URL: {signals.get('url', '')}",
+        f"Domain: {signals.get('domain', '')}",
+        f"Title: {signals.get('title', '')}",
+        f"og:title: {signals.get('og_title', '')}",
+        f"Meta description: {signals.get('meta_description', '')}",
+        f"H1: {signals.get('h1', '')}",
+        "",
+        "Main body text:",
+        body or "(no body text could be extracted)",
+        "",
+        _URL_INSTRUCTION,
+    ]
+    return "\n".join(lines)
+
+
+def _fallback_url_description(signals: dict) -> str:
+    """A description surface when no LLM authored one (offline/local floor): best available
+    page signal, else the bare domain."""
+    for key in ("meta_description", "og_title", "title", "h1"):
+        val = (signals.get(key) or "").strip()
+        if val:
+            return val
+    return f"A web page at {signals.get('domain') or signals.get('url') or 'an unknown URL'}."
+
+
+# --------------------------------------------------------------------------- #
 # OpenAI (real)
 # --------------------------------------------------------------------------- #
 class OpenAIExtractor:
@@ -588,6 +777,20 @@ class OpenAIExtractor:
             ext.description = (label_hint and f"A photo containing {label_hint}.") or "An image."
         return ext
 
+    def extract_url(self, url: str) -> Extraction:
+        """Fetch a saved URL and extract a SUBJECT-SCOPED graph record: the description
+        (the LINK episode's embedding surface) names the page's primary subject, and only
+        that subject's own tags/entities/relations are kept (strict — no passing mentions).
+        The full fetched body rides along on ext.source_text for the SOURCE provenance node."""
+        signals = fetch_page(url)
+        ext = self._call([{"type": "text",
+                           "text": _assemble_url_block(signals, self.config.extract_max_chars)}])
+        if not ext.description:
+            ext.description = _fallback_url_description(signals)
+        ext.source_text = signals.get("body") or None
+        ext.page_title = signals.get("title") or signals.get("og_title") or None
+        return ext
+
 
 # --------------------------------------------------------------------------- #
 # Shared text-extraction helper (sectioning for long docs, §9 risk 4)
@@ -634,6 +837,10 @@ class ScriptedExtractor:
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         return self._lookup(label_hint or image_path or "")
+
+    def extract_url(self, url: str) -> Extraction:
+        # Keyed by the URL itself so hermetic tests script a page's record deterministically.
+        return self._lookup(url)
 
 
 # --------------------------------------------------------------------------- #
@@ -687,6 +894,22 @@ class CueGatedExtractor:
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         return self.local.extract_image(image_path, label_hint)
+
+    def extract_url(self, url: str) -> Extraction:
+        """URL ingest on the keyless floor: escalate to the LLM's subject-scoped extractor
+        when a provider is live (URL records benefit strongly from it), else fetch the page
+        and run the local floor over its body, with a signal-derived description surface."""
+        if self.escalate:
+            try:
+                return self._llm_ext().extract_url(url)
+            except Exception:  # noqa: BLE001 — never sink ingest on one API error
+                pass
+        signals = fetch_page(url)
+        ext = self.local.extract_text(signals.get("body") or "", signals.get("title") or "")
+        ext.description = _fallback_url_description(signals)
+        ext.source_text = signals.get("body") or None
+        ext.page_title = signals.get("title") or signals.get("og_title") or None
+        return ext
 
     def escalation_summary(self) -> dict:
         rate = (self.n_escalated / self.n_seen) if self.n_seen else 0.0

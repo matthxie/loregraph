@@ -35,6 +35,7 @@ from .config import Config
 from .corpus import CorpusItem
 from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
                      ProviderUnavailable, StoreError)
+from .ingest import _BARE_URL
 from .extractors import Extraction, ExtractedEntity, UsageMeter
 from .llm_client import SUPPORTED_KINDS
 from .models import (Belief, EdgeType, EntityType, NodeType,
@@ -132,6 +133,12 @@ class _MockExtractor:
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
         return Extraction(tags=[label_hint] if label_hint else [])
+
+    def extract_url(self, url: str) -> Extraction:
+        domain = re.sub(r"^https?://", "", url).split("/")[0]
+        tags = [t for t in re.split(r"[.\-/]", domain) if len(t) >= 3][:3]
+        return Extraction(entities=[ExtractedEntity(name=domain)], tags=tags,
+                          description=f"A saved web page at {domain}.", page_title=domain)
 
 
 class _MockAnswerClient:
@@ -237,13 +244,23 @@ class Engine:
         nid = hashlib.sha256(
             f"{note.created_at}\n{note.text}\n{chr(0).join(media_paths)}"
             .encode("utf-8")).hexdigest()[:16]
-        # media-only → text=None routes through the described-media perception path. The
-        # readable attachment may be a temporary absolute path; only media_paths persist.
-        item = CorpusItem(id=nid, modality="text" if has_text else "image",
-                          source_ref=f"{note.source}/{nid}",
-                          text=note.text if has_text else None,
-                          image_path=readable_media[0] if readable_media else None,
-                          created_at=note.created_at)
+        # A note whose entire text is a bare URL (and carries no attachments) is described
+        # media of modality LINK: text=None routes through the extractor's extract_url path
+        # (fetch + subject-scoped extraction), and source_ref is the URL itself so the fetch
+        # and the SOURCE-node provenance both have it.
+        stripped = note.text.strip()
+        is_link = has_text and not readable_media and bool(_BARE_URL.match(stripped))
+        if is_link:
+            item = CorpusItem(id=nid, modality="link", source_ref=stripped,
+                              text=None, created_at=note.created_at)
+        else:
+            # media-only → text=None routes through the described-media perception path. The
+            # readable attachment may be a temporary absolute path; only media_paths persist.
+            item = CorpusItem(id=nid, modality="text" if has_text else "image",
+                              source_ref=f"{note.source}/{nid}",
+                              text=note.text if has_text else None,
+                              image_path=readable_media[0] if readable_media else None,
+                              created_at=note.created_at)
         item.media_paths = media_paths
         try:
             report = self._g.ingest([item])
