@@ -74,6 +74,21 @@ class Config:
     #                                   WHAT INGEST WRITES → it IS an ingest-cache field
     #                                   (hashed only when ON; existing off caches stay valid,
     #                                   backfilled via `kg backfill-fact-vectors`).
+    fact_lane: bool = False           # statement-granularity retrieval lane: score the query
+    #                                   against the kind="fact" vectors (config.fact_vectors /
+    #                                   `kg backfill-fact-vectors`), map the top fact_lane_k
+    #                                   hits back to their PROVENANCE episodes + endpoint
+    #                                   entities, and MERGE those as seed candidates ADDITIVELY
+    #                                   — never displacing or down-weighting an episode-lane
+    #                                   seed, total fact-lane mass capped at fact_lane_weight ×
+    #                                   the episode-lane mass. Gets a fact's asserting chunk into
+    #                                   the PPR pool because its CLAIM matched, and marks the
+    #                                   matched lines in the FACTS section (docs/OFFLINE_EVAL.md
+    #                                   Round 7b). QUERY-SIDE; off = seeds/pool/context
+    #                                   byte-identical. NOT an ingest-cache field (reads the
+    #                                   vectors fact_vectors wrote; no vectors → lane no-ops).
+    fact_lane_k: int = 10             # top-N fact/aggregate vector hits the lane seeds from
+    fact_lane_weight: float = 0.5     # cap: Σ fact-lane seed mass ≤ this × Σ episode-lane mass
     history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
     #                                   not just STATE (offline eval variant A, amended:
     #                                   outside STATE only CLOSED lines render — open lines

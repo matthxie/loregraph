@@ -862,21 +862,31 @@ class ContextBuilder:
         return out
 
     def _promote_provenance(self, ctx_ids: list[str], selected: list[str],
-                            facts: list[FactLine], query: str) -> list[str]:
+                            facts: list[FactLine], query: str,
+                            force_ids: list[str] | None = None) -> list[str]:
         """rag_provenance_promote: pull a fact's source chunk (FactLine.episode_id) into
         context when the fact's src/dst entity names overlap the question terms, so the
         chunk a decisive fact was extracted from isn't left out just because it wasn't a
         sibling of a selected chunk. Only ever displaces the lowest-ranked expansion
-        sibling (never an originally selected chunk); if none is displaceable, skipped."""
+        sibling (never an originally selected chunk); if none is displaceable, skipped.
+
+        `force_ids` (config.fact_lane): provenance CHUNKS of fact-lane matches. The lane
+        already judged these facts query-relevant by embedding cosine, so their source chunk
+        is promoted UNCONDITIONALLY — the term-overlap gate would miss a fact whose match
+        lives in the PREDICATE ("blood type") rather than an endpoint name."""
         if not getattr(self.config, "rag_provenance_promote", False):
             return ctx_ids
         toks = _WORD.findall((query or "").lower())
         terms = {t for t in toks if t not in _RETARGET_STOP and len(t) > 2}
-        if not terms:
+        if not terms and not force_ids:
             return ctx_ids
 
         wanted: list[str] = []
         seen_w: set[str] = set()
+        for eid in (force_ids or []):                 # fact-lane needles first
+            if eid and eid not in seen_w:
+                seen_w.add(eid)
+                wanted.append(eid)
         for f in facts:
             if not f.episode_id or f.episode_id in seen_w:
                 continue
@@ -972,8 +982,11 @@ class ContextBuilder:
         ep_ids = self._retarget_chunks(ep_ids, result)
         ents = self.relevant_entities(result, ep_ids)
         facts = self.facts_for(ents, result.as_of)
+        fact_matched = getattr(result, "fact_matched", None) or {}
+        matched_surfaces = set(fact_matched.get("surfaces", []))
         ctx_ids = self._expand_siblings(ep_ids)
-        ctx_ids = self._promote_provenance(ctx_ids, ep_ids, facts, result.query)
+        ctx_ids = self._promote_provenance(ctx_ids, ep_ids, facts, result.query,
+                                           force_ids=fact_matched.get("episodes"))
         # §7.3 hard bound: sibling expansion and provenance promotion re-inject
         # episodes AFTER the retriever's since/until filter — a windowed request must
         # never see (or have its answer read) an out-of-window episode. Facts are
@@ -1006,7 +1019,13 @@ class ContextBuilder:
             lines.append("(none retrieved)")
         lines.append("")
         lines.append("FACTS currently valid among the relevant entities:")
-        lines += [f"- {f.render()}" for f in facts] or ["(none)"]
+        # config.fact_lane: mark the statement-granularity lane's hits so the reader can weight
+        # a line the retriever matched THIS question against directly (matched_surfaces is empty
+        # when the lane is off → rendering byte-identical).
+        def _fact_line(f: FactLine) -> str:
+            mark = " [matched]" if f"{f.src} {f.rel} {f.dst}" in matched_surfaces else ""
+            return f"- {f.render()}{mark}"
+        lines += [_fact_line(f) for f in facts] or ["(none)"]
 
         # STATE/evolution lane: append the FULL closed+open fact history so "how has X
         # changed" can read the trajectory (the currently-valid FACTS above show only the

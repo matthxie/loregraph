@@ -107,6 +107,12 @@ class RetrievalResult:
     seed_scores: dict = field(default_factory=dict)
     subgraph: set[str] = field(default_factory=set)   # every node touched (recall@k)
     as_of: str | None = None
+    # Fact lane (config.fact_lane): what the statement-granularity lane matched, for the
+    # context builder to mark [matched] and provenance-promote. Empty unless the lane fires
+    # (knob off ⇒ empty ⇒ seeds/pool/context byte-identical). Shape:
+    #   {"surfaces": [stmt surface, …], "episodes": [provenance chunk id, …],
+    #    "hits": [(vector_id, cosine), …]}
+    fact_matched: dict = field(default_factory=dict)
 
     @property
     def object_ids(self) -> list[str]:
@@ -251,6 +257,45 @@ class Seeder:
         # nodes still surface here — drop them so no seed mass reaches forgotten content.
         return {nid: s for nid, s in scores.items()
                 if (n := self.store.get_node(nid)) is None or n.valid}
+
+    def fact_seed(self, query: str) -> tuple[dict[str, float], list[str], list[tuple[str, float]]]:
+        """Fact lane (config.fact_lane): score the query against the kind="fact" vectors
+        (statement + distilled-aggregate surfaces written by config.fact_vectors) and map the
+        top `fact_lane_k` hits back through `fact_provenance` to their provenance CHUNKS +
+        endpoint ENTITIES, each carrying the fact's cosine (max over the facts that name it).
+
+        Returns (raw_scores{node_id: cosine}, matched_stmt_surfaces, hits[(vec_id, cosine)]).
+        This is the RAW, uncapped, un-merged contribution — the caller merges it ADDITIVELY
+        (new nodes only) under the fact_lane_weight mass cap, so this method never touches the
+        episode lane. Empty when no fact vectors are present (the lane no-ops on an
+        un-backfilled store)."""
+        from .fact_vectors import FACT_KIND, fact_provenance
+        k = int(getattr(self.config, "fact_lane_k", 10))
+        qv = self.embedder.embed([query])[0]
+        try:
+            hits = self.store.vectors.search(FACT_KIND, qv, k=k, floor=0.0)
+        except ValueError:
+            hits = []                                  # dim mismatch: no usable fact index
+        if not hits:
+            return {}, [], []
+        prov = fact_provenance(self.store, {hid for hid, _ in hits})
+        raw: dict[str, float] = {}
+        surfaces: list[str] = []
+        seen_surf: set[str] = set()
+        for hid, cos in hits:                          # hits are cosine-desc, id tie-broken
+            rec = prov.get(hid)
+            if not rec:
+                continue
+            surf = rec.get("stmt_surface") or rec["surface"]
+            if surf not in seen_surf:
+                seen_surf.add(surf)
+                surfaces.append(surf)
+            for nid in rec["episodes"] | rec["entities"]:
+                n = self.store.get_node(nid)
+                if n is not None and not n.valid:      # forgotten/tombstoned — no mass
+                    continue
+                raw[nid] = max(raw.get(nid, 0.0), float(cos))
+        return raw, surfaces, [(hid, float(cos)) for hid, cos in hits]
 
 
 # --------------------------------------------------------------------------- #
@@ -538,8 +583,13 @@ class PPRRetriever:
             return RetrievalResult(query=query, mode=self.mode, as_of=as_of)
         with prof_span("query.seed"):
             seeds = self.seeder.seed(query)
+        fact_matched: dict = {}
+        if getattr(self.config, "fact_lane", False):
+            with prof_span("query.fact_lane"):
+                seeds, fact_matched = self._merge_fact_lane(query, seeds)
         res = RetrievalResult(query=query, mode=self.mode, seeds=list(seeds),
-                              seed_scores=dict(seeds), as_of=as_of)
+                              seed_scores=dict(seeds), as_of=as_of,
+                              fact_matched=fact_matched)
         if not seeds:
             return res
         with prof_span("query.project_graph"):
@@ -574,6 +624,39 @@ class PPRRetriever:
         res.objects = ranked
         res.subgraph = set(seeds) | {oid for oid, _ in ranked}
         return res
+
+    def _merge_fact_lane(self, query: str, seeds: dict[str, float]
+                         ) -> tuple[dict[str, float], dict]:
+        """ADDITIVE fact-lane merge (config.fact_lane). Seeds the top-fact hits' provenance
+        chunks + endpoint entities INTO the seed set, but only nodes the episode lane did not
+        already seed — so every episode-lane seed keeps its exact score (additive-only; tested
+        in tests/test_fact_lane.py). Total added mass is capped at `fact_lane_weight` × the
+        episode-lane mass so noisy ~gpt-4o-mini facts cannot out-vote the episode lane in the
+        PPR personalization. Design (docs/OFFLINE_EVAL.md Round 7b): the SEED-MASS route (vs an
+        explicit pool injection) — the provenance chunk earns its pool slot through the normal
+        PPR→MMR→CE pipeline (a seeded episode gets ≥(1-α)·mass restart, so it enters the pool)
+        rather than being force-injected past the ranker (Round 4's forced-injection
+        regressions), and populating seed_scores lets chunk-retargeting use it too."""
+        raw, surfaces, hits = self.seeder.fact_seed(query)
+        if not raw:
+            return seeds, {}
+        add = {nid: sc for nid, sc in raw.items() if nid not in seeds}   # NEW nodes only
+        prov_eps = sorted(nid for nid in raw
+                          if (n := self.store.get_node(nid)) is not None
+                          and n.ntype == NodeType.EPISODE and n.valid)
+        matched = {"surfaces": surfaces, "episodes": prov_eps,
+                   "hits": [(hid, round(c, 4)) for hid, c in hits]}
+        if not add:
+            return seeds, matched                       # everything already episode-seeded
+        ep_mass = sum(seeds.values())
+        raw_mass = sum(add.values())
+        cap = float(getattr(self.config, "fact_lane_weight", 0.5)) * ep_mass
+        if raw_mass > cap > 0:
+            scale = cap / raw_mass
+            add = {nid: sc * scale for nid, sc in add.items()}
+        merged = dict(seeds)                             # episode-lane scores untouched
+        merged.update(add)                              # add[*] keys are disjoint from seeds
+        return merged, matched
 
     def _rerank(self, query, cand, seeds, G, k, mmr_lambda: float | None = None):
         """MMR diversity + node-distance to seeds on top of PPR scores (graphiti).
@@ -908,7 +991,8 @@ class HybridRetriever:
 
         res = RetrievalResult(query=query, mode=self.mode, as_of=as_of,
                               seeds=list(base.seeds), seed_scores=dict(base.seed_scores),
-                              subgraph=set(base.subgraph) | set(ranked))
+                              subgraph=set(base.subgraph) | set(ranked),
+                              fact_matched=getattr(base, "fact_matched", {}) or {})
         res.objects = [(ep, float(len(ranked) - i)) for i, ep in enumerate(ranked)]
         res.lane = lane            # type: ignore[attr-defined]
         res.entity_ids = ent_ids   # type: ignore[attr-defined]

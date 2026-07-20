@@ -115,6 +115,76 @@ def current_surfaces(store: GraphStore) -> tuple[dict[str, str], dict[str, str]]
     return stmt, agg
 
 
+def _edge_episodes(data: dict) -> set[str]:
+    """Provenance episodes for one fact edge: the asserting episode plus every episode that
+    confirmed it (same-key re-mentions collapse onto `confirmed_by`). These are the CHUNK ids
+    the statement was extracted from — the needle chunks the fact lane pulls into the pool."""
+    eps: set[str] = set()
+    ep = data.get("episode_id")
+    if ep:
+        eps.add(ep)
+    eps.update(data.get("confirmed_by") or [])
+    return eps
+
+
+def fact_provenance(store: GraphStore, hit_ids) -> dict[str, dict]:
+    """Map fact/aggregate vector ids (hits from a kind="fact" search) back to the graph.
+
+    Returns {hit_id: {"surface", "stmt_surface", "episodes": set, "entities": set}}. The
+    surface→id map is deterministic and re-derivable (kg/fact_vectors keying choice), so no
+    side-table is stored: one walk of the believed edges recomputes each surface's id and, for
+    any id in `hit_ids`, unions the provenance of the fact(s) behind it. Because parallel dated
+    occurrences dedupe to one statement surface, a single statement hit yields ALL its
+    occurrences' provenance; an aggregate hit yields its whole (src,rel,dst) group's. Mirrors
+    `current_surfaces` exactly so a hit always resolves. `stmt_surface` is the plain
+    "<src> <rel> <dst>" line (== the statement surface / an aggregate's group statement),
+    the key the FACTS section marks [matched] against."""
+    hit_ids = set(hit_ids)
+    if not hit_ids:
+        return {}
+    out: dict[str, dict] = {}
+    groups: dict[tuple, dict] = {}
+    for u, v, d in _believed_related(store):
+        surface = statement_surface(store, u, v, d)
+        sid = _surface_id(_STMT_PREFIX, surface)
+        eps = _edge_episodes(d)
+        if sid in hit_ids:
+            rec = out.setdefault(sid, {"surface": surface, "stmt_surface": surface,
+                                       "episodes": set(), "entities": set()})
+            rec["episodes"].update(eps)
+            rec["entities"].update((u, v))
+        key = (u, d.get("rel_tag"), v)
+        g = groups.setdefault(key, {"n": 0, "dates": [], "episodes": set(),
+                                    "stmt_surface": surface})
+        g["n"] += 1 + len(d.get("confirmed_by") or [])
+        g["episodes"].update(eps)
+        val = d.get("valid_at", "")
+        if val:
+            g["dates"].append(val[:10])
+
+    for (u, rel, v), g in groups.items():
+        if g["n"] <= 1:
+            continue
+        sn, dn = store.get_node(u), store.get_node(v)
+        rn = store.get_node(rel) if rel else None
+        src = sn.name if sn else u
+        dst = dn.name if dn else v
+        rname = rn.name if rn else "related_to"
+        n = g["n"]
+        if g["dates"]:
+            lo, hi = min(g["dates"]), max(g["dates"])
+            surface = f"{src} {rname} {dst} {n} times from {lo} to {hi}"
+        else:
+            surface = f"{src} {rname} {dst} {n} times"
+        aid = _surface_id(_AGG_PREFIX, surface)
+        if aid in hit_ids:
+            rec = out.setdefault(aid, {"surface": surface, "stmt_surface": g["stmt_surface"],
+                                       "episodes": set(), "entities": set()})
+            rec["episodes"].update(g["episodes"])
+            rec["entities"].update((u, v))
+    return out
+
+
 def sync_fact_vectors(store: GraphStore, embedder: Embedder, *, prune: bool = True) -> dict:
     """Reconcile the kind="fact" vector index to the store's current surfaces.
 
