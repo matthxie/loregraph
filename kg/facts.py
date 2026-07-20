@@ -52,6 +52,10 @@ class FactLine:
     mentions: int = 1
     last_mentioned: str = ""
     event: bool = False        # dated occurrence: render "on d" / "d1 -> d2", never state grammar
+    asserted_by: list = field(default_factory=list)  # DERIVED speaker kinds behind this fact
+    #                          (kg/speakers.asserted_by over episode_id ∪ confirmed_by, resolved
+    #                          through the registry) — never stored on the edge. Empty on a store
+    #                          with no speaker stamps or a hand-built line.
 
     @classmethod
     def from_edge(cls, store: GraphStore, src_id: str, dst_id: str,
@@ -67,6 +71,7 @@ class FactLine:
             ep_node = store.get_node(ep)
             if ep_node is not None and ep_node.created_at > last_mentioned:
                 last_mentioned = ep_node.created_at
+        from .speakers import asserted_by
         return cls(src=sn.name if sn else src_id,
                    rel=rel_node.name if rel_node else "related_to",
                    dst=tn.name if tn else dst_id,
@@ -80,7 +85,8 @@ class FactLine:
                    disputed_by=list(data.get("disputed_by") or []),
                    mentions=1 + len(confirmed),
                    last_mentioned=last_mentioned,
-                   event=bool(data.get("event", False)))
+                   event=bool(data.get("event", False)),
+                   asserted_by=asserted_by(store, data))
 
     def to_row(self) -> dict:
         """The wire Fact object (PROTOCOL §3): structured fields plus this line's
@@ -99,6 +105,11 @@ class FactLine:
                 "disputed_by": self.disputed_by or [],
                 "mentions": self.mentions,
                 "last_mentioned": self.last_mentioned or None,
+                # DERIVED speaker attribution (kg/speakers.py): the distinct kinds
+                # ('human'/'assistant'/'mixed') behind this fact's provenance, so an agent
+                # caller can filter user-stated from assistant-suggested material. [] = unknown
+                # (un-backfilled store) — treat as user-grounded (don't discount).
+                "asserted_by": list(self.asserted_by or []),
                 "rendered": self.render()}
 
     def render(self) -> str:

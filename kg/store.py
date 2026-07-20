@@ -67,6 +67,8 @@ class GraphStore:
         self.nodes: dict[str, Node] = {}
         self.vectors = VectorIndex(self.config.embed_dim)
         self.hash_cache: dict[str, str] = {}  # content_hash -> episode node id
+        self.speakers: dict[str, object] = {}  # speaker_id -> SpeakerRow (kg/speakers.py):
+        #                                        the speaker-provenance registry (reference data)
         self._ep_count: int | None = None     # cached len(EPISODE nodes), see episode_count()
         self._edge_seq: int = 0               # monotonic counter → Edge.seq (reopen discriminator)
         # Mutation bookkeeping: save() persists only what changed (write-through), and
@@ -82,6 +84,7 @@ class GraphStore:
         self._dirty_vectors: set[tuple[str, str]] = set()      # (kind, node_id)
         self._deleted_vectors: set[tuple[str, str]] = set()    # (node_id, kind) rows to DELETE
         self._dirty_cache: set[str] = set()                    # content hashes
+        self._dirty_speakers: set[str] = set()                 # speaker_ids to upsert
         self._deleted_nodes: set[str] = set()
         self._deleted_edge_rows: set[tuple] = set()   # full SQL PKs to DELETE (see touch_edge)
         self.vectors.on_add = self._mark_vector
@@ -106,6 +109,24 @@ class GraphStore:
     def add_hash(self, content_hash: str, node_id: str) -> None:
         self.hash_cache[content_hash] = node_id
         self._dirty_cache.add(content_hash)
+
+    # ---------------------------------------------------- speaker registry
+    def upsert_speaker(self, row) -> None:
+        """Insert/update one speaker-provenance registry row (kg/speakers.SpeakerRow).
+        Idempotent: an identical row already present is a no-op (not re-marked dirty), so a
+        re-ingest / re-backfill that re-asserts the canonical user/assistant rows costs
+        nothing. Reference data only — never carries a chunk list (that is a QUERY)."""
+        cur = self.speakers.get(row.speaker_id)
+        if cur is not None and cur.kind == row.kind \
+                and cur.canonical_name == row.canonical_name \
+                and list(cur.aliases) == list(row.aliases):
+            return
+        self.speakers[row.speaker_id] = row
+        self._dirty_speakers.add(row.speaker_id)
+        self._touch()
+
+    def get_speaker(self, speaker_id: str):
+        return self.speakers.get(speaker_id)
 
     def _touch(self) -> None:
         if not self._loading:
@@ -352,6 +373,8 @@ class GraphStore:
                 node_id TEXT, kind TEXT, vec BLOB, PRIMARY KEY (node_id, kind));
             CREATE TABLE IF NOT EXISTS cache(
                 content_hash TEXT PRIMARY KEY, node_id TEXT, ingested_at TEXT);
+            CREATE TABLE IF NOT EXISTS speakers(
+                speaker_id TEXT PRIMARY KEY, kind TEXT, canonical_name TEXT, aliases TEXT);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
@@ -383,7 +406,7 @@ class GraphStore:
             raise ValueError("GraphStore has no path; open(path) first")
         dirty = bool(self._dirty_nodes or self._dirty_edges or self._dirty_vectors
                      or self._dirty_cache or self._deleted_nodes or self._deleted_edge_rows
-                     or self._deleted_vectors)
+                     or self._deleted_vectors or self._dirty_speakers)
         project = bool(getattr(self.config, "facts_projection", False))
         # nothing changed AND no projection to (re)build → truly a no-op (byte-identical
         # store file). The projection is rebuilt on EVERY flush when the knob is on, even
@@ -446,6 +469,11 @@ class GraphStore:
             [(h, self.hash_cache[h], "")
              for h in sorted(self._dirty_cache) if h in self.hash_cache],
         )
+        cur.executemany(
+            "INSERT OR REPLACE INTO speakers VALUES (?,?,?,?)",
+            [(s.speaker_id, s.kind, s.canonical_name, json.dumps(list(s.aliases or [])))
+             for sid in sorted(self._dirty_speakers) if (s := self.speakers.get(sid))],
+        )
         if project:
             self._rebuild_facts_projection(cur)
         con.commit()
@@ -454,6 +482,7 @@ class GraphStore:
         self._dirty_edges.clear()
         self._dirty_vectors.clear()
         self._dirty_cache.clear()
+        self._dirty_speakers.clear()
         self._deleted_nodes.clear()
         self._deleted_edge_rows.clear()
         self._deleted_vectors.clear()
@@ -567,6 +596,17 @@ class GraphStore:
                 self.vectors.add(kind, node_id, vec)
         for content_hash, node_id, _ in cur.execute("SELECT * FROM cache"):
             self.hash_cache[content_hash] = node_id
+        # speaker registry — tolerate a pre-feature db that has no `speakers` table (it's
+        # created on the next save()/_init_db; an old store simply loads with none until then).
+        from .speakers import SpeakerRow
+        try:
+            for sid, kind, cname, aliases in cur.execute(
+                    "SELECT speaker_id, kind, canonical_name, aliases FROM speakers"):
+                self.speakers[sid] = SpeakerRow(
+                    speaker_id=sid, kind=kind, canonical_name=cname,
+                    aliases=json.loads(aliases) if aliases else [])
+        except sqlite3.OperationalError:
+            pass  # no speakers table yet (store predates the feature)
         con.close()
 
     # ------------------------------------------------------------------ stats

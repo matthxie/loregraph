@@ -72,6 +72,16 @@ class KnowledgeGraph:
         from .fact_vectors import backfill_fact_vectors
         return backfill_fact_vectors(self.store, self.embedder)
 
+    def backfill_speakers(self) -> dict:
+        """Stamp speaker_id on every EPISODE from its raw_text and build the speaker
+        registry (kg/speakers.py) — deterministic, $0 (regex, no LLM), additive &
+        idempotent, incremental (only re-touches a node whose stamp changed). Touches only
+        node payloads + the speakers table, never config, so it does NOT invalidate the
+        ingest cache key: the cached benchmark stores gain speaker provenance in place with
+        no paid re-ingest. Mutations persist on the next save(). Returns the stamp counts."""
+        from .speakers import backfill_speakers
+        return backfill_speakers(self.store)
+
     # ------------------------------------------------------------ communities
     def build_communities(self) -> int:
         return build_communities(self.store, self.embedder, self.config)

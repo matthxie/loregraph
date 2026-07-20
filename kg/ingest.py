@@ -36,6 +36,7 @@ from .models import (Edge, EdgeType, EntityCategory, EntityType, Modality, NodeT
                      Provenance, entity_category_for_type, episode_node, mention_node,
                      quantity_node, source_node)
 from .profiler import span as prof_span
+from .speakers import stamp_episode
 from .store import GraphStore, now_iso
 from .temporal import apply_fact
 
@@ -452,6 +453,11 @@ class Ingestor:
                             media_paths=media,
                             title=derive_title(item, ext))
         node.name = item.title or item.id
+        # speaker provenance (kg/speakers.py): derive speaker_id from the chunk's inline
+        # "User:"/"Assistant:" turn markers and upsert the registry. Deterministic, $0,
+        # additive — always on at ingest (all CONSUMER behavior is gated behind
+        # config.speaker_attribution, so a knob-off run is byte-identical downstream).
+        stamp_episode(self.store, node)
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)
         self.store.add_hash(h, ep_id)

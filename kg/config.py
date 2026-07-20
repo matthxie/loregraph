@@ -89,6 +89,18 @@ class Config:
     #                                   vectors fact_vectors wrote; no vectors → lane no-ops).
     fact_lane_k: int = 10             # top-N fact/aggregate vector hits the lane seeds from
     fact_lane_weight: float = 0.5     # cap: Σ fact-lane seed mass ≤ this × Σ episode-lane mass
+    speaker_attribution: bool = False  # derive WHO said a fact's evidence (kg/speakers.py)
+    #                                   from the speaker_id stamped on its provenance episodes
+    #                                   (inline User:/Assistant: turn markers, $0 backfill via
+    #                                   `kg backfill-speakers`) and let the reader weigh it: when
+    #                                   ON, FACTS lines resting EXCLUSIVELY on assistant turns get
+    #                                   a "[assistant]" marker (any-user reduction: any human/
+    #                                   mixed provenance turn = user-grounded, no mark), and the
+    #                                   reader prompt gains a rule to not compute what-is-true-of-
+    #                                   you answers from [assistant] figures alone. A SOFT signal
+    #                                   the reader weighs, never a retrieval filter. QUERY-SIDE;
+    #                                   off = context AND prompt byte-identical. NOT an ingest-
+    #                                   cache field (docs/OFFLINE_EVAL.md Round 8).
     history_all_lanes: bool = False   # serve the closed-fact HISTORY delta on EVERY lane,
     #                                   not just STATE (offline eval variant A, amended:
     #                                   outside STATE only CLOSED lines render — open lines

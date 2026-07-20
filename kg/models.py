@@ -157,6 +157,11 @@ class Node:
     media_paths: list[str] = field(default_factory=list)  # ALL artifacts on this episode (a
     #                                       capture can attach several; they ride on one episode)
     tags: list[str] = field(default_factory=list)  # denormalised filter copy
+    speaker_id: str | None = None         # who authored this chunk (kg/speakers.py): a stable
+    #                                       registry id derived from inline "User:"/"Assistant:"
+    #                                       turn markers at ingest/backfill. None = no marker
+    #                                       (plain note / described media). Attribution is
+    #                                       DERIVED from this at read time, never stored on facts.
 
     # ---- Mention ----
     episode_id: str | None = None         # back-pointer to the asserting episode

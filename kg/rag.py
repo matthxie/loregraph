@@ -38,6 +38,7 @@ from .models import EdgeType, NodeType
 from .profiler import span as prof_span
 from .retrieval import HybridRetriever, RetrievalResult
 from .route import _DATE_ARITH, MULTIHOP, STATE
+from .speakers import assistant_marker
 from .store import GraphStore, fact_active
 
 _WS = re.compile(r"\s+")
@@ -328,6 +329,20 @@ _RAG_SYS = (
     "'I now have N'), the most recent statement supersedes earlier ones — report the latest "
     "total; never add restatements together. Only sum amounts that are explicitly separate "
     "events."
+)
+
+# config.speaker_attribution: appended to _RAG_SYS ONLY when the knob is on, so a knob-off
+# prompt is byte-identical. Only meaningful when the context can carry the [assistant] marker
+# (docs/OFFLINE_EVAL.md Round 8). Targets the *_abs abstention failures where the reader
+# computes a saving/count from the assistant's generic figures it should have refused.
+_SPEAKER_RULE = (
+    "\nLines in the FACTS section marked [assistant] rest only on the assistant's turns — they "
+    "are the assistant's suggestions, generic figures, or quoted material, NOT facts the user "
+    "stated about themselves (an unmarked line is user-grounded). For questions about what is "
+    "true of the user, what they did, or what they spent, rely on user-stated facts; do not "
+    "compute an answer from [assistant] figures alone. If the only material bearing on the "
+    "question is marked [assistant], say the information isn't available rather than computing "
+    "from it."
 )
 
 _ANSWER_TOOL = {
@@ -1022,9 +1037,16 @@ class ContextBuilder:
         # config.fact_lane: mark the statement-granularity lane's hits so the reader can weight
         # a line the retriever matched THIS question against directly (matched_surfaces is empty
         # when the lane is off → rendering byte-identical).
+        # config.speaker_attribution: mark a fact resting EXCLUSIVELY on assistant turns so the
+        # reader can distinguish the assistant's suggestions / generic figures from the user's
+        # own stated facts (any-user reduction — a user fact echoed by the assistant is still
+        # user-grounded, no mark). Off → speak_mark is always "" → rendering byte-identical.
+        speaker_on = getattr(self.config, "speaker_attribution", False)
+
         def _fact_line(f: FactLine) -> str:
             mark = " [matched]" if f"{f.src} {f.rel} {f.dst}" in matched_surfaces else ""
-            return f"- {f.render()}{mark}"
+            speak = assistant_marker(f.asserted_by) if speaker_on else ""
+            return f"- {f.render()}{mark}{speak}"
         lines += [_fact_line(f) for f in facts] or ["(none)"]
 
         # STATE/evolution lane: append the FULL closed+open fact history so "how has X
@@ -1355,10 +1377,14 @@ class OpenAIAnswerer:
         # and any non-default temperature; 4o-era models keep the old params. Getting this
         # wrong would not crash loudly — the except below silently degrades every answer to
         # the offline extractive path — so the split must live here.
+        # speaker_attribution appends the [assistant]-marker rule to the system prompt only
+        # when on → knob-off prompt is byte-identical.
+        sys_prompt = _RAG_SYS + (_SPEAKER_RULE
+                                 if getattr(self.config, "speaker_attribution", False) else "")
         kwargs: dict = {
             "model": model,
             "messages": [
-                {"role": "system", "content": _RAG_SYS},
+                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": blob + reduce_addendum},
             ],
             "tools": [self._answer_tool(result)],

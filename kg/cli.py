@@ -284,6 +284,17 @@ def cmd_backfill_fact_vectors(args):
           f"{rep['total']} total)  in {time.time() - t0:.1f}s")
 
 
+def cmd_backfill_speakers(args):
+    import time
+    g = _open(args)
+    t0 = time.time()
+    rep = g.backfill_speakers()
+    g.save()
+    print(f"backfilled speakers into {args.store}: {rep['stamped']} stamped "
+          f"({rep['changed']} changed, {rep['unmarked']} unmarked); "
+          f"{rep['speakers']} registry row(s)  in {time.time() - t0:.1f}s")
+
+
 def cmd_stats(args):
     g = _open(args)
     print(json.dumps(g.stats(), indent=2))
@@ -488,6 +499,13 @@ def build_parser() -> argparse.ArgumentParser:
                               "for an existing store — local embed ($0), idempotent, "
                               "incremental; does not invalidate the ingest cache")
     pbf.set_defaults(func=cmd_backfill_fact_vectors)
+
+    pbs = sub.add_parser("backfill-speakers",
+                         help="stamp speaker_id on every episode from its inline "
+                              "User:/Assistant: turn markers + build the speaker registry "
+                              "for an existing store — deterministic ($0), idempotent, "
+                              "incremental; does not invalidate the ingest cache")
+    pbs.set_defaults(func=cmd_backfill_speakers)
 
     ps = sub.add_parser("stats", help="node/edge counts")
     ps.set_defaults(func=cmd_stats)

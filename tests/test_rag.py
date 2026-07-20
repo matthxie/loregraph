@@ -189,7 +189,8 @@ def test_search_and_answer_carry_structured_fact_rows():
     assert set(row) == {"source", "predicate", "target", "status", "valid_from",
                         "valid_to", "recorded_at", "episode_id", "confidence",
                         "provenance", "functional", "disputed_by", "rendered",
-                        "mentions", "last_mentioned"}
+                        "mentions", "last_mentioned", "asserted_by"}
+    assert row["asserted_by"] == []   # becky store has no speaker stamps → unknown/unmarked
     assert row["status"] in ("asserted", "ended", "occurred")
     assert row["episode_id"] and row["episode_id"].startswith("ep_")
 

@@ -489,6 +489,7 @@ class Engine:
     def _fact_row(self, src_id: str, dst_id: str, data: dict) -> dict:
         """One structured §3 Fact object from a RELATED_TO edge's data dict."""
         from .facts import FactLine
+        from .speakers import asserted_by as _speakers_asserted_by
         store = self._g.store
         rel = data.get("rel_tag")
         rel_node = store.get_node(rel) if rel else None
@@ -522,6 +523,9 @@ class Engine:
                 "disputed_by": data.get("disputed_by") or [],
                 "mentions": line.mentions,
                 "last_mentioned": line.last_mentioned or None,
+                # DERIVED speaker attribution (kg/speakers.py) over episode_id ∪ confirmed_by,
+                # so agent callers can separate user-stated from assistant-suggested facts.
+                "asserted_by": _speakers_asserted_by(store, data),
                 "rendered": line.render()}
 
     def _entity_fact_rows(self, entity_id: str, *, as_of: str | None,
