@@ -46,6 +46,19 @@ _STUB = ("profile", "rebuild", "reingest", "maintain", "ensure_model")
 _DATE10 = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _BARE_YEAR = re.compile(r"^\d{4}$")
 
+# Attachment extensions that perceive as images. Anything else is out of scope for
+# perception; it defaults to FILE so a non-image attachment is not mislabeled IMAGE.
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif", ".tif",
+               ".tiff"}
+
+
+def _attachment_modality(path: str | None) -> str:
+    """Sniff an attachment's extension to a CorpusItem modality label. Image types →
+    'image' (perceived by the VLM); everything else → 'file' (out of scope, stored not
+    perceived) so it lands as FILE via _modality_of rather than being mislabeled IMAGE."""
+    ext = os.path.splitext(path or "")[1].lower()
+    return "image" if ext in _IMAGE_EXTS else "file"
+
 
 def _norm_event_date(value: str | None, name: str) -> str | None:
     """Normalize a §7.3 since/until bound: a bare year behaves as its Jan-1 start
@@ -254,9 +267,18 @@ class Engine:
             item = CorpusItem(id=nid, modality="link", source_ref=stripped,
                               text=None, created_at=note.created_at)
         else:
-            # media-only → text=None routes through the described-media perception path. The
-            # readable attachment may be a temporary absolute path; only media_paths persist.
-            item = CorpusItem(id=nid, modality="text" if has_text else "image",
+            # Sniff the attachment's real type so an image attachment is labeled IMAGE — not
+            # the blanket "image" for every attachment (which mislabels PDFs etc.), and not
+            # "text" when a caption rides along with an image.
+            #   - media-only (no text)     → text=None routes through the perception path;
+            #   - text + image attachment  → CO-PERCEPTION: caption text AND image are both
+            #     perceived and merged (kg/ingest.py:_extract_all). text stays the caption.
+            #   - text, no attachment      → a plain text note.
+            if readable_media:
+                modality = _attachment_modality(readable_media[0])
+            else:
+                modality = "text"
+            item = CorpusItem(id=nid, modality=modality,
                               source_ref=f"{note.source}/{nid}",
                               text=note.text if has_text else None,
                               image_path=readable_media[0] if readable_media else None,

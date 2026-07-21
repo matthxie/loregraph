@@ -365,6 +365,21 @@ class Ingestor:
             try:
                 if item.modality == "link":  # a saved URL: fetch + subject-scoped extraction
                     return self.extractor.extract_url(item.source_ref or item.text or ""), None
+                if item.modality == "image" and item.image_path and item.text is not None:
+                    # CAPTIONED IMAGE — co-perception: run BOTH the caption text pass and the
+                    # vision pass, then merge into one episode. The caption is the merge BASE
+                    # (it carries the user's own words + first-person/temporal signal); the
+                    # vision extraction unions in for recall — the same base/union policy
+                    # CueGatedExtractor uses.
+                    cap = self._extract_text(item.text, item.title)
+                    vis = self.extractor.extract_image(item.image_path, item.label_hint)
+                    merged = cap.merge(vis)
+                    # The description is the image's MEDIA surface (what it depicts) — the
+                    # caption is already preserved verbatim as raw_text, so the vision line
+                    # is what belongs here and in the embedding surface. Prefer it; fall back
+                    # to whatever the caption pass left only if the vision pass gave none.
+                    merged.description = vis.description or merged.description
+                    return merged, None
                 if item.text is None:  # described media (image/audio/pdf/…): perceive it
                     return self.extractor.extract_image(item.image_path, item.label_hint), None
                 return self._extract_text(item.text, item.title), None
@@ -382,6 +397,11 @@ class Ingestor:
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
         if item.text is None:  # described media — the extractor's description is the surface
             return ext.description or (item.label_hint or "media")
+        # CAPTIONED IMAGE — the surface is the caption PLUS the vision description, so the
+        # image's visual content is retrievable, not just the user's caption words.
+        if item.modality == "image" and item.image_path and ext.description:
+            caption = (item.text or "").strip()
+            return f"{caption}\n{ext.description}" if caption else ext.description
         text = item.text or ""
         if len(text) > self.config.long_doc_chars:
             return text[:self.config.lead_chars]

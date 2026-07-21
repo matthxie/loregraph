@@ -620,6 +620,65 @@ def _fallback_url_description(signals: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Image ingest: MIME sniff + graph-aligned vision prompt
+# --------------------------------------------------------------------------- #
+# Sniff the real image type for the data URI: a PNG/webp/gif sent as image/jpeg can be
+# rejected or mis-decoded by the vision endpoint. Unknown extensions default to jpeg.
+_IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+               ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def _sniff_image_mime(path: str) -> str:
+    return _IMAGE_MIME.get(os.path.splitext(path or "")[1].lower(), "image/jpeg")
+
+
+# Graph-aligned so an ingested image lands as the SAME shape of record a conversation
+# produces — abstracted to shared concept/work/person/place/org nodes and me-anchored
+# relations — never a catalog of literal visual objects (bicycle/trees/sky).
+_IMAGE_INSTRUCTION = (
+    "You are extracting a knowledge-graph record for an image the user saved to their personal\n"
+    "memory. The image is provided directly; a caption/note the user wrote may accompany it.\n\n"
+    "First decide the kind of image:\n"
+    "- TEXT-HEAVY (screenshot, receipt, slide, tweet, chat, document, sign): the value is the\n"
+    "  TEXT. Read it, and put its meaningful content into the record — the entities, amounts,\n"
+    "  names, and claims it states — exactly as if that text had been typed as a note.\n"
+    "- PHOTOGRAPHIC (a scene, object, place, person, meal, whiteboard): describe what is depicted\n"
+    "  and identify everything meaningful in it.\n\n"
+    "1. `description`: ONE specific, self-contained sentence saying what the image is/shows. This\n"
+    "   is the image's retrieval surface — a reader who never sees it must understand it from\n"
+    "   this line alone.\n\n"
+    "2. ENTITIES — extract everything identifiable: named things, objects, people, places,\n"
+    "   products. Use the graph's types: person, place, org, work (a named product / brand /\n"
+    "   creative work / food / item), concept (an activity, topic, field, or idea), event, date.\n\n"
+    "   CRITICAL — connective tissue: alongside the concrete things, you MUST also emit the\n"
+    "   abstract CONCEPTS and topics the image is about (a bike on a trail → also `cycling` /\n"
+    "   `commuter bike`; a plate of food → also the cuisine/dish concept). These shared concepts\n"
+    "   are what connect this image to the user's notes about the same things — an image with\n"
+    "   only concrete visual objects and no concepts becomes an isolated island. Concrete detail\n"
+    "   is welcome; concepts are required.\n\n"
+    "   Use short canonical names ('Greek yogurt', not 'a plastic tub of yogurt on a table') so a\n"
+    "   thing RESOLVES to one shared node when it recurs elsewhere.\n\n"
+    "3. TAGS — 4-10 lowercase topical themes describing what the image is about.\n\n"
+    "4. RELATIONS — connect the subjects to their concepts/entities. EVERY relation endpoint\n"
+    "   MUST be a name you already listed under entities or tags — never coin a new phrase as a\n"
+    "   relation target (that mints junk nodes). Put stated amounts / counts / prices in `facts`.\n\n"
+    "   FIRST-PERSON `me` relations REQUIRE EVIDENCE, never assumption. Anchor something to\n"
+    "   `me` (me --rode--> commuter bike; me --ate--> ramen; me --visited--> Reykjavik) ONLY when\n"
+    "   the caption says so in the user's own words, OR the image itself self-evidently shows the\n"
+    "   user's OWN action or possession — a selfie, a meal they are eating, an object held/worn/\n"
+    "   owned, a first-person point-of-view shot. A photo that merely DEPICTS a place, landmark,\n"
+    "   object, meal, or scene is NOT evidence the user was there or did anything with it: a saved\n"
+    "   image may be a reference, an inspiration, a screenshot, or someone else's photo. When in\n"
+    "   doubt, emit NO `me` relation — capture what the image is ABOUT (its entities, concepts,\n"
+    "   and description, which are what make it findable later) and stop there.\n\n"
+    "When a caption is provided, treat the user's own words as the strongest signal of what\n"
+    "matters — including whether a first-person relation is warranted — and align the visual\n"
+    "extraction to it.\n\n"
+    "Emit exactly one emit_graph call."
+)
+
+
+# --------------------------------------------------------------------------- #
 # OpenAI (real)
 # --------------------------------------------------------------------------- #
 class OpenAIExtractor:
@@ -764,13 +823,17 @@ class OpenAIExtractor:
         return self._reflexion(text, first)
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
+        """Perceive an image into a graph-aligned record (the SAME shape a conversation
+        produces): a one-line `description` retrieval surface plus concept/work/person/place
+        entities and me-anchored relations — never a catalog of literal visual objects. The
+        data URI's MIME is sniffed from the real extension (a PNG sent as image/jpeg fails)."""
         with open(image_path, "rb") as f:
             data = base64.standard_b64encode(f.read()).decode()
-        hint = f" The image may contain: {label_hint}." if label_hint else ""
+        mime = _sniff_image_mime(image_path)
+        hint = f"\n\nThe image may contain: {label_hint}." if label_hint else ""
         blocks = [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}},
-            {"type": "text", "text": "Describe this image in one line and extract its "
-             "entities and tags." + hint},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}},
+            {"type": "text", "text": _IMAGE_INSTRUCTION + hint},
         ]
         ext = self._call(blocks)
         if not ext.description:
