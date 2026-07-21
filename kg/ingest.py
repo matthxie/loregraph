@@ -363,6 +363,8 @@ class Ingestor:
         and skip it, losing the note's extraction forever."""
         def work(item: CorpusItem) -> tuple[Extraction | None, str | None]:
             try:
+                if item.modality == "code":  # a git repo's memory (kg/code/): dispatch by
+                    return self._extract_code(item), None  # source_ref kind / embed_only
                 if item.modality == "link":  # a saved URL: fetch + subject-scoped extraction
                     return self.extractor.extract_url(item.source_ref or item.text or ""), None
                 if item.modality == "image" and item.image_path and item.text is not None:
@@ -393,6 +395,29 @@ class Ingestor:
 
     def _extract_text(self, text: str, title: str) -> Extraction:
         return extract_text_sectioned(self.extractor, text, title, self.config.long_doc_chars)
+
+    def _extract_code(self, item: CorpusItem) -> Extraction:
+        """Dispatch a CODE episode (kg/code/) by its source_ref kind:
+          - file:<repo>/<path>  → embed-only (no LLM); the chunk text is the surface;
+          - commit:<repo>@<sha> → extract_commit(message, diff) from item.meta;
+          - repo:<name>         → extract_repo(signals) from item.meta.
+        A file episode carries embed_only=True; the others carry their extractor payload on
+        item.meta, populated by kg/code/ingest_repo.py."""
+        ref = item.source_ref or ""
+        if getattr(item, "embed_only", False) or ref.startswith("file:"):
+            return Extraction()                       # embed the chunk text; no extraction
+        meta = getattr(item, "meta", None) or {}
+        if ref.startswith("commit:"):
+            ext = self.extractor.extract_commit(meta.get("message", ""), meta.get("diff", ""))
+            # The full diff becomes an un-rankable SOURCE provenance node (auditable +
+            # re-extractable), regardless of which extractor ran — guarantee it here so a
+            # stub/local extractor still gets provenance, not just the LLM path.
+            if ext.source_text is None:
+                ext.source_text = meta.get("diff") or None
+            return ext
+        if ref.startswith("repo:"):
+            return self.extractor.extract_repo(meta.get("signals") or {})
+        return Extraction()
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
         if item.text is None:  # described media — the extractor's description is the surface

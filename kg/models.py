@@ -61,6 +61,9 @@ class Modality(str, Enum):
     VIDEO = "video"
     PDF = "pdf"      # a scanned/visual PDF described as media (a text-extractable PDF → TEXT)
     LINK = "link"    # a fetched URL whose page text became the raw_text surface
+    CODE = "code"    # a git repo's memory: a commit / repo-summary / current-file episode
+    #                  (kg/code/) — surface is the LLM description (commit/repo) or, for a
+    #                  file episode, the embed-only code chunk text
     FILE = "file"    # any other described artifact
 
 
@@ -120,7 +123,11 @@ class EdgeType(str, Enum):
     HYPERLINKS_TO = "HYPERLINKS_TO"  # optional deterministic enrichment
     PART_OF = "PART_OF"            # chunk Episode → parent Source (low traversal weight —
                                    # the parent must not become a sibling super-hub)
-    NEXT = "NEXT"                  # chunk Episode → next sibling (sequence within a source)
+    NEXT = "NEXT"                  # chunk Episode → next sibling (sequence within a source);
+                                   # also parent-commit → child-commit ordering (kg/code/)
+    MODIFIES = "MODIFIES"          # commit Episode → current-file Episode (kg/code/): the
+                                   # event↔state join, "which commits touched this file". Low
+                                   # traversal weight so it never dominates PPR.
 
 
 class Provenance(str, Enum):

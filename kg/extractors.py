@@ -177,6 +177,8 @@ class Extractor(Protocol):
     def extract_text(self, text: str, title: str = "") -> Extraction: ...
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction: ...
     def extract_url(self, url: str) -> Extraction: ...
+    def extract_commit(self, message: str, diff: str) -> Extraction: ...
+    def extract_repo(self, signals: dict) -> Extraction: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -679,6 +681,113 @@ _IMAGE_INSTRUCTION = (
 
 
 # --------------------------------------------------------------------------- #
+# Code ingest: git commit + repo-summary extraction prompts (kg/code/)
+# --------------------------------------------------------------------------- #
+# A single git commit the user authored → an immutable Episode of their own work. The
+# message states intent (often vague); the diff is ground truth — use BOTH and union them.
+_COMMIT_INSTRUCTION = (
+    "You are extracting a knowledge-graph record for a single git commit the user authored, as\n"
+    "part of their personal memory of their own work. You are given the commit MESSAGE and DIFF.\n\n"
+    "Use BOTH. The message states intent but is often incomplete or vague (\"fix bug\", \"wip\"); the\n"
+    "diff is the ground truth of what actually changed. Extract what the commit did from the\n"
+    "message AND what the diff shows, and union them — never rely on the message alone.\n\n"
+    "1. `description`: ONE specific, first-person sentence saying what the user did in this commit\n"
+    "   (\"Fixed a double-charge bug in webhook retry by de-duplicating on idempotency key.\"). This\n"
+    "   is the commit's retrieval surface.\n\n"
+    "2. ENTITIES — the graph's normal types (person, org, work, concept). Emit:\n"
+    "   - the code COMPONENTS changed (files/modules/functions/classes) as work/concept entities,\n"
+    "     short qualified names ('webhook retry handler', 'payments.py');\n"
+    "   - the DOMAIN CONCEPTS involved ('idempotency', 'rate limiting', 'authentication') —\n"
+    "     CRITICAL connective tissue: these link this commit to the user's notes, conversations,\n"
+    "     and other projects about the same ideas;\n"
+    "   - any TECH/libraries the change touches.\n\n"
+    "3. TAGS — 3-8 lowercase themes ('bugfix', 'payments', 'webhooks', 'refactor').\n\n"
+    "4. RELATIONS — this is the user's own work, so anchor to `me`:\n"
+    "   me --fixed / added / refactored / removed--> <component or concept>, and connect\n"
+    "   components to concepts (webhook handler --handles--> idempotency). EVERY relation endpoint\n"
+    "   MUST be a name you listed under entities or tags — never coin a new relation target.\n\n"
+    "Ignore pure formatting, whitespace, lockfile churn, and version bumps. Emit exactly one\n"
+    "emit_graph call."
+)
+
+_REPO_INSTRUCTION = (
+    "You are extracting a knowledge-graph record for a code project the user has, as part of their\n"
+    "personal memory. You are given the project name, README, dependency manifests, and a summary\n"
+    "of its file/directory structure.\n\n"
+    "1. `description`: ONE specific sentence saying what this project IS and DOES (\"A personal-\n"
+    "   finance app that syncs bank transactions and auto-categorizes spending.\"). Retrieval surface.\n\n"
+    "2. ENTITIES:\n"
+    "   - the PROJECT itself (work/project entity, short name);\n"
+    "   - its DOMAIN CONCEPTS — what it does ('transaction sync', 'spend categorization') —\n"
+    "     CRITICAL connective tissue to the user's notes and conversations;\n"
+    "   - its TECH STACK — languages, frameworks, libraries (from the manifests), as entities.\n\n"
+    "3. TAGS — 4-10 lowercase themes.\n\n"
+    "4. RELATIONS — first-person: me --built / works_on--> project; project --uses--> <library>;\n"
+    "   project --does / implements--> <concept>. EVERY endpoint MUST be a listed entity or tag.\n\n"
+    "Stay on what the project is and does; don't inventory every file. Emit exactly one emit_graph call."
+)
+
+
+def _assemble_commit_block(message: str, diff: str, diff_cap: int) -> str:
+    """One text block: the commit message + (capped) diff + the commit extraction instruction."""
+    return "\n".join([
+        "Commit message:",
+        (message or "").strip() or "(empty)",
+        "",
+        "Diff:",
+        (diff or "")[:diff_cap] or "(no source diff)",
+        "",
+        _COMMIT_INSTRUCTION,
+    ])
+
+
+def _assemble_repo_block(signals: dict, cap: int) -> str:
+    """One text block: the repo signals (name, README, manifests, tree) + the repo instruction.
+    Mirrors _assemble_url_block — a deterministic gather feeding a subject-scoped prompt."""
+    manifests = signals.get("manifests") or {}
+    libs = signals.get("libraries") or []
+    parts = [
+        f"Project name: {signals.get('name', '')}",
+        "",
+        "README:",
+        (signals.get("readme") or "")[:cap] or "(no README)",
+        "",
+        "Dependency manifests:",
+    ]
+    for fname, body in manifests.items():
+        parts.append(f"--- {fname} ---")
+        parts.append((body or "")[:2000])
+    if libs:
+        parts.append("")
+        parts.append("Declared dependencies (parsed from manifests): " + ", ".join(libs))
+    parts += [
+        "",
+        "File/directory structure:",
+        (signals.get("tree") or "")[:4000] or "(unavailable)",
+        "",
+        _REPO_INSTRUCTION,
+    ]
+    return "\n".join(parts)
+
+
+def _concise_commit_description(message: str) -> str:
+    """Offline/local floor description surface for a commit: its subject line."""
+    subject = (message or "").strip().splitlines()[0].strip() if (message or "").strip() else ""
+    return subject or "A git commit."
+
+
+def _fallback_repo_description(signals: dict) -> str:
+    """Offline/local floor description surface for a repo: the README's first line, else name."""
+    readme = (signals.get("readme") or "").strip()
+    if readme:
+        first = readme.splitlines()[0].lstrip("# ").strip()
+        if first:
+            return first
+    name = signals.get("name") or "a code project"
+    return f"A code project named {name}."
+
+
+# --------------------------------------------------------------------------- #
 # OpenAI (real)
 # --------------------------------------------------------------------------- #
 class OpenAIExtractor:
@@ -854,6 +963,28 @@ class OpenAIExtractor:
         ext.page_title = signals.get("title") or signals.get("og_title") or None
         return ext
 
+    def extract_commit(self, message: str, diff: str) -> Extraction:
+        """Extract a first-person memory record for one git commit from its MESSAGE + DIFF
+        (union of intent and ground truth). The description is the retrieval surface; the
+        full diff rides along on ext.source_text for the un-rankable SOURCE provenance node
+        (same pattern as extract_url), so the raw change stays auditable without embedding it."""
+        ext = self._call([{"type": "text",
+                            "text": _assemble_commit_block(message, diff,
+                                                           self.config.extract_max_chars)}])
+        if not ext.description:
+            ext.description = _concise_commit_description(message)
+        ext.source_text = diff or None
+        return ext
+
+    def extract_repo(self, signals: dict) -> Extraction:
+        """Extract a repo-summary record (mirrors extract_url): the description names what the
+        project is and does; entities pre-populated from manifests + domain concepts the LLM adds."""
+        ext = self._call([{"type": "text",
+                            "text": _assemble_repo_block(signals, self.config.extract_max_chars)}])
+        if not ext.description:
+            ext.description = _fallback_repo_description(signals)
+        return ext
+
 
 # --------------------------------------------------------------------------- #
 # Shared text-extraction helper (sectioning for long docs, §9 risk 4)
@@ -904,6 +1035,14 @@ class ScriptedExtractor:
     def extract_url(self, url: str) -> Extraction:
         # Keyed by the URL itself so hermetic tests script a page's record deterministically.
         return self._lookup(url)
+
+    def extract_commit(self, message: str, diff: str) -> Extraction:
+        # Keyed by the commit MESSAGE so hermetic tests script a commit's record deterministically.
+        return self._lookup(message)
+
+    def extract_repo(self, signals: dict) -> Extraction:
+        # Keyed by the repo NAME (the salient repo signal) — same policy as the URL/commit keys.
+        return self._lookup((signals or {}).get("name", ""))
 
 
 # --------------------------------------------------------------------------- #
@@ -972,6 +1111,33 @@ class CueGatedExtractor:
         ext.description = _fallback_url_description(signals)
         ext.source_text = signals.get("body") or None
         ext.page_title = signals.get("title") or signals.get("og_title") or None
+        return ext
+
+    def extract_commit(self, message: str, diff: str) -> Extraction:
+        """Commit ingest on the keyless floor: escalate to the LLM's first-person commit
+        extractor when a provider is live (commit records benefit strongly from it), else run
+        the local floor over message+diff with the subject line as the description surface."""
+        if self.escalate:
+            try:
+                return self._llm_ext().extract_commit(message, diff)
+            except Exception:  # noqa: BLE001 — never sink ingest on one API error
+                pass
+        ext = self.local.extract_text(f"{message}\n\n{diff}", "")
+        ext.description = _concise_commit_description(message)
+        ext.source_text = diff or None
+        return ext
+
+    def extract_repo(self, signals: dict) -> Extraction:
+        """Repo summary on the keyless floor: escalate to the LLM when live, else run the local
+        floor over the assembled signals with a README-derived description surface."""
+        if self.escalate:
+            try:
+                return self._llm_ext().extract_repo(signals)
+            except Exception:  # noqa: BLE001
+                pass
+        ext = self.local.extract_text(
+            _assemble_repo_block(signals, self.config.extract_max_chars), signals.get("name", ""))
+        ext.description = _fallback_repo_description(signals)
         return ext
 
     def escalation_summary(self) -> dict:

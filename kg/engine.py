@@ -52,6 +52,12 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif
                ".tiff"}
 
 
+def _repo_marker_key(path: str) -> str:
+    """Sync-marker key for a repo: its absolute on-disk path (so two repos with the same
+    basename don't share a last-SHA)."""
+    return os.path.abspath(os.path.expanduser(path.rstrip("/")))
+
+
 def _attachment_modality(path: str | None) -> str:
     """Sniff an attachment's extension to a CorpusItem modality label. Image types →
     'image' (perceived by the VLM); everything else → 'file' (out of scope, stored not
@@ -152,6 +158,24 @@ class _MockExtractor:
         tags = [t for t in re.split(r"[.\-/]", domain) if len(t) >= 3][:3]
         return Extraction(entities=[ExtractedEntity(name=domain)], tags=tags,
                           description=f"A saved web page at {domain}.", page_title=domain)
+
+    def extract_commit(self, message: str, diff: str) -> Extraction:
+        subject = (message or "").strip().splitlines()[0].strip() if message else ""
+        ents = []
+        seen = set()
+        for w in re.findall(r"\b[A-Z][a-z]{2,}\b", message or ""):
+            if w.lower() not in seen:
+                seen.add(w.lower())
+                ents.append(ExtractedEntity(name=w))
+        return Extraction(entities=ents[:5], tags=["commit"],
+                          description=(subject or "A git commit."), source_text=diff or None)
+
+    def extract_repo(self, signals: dict) -> Extraction:
+        name = (signals or {}).get("name") or "project"
+        libs = (signals or {}).get("libraries") or []
+        ents = [ExtractedEntity(name=name)] + [ExtractedEntity(name=l) for l in libs[:5]]
+        return Extraction(entities=ents, tags=["project"],
+                          description=f"A code project named {name}.")
 
 
 class _MockAnswerClient:
@@ -296,6 +320,64 @@ class Engine:
         return IngestResult(episode_id=f"ep_{nid}", tasks=[],
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
+
+    def ingest_repo(self, path: str, since: str | None = None,
+                    max_commits: int = 200) -> dict:
+        """Ingest a git repo's memory: its commit history (event layer) + a repo summary
+        (bridge) + its current source files (thin state layer) into this graph, all
+        me-anchored. Idempotent per commit SHA; on a re-sync only `last..HEAD` new commits
+        and the changed-file set are processed (a stored last-SHA per repo is the marker).
+
+        Returns a small report dict (repo, head, counts). Branches / history rewrites are
+        out of scope — linear history on the current branch is assumed.
+
+        FOLLOW-UP (deferred, not this repo): expose this over the wire by adding an
+        `ingest.repo` verb to brainbrain/engine/daemon.py and bumping PROTOCOL_MINOR with a
+        capability-probe, per the additive v1.1 pattern (mirrors how ingest of media/links
+        was surfaced). Nothing here needs to change for that."""
+        self._check()
+        from .code import ingest_repo as _ingest_repo
+        from .code.git import GitError
+        marker = self._code_sync_load()
+        try:
+            report = _ingest_repo(self._g, path, since=since,
+                                  after_sha=marker.get(_repo_marker_key(path)),
+                                  max_commits=max_commits)
+        except GitError as e:
+            raise InvalidInput(str(e)) from e
+        except Exception as e:  # noqa: BLE001 — taxonomy boundary (§7)
+            raise StoreError(f"repo ingest failed: {e}") from e
+        if report.head_sha:                     # advance the sync marker to HEAD
+            marker[_repo_marker_key(path)] = report.head_sha
+            marker[report.repo] = report.head_sha
+            self._code_sync_save(marker)
+        self._g.save()
+        return {"repo": report.repo, "head": report.head_sha,
+                "summarized": report.summarized,
+                "commits_ingested": report.commits_ingested,
+                "commits_seen": report.commits_seen,
+                "files_ingested": report.files_ingested,
+                "files_superseded": report.files_superseded,
+                "next_edges": report.next_edges, "modifies_edges": report.modifies_edges,
+                "notes": report.notes}
+
+    def _code_sync_path(self) -> str:
+        return os.path.join(self._data_dir, "code_sync.json")
+
+    def _code_sync_load(self) -> dict:
+        try:
+            with open(self._code_sync_path(), encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _code_sync_save(self, marker: dict) -> None:
+        try:
+            with open(self._code_sync_path(), "w", encoding="utf-8") as f:
+                json.dump(marker, f)
+        except OSError as e:  # noqa: BLE001 — a marker write failure must not lose the ingest
+            self._log("warn", f"code_sync marker write failed: {e}")
 
     def repair_legacy_media_paths(self) -> int:
         """Reconnect media files to episodes written by the broken packaged drainer.

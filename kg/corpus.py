@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 DATASET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "dataset")
@@ -21,13 +21,18 @@ LME_DIR = os.path.join(DATASET_DIR, "longmemeval")
 @dataclass
 class CorpusItem:
     id: str
-    modality: str          # "text" | "image"
-    source_ref: str        # url / file path
+    modality: str          # "text" | "image" | "link" | "code" | ...
+    source_ref: str        # url / file path / repo:<name> / commit:<repo>@<sha> / file:<repo>/<path>
     title: str = ""
     text: str | None = None
     image_path: str | None = None
     label_hint: str | None = None  # COCO labels — offline VLM stand-in
     created_at: str | None = None  # corpus item's own time (session date); None → wall clock
+    # CODE ingest (kg/code/): embed_only skips the LLM extractor entirely (file episodes just
+    # embed their chunk text). `meta` carries the extractor payload for the non-embed-only
+    # kinds: a commit item → {"message", "diff"}; a repo item → {"signals": {...}}.
+    embed_only: bool = False
+    meta: dict = field(default_factory=dict)
 
 
 def _lme_tier_dir(tier: str) -> str:

@@ -106,6 +106,8 @@ class Config:
     chunk_max_chars: int = 4400       # unchunked threshold / hard ceiling per packed unit
     part_of_weight: float = 0.3       # PART_OF traversal weight (parent ≠ super-hub)
     next_weight: float = 0.5          # NEXT (sequence) traversal weight
+    modifies_weight: float = 0.2      # MODIFIES (commit→file) weight — low so the event↔state
+    #                                   join never dominates PPR (kg/code/)
 
     # -- retrieval: PPR ---------------------------------------------------------
     ppr_damping: float = 0.5          # HippoRAG personalization damping
