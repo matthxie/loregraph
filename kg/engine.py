@@ -38,7 +38,7 @@ from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
 from .ingest import _BARE_URL
 from .extractors import Extraction, ExtractedEntity, UsageMeter
 from .llm_client import SUPPORTED_KINDS
-from .models import (Belief, EdgeType, EntityType, NodeType,
+from .models import (Belief, Edge, EdgeType, EntityType, NodeType, Provenance,
                      entity_category_for_type)
 
 _STUB = ("profile", "rebuild", "reingest", "maintain", "ensure_model")
@@ -133,6 +133,44 @@ class ImportReport:
     images_perceived: int = 0       # inline images given a real vision description
     errors: list[str] = field(default_factory=list)
     seconds: float = 0.0
+
+
+@dataclass
+class VaultImportReport:
+    """Result of an Obsidian vault import (Engine.import_vault). A vault is human-curated, so
+    the interesting counts are the STRUCTURE we wired from that curation: how many wikilinks
+    resolved to a real note (`links_resolved`) vs pointed at a note that doesn't exist
+    (`links_unresolved`, skipped silently), and how many `TAGGED_AS` links we laid down."""
+    notes: int = 0                  # notes parsed + pushed through ingest
+    episodes_ingested: int = 0      # NEW note episodes written this run
+    skipped: int = 0                # note episodes already present (idempotent re-run)
+    links_resolved: int = 0         # wikilinks wired to a real target Episode (HYPERLINKS_TO)
+    links_unresolved: int = 0       # wikilinks whose target note is absent (skipped, no stub)
+    images_perceived: int = 0       # inline images given a real vision description
+    tags: int = 0                   # TAGGED_AS links wired deterministically
+    errors: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+
+
+class _StructureOnlyExtractor:
+    """A no-op extractor for structure-only vault import (extract=False): every pass returns
+    an empty Extraction, so an Episode is still created + embedded (local bge, not an LLM) and
+    the deterministic wikilink/tag structure carries the graph, but ZERO LLM calls are made.
+    Viable only for Obsidian, where the explicit links keep the graph connected without any
+    inferred concepts (a chat/URL import would fall apart structure-only)."""
+    name = "structure_only"
+
+    def __init__(self):
+        self.meter = UsageMeter()
+
+    def extract_text(self, text: str, title: str = "") -> Extraction:
+        return Extraction()
+
+    def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
+        return Extraction()
+
+    def extract_url(self, url: str) -> Extraction:
+        return Extraction()
 
 
 # --------------------------------------------------------------------------- #
@@ -392,6 +430,176 @@ class Engine:
         self._g.save()
         report.seconds = round(time.time() - t0, 2)
         return report
+
+    def import_vault(self, path: str, extract: bool = True) -> VaultImportReport:
+        """Cold-import an Obsidian vault into the graph (BUILD BRIEF). A vault is ALREADY a
+        personal knowledge graph — the author curated the links (`[[wikilinks]]`), the topics
+        (`#tags` / frontmatter `tags:`), and the identity (`aliases:`) — so this leans on that
+        explicit structure rather than inferring everything, yielding a dense, well-connected
+        graph on day one.
+
+        One `.md` file → one text Episode (frontmatter stripped, title from H1/filename, images
+        perceived-and-inlined). Two novel bits over the chat importers:
+
+          * Two-pass wikilink resolution — you can't point `[[B]]` at B's Episode id until B is
+            ingested, so pass 1 ingests every note (building a name/path/alias → Episode map)
+            and pass 2 resolves each note's wikilinks against that map and wires directional
+            HYPERLINKS_TO edges (the deterministic reserved type; the engine symmetrizes for
+            PPR so backlinks come free). A link to a note that doesn't exist is skipped
+            silently — never stubbed, never a crash.
+          * Deterministic tags — `#tags` and frontmatter `tags:` wire straight to TAGGED_AS via
+            the normal tag canonicalization (so `#ml` ↔ `#machine-learning` still merge and
+            share nodes with tags from chats/URLs), with NO LLM in the loop.
+
+        `extract=True` (default) also runs the normal LLM body extraction so notes join the
+        concept bridge to chats/URLs/code, not only each other (lean on CueGated to bound cost);
+        `extract=False` is structure-only (wikilinks + tags + embeddings, no LLM) — viable only
+        because the explicit links keep the graph connected without any inferred concepts.
+
+        Idempotent + resumable: the content-hash cache means a re-import reprocesses only changed
+        notes, and pass 2 re-wires every note's structure each run (structural edges collapse by
+        identity, so re-wiring is a no-op for unchanged links).
+
+        FOLLOW-UP (deferred, brainbrain, not this repo): expose over the wire with an
+        `import.vault` daemon verb + a PROTOCOL_MINOR bump + capability-probe, run as an async
+        background job with progress notifications — mirroring the import.conversations /
+        ingest.repo additive pattern noted above."""
+        import time
+        from .imports import obsidian
+        from .imports.normalize import NormalizeStats
+        self._check()
+        report = VaultImportReport()
+        t0 = time.time()
+        if not obsidian.is_vault(path):
+            raise InvalidInput(
+                f"{path!r} is not an Obsidian vault (a directory of .md notes, usually with "
+                f"an .obsidian/ config dir)")
+
+        notes = obsidian.parse_vault(path)
+        report.notes = len(notes)
+
+        # extract=False → swap in the model-free extractor for the whole ingest, so a
+        # structure-only import makes ZERO LLM calls (images are inlined as filename
+        # placeholders, note bodies produce empty extractions). Restored in `finally`.
+        real_extractor = self._g.extractor
+        if not extract:
+            self._g.extractor = _StructureOnlyExtractor()
+        try:
+            stats = NormalizeStats()
+            items = obsidian.to_corpus_items(notes, self._g.extractor, stats, perceive=extract)
+            report.images_perceived = stats.images_perceived
+
+            # PASS 1 — ingest every note (flushed batches: idempotent via the hash-cache,
+            # resumable after a crash, observable per batch).
+            batch = max(1, int(getattr(self._g.config, "ingest_flush_every", 200)) or 200)
+            for start in range(0, len(items), batch):
+                chunk = items[start:start + batch]
+                try:
+                    r = self._g.ingest(chunk)
+                except Exception as e:          # noqa: BLE001 — one bad batch must not lose the rest
+                    report.errors.append(f"batch@{start}: {e!r}")
+                    continue
+                report.episodes_ingested += r.ingested
+                report.skipped += r.skipped
+                if r.notes:
+                    report.errors.extend(r.notes[:3])
+                self._g.save()
+                self._log("info", f"import vault: {report.episodes_ingested} notes ingested, "
+                                  f"{report.skipped} skipped "
+                                  f"({start + len(chunk)}/{len(items)})")
+
+            # PASS 2 — now every note's Episode exists, wire the human-authored structure:
+            # deterministic tags (TAGGED_AS) + resolved wikilinks (HYPERLINKS_TO).
+            resolver = obsidian.build_resolver(notes)
+            for note in notes:
+                ep = self._note_episode_id(note.item_id)
+                if ep is None:
+                    continue                    # its whole batch failed above — nothing to wire
+                report.tags += self._wire_tags(ep, note.tags, note.created_at)
+                res, unres = self._wire_wikilinks(ep, note, resolver)
+                report.links_resolved += res
+                report.links_unresolved += unres
+            self._g.save()
+        except EngineError:
+            raise
+        except Exception as e:                  # noqa: BLE001 — taxonomy boundary (§7)
+            raise StoreError(f"vault import failed: {e}") from e
+        finally:
+            self._g.extractor = real_extractor
+
+        report.seconds = round(time.time() - t0, 2)
+        return report
+
+    def _note_episode_id(self, item_id: str) -> str | None:
+        """The Episode id representing a note, resolved from the store (ingest owns the exact
+        id). A short note is one Episode `ep_<id>`; a long one is chunked, so its first chunk
+        `ep_<id>#c000` stands in as the link anchor; a re-import whose content CHANGED appended
+        a `_vN` version, so the latest version wins. None → the note never landed."""
+        store = self._g.store
+        base = f"ep_{item_id}"
+        if store.has_node(base):
+            last = base
+            v = 1
+            while store.has_node(f"{base}_v{v}"):   # content changed on a re-import → newest wins
+                last = f"{base}_v{v}"
+                v += 1
+            return last
+        c0 = f"{base}#c000"
+        return c0 if store.has_node(c0) else None
+
+    def _wire_tags(self, ep_id: str, tags: list[str], ts: str | None) -> int:
+        """Deterministically wire a note's tags → TAGGED_AS edges, canonicalizing each surface
+        through the normal tag path (so `#ml` ↔ `#machine-learning` merge, and a vault tag lands
+        on the SAME node a chat/URL tag would). No LLM. Returns the count wired. Idempotent — a
+        re-run re-adds the identical structural edge, which collapses by identity."""
+        canon = self._g.canon
+        store = self._g.store
+        node = store.get_node(ep_id)
+        # tids already TAGGED_AS this episode (from a prior import's pass 2, or the LLM body
+        # pass when extract=True) — so a re-import doesn't double-bump doc-frequency.
+        existing = {tid for tid, _d in store.neighbors(ep_id, etypes={EdgeType.TAGGED_AS},
+                                                        direction="out")}
+        wired = 0
+        seen: set[str] = set()          # distinct canonical tids on this episode this run
+        for surface in tags:
+            tid = canon.resolve_tag(surface)
+            if not tid or tid in seen:  # two surfaces (#ml / #machine-learning) → one node
+                continue
+            seen.add(tid)
+            store.add_edge(Edge(src=ep_id, dst=tid, etype=EdgeType.TAGGED_AS,
+                                provenance=Provenance.DERIVED, confidence=1.0))
+            if tid not in existing:     # genuinely new link → count it toward df once
+                canon.bump_doc_frequency(tid)
+            cname = store.get_node(tid).name
+            if node is not None and cname not in node.tags:
+                node.tags.append(cname)
+                store.touch_node(ep_id)
+            wired += 1
+        return wired
+
+    def _wire_wikilinks(self, ep_id: str, note, resolver) -> tuple[int, int]:
+        """Resolve a note's wikilinks/embeds against the vault resolver and wire HYPERLINKS_TO
+        (Episode → Episode) for each that lands on a real note. Human-authored, so DERIVED /
+        confidence 1.0. Directional (the engine symmetrizes for PPR → backlinks free); a
+        target that doesn't exist, or resolves to this same note, is skipped silently. Returns
+        (resolved, unresolved). De-duped per target so a note linked twice counts once."""
+        store = self._g.store
+        resolved = unresolved = 0
+        seen: set[str] = set()
+        for link in note.wikilinks:
+            target_item = resolver.resolve(link.target)
+            if target_item is None or target_item == note.item_id:
+                if target_item is None:
+                    unresolved += 1
+                continue
+            tgt_ep = self._note_episode_id(target_item)
+            if tgt_ep is None or tgt_ep == ep_id or tgt_ep in seen:
+                continue
+            seen.add(tgt_ep)
+            store.add_edge(Edge(src=ep_id, dst=tgt_ep, etype=EdgeType.HYPERLINKS_TO,
+                                provenance=Provenance.DERIVED, confidence=1.0))
+            resolved += 1
+        return resolved, unresolved
 
     def ingest_repo(self, path: str, since: str | None = None,
                     max_commits: int = 200) -> dict:

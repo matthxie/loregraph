@@ -11,7 +11,7 @@ existing ingest path (source-agnostic from here on).
 """
 from __future__ import annotations
 
-from . import chatgpt, claude, gemini
+from . import chatgpt, claude, gemini, obsidian
 from .canonical import Conversation, Media, Message
 from .detect import UNRECOGNIZED, detect_from_data, load_export
 from .normalize import NormalizeStats, to_corpus_items
@@ -44,5 +44,5 @@ def build_corpus_items(path: str, source: str, extractor):
 __all__ = [
     "SUPPORTED_SOURCES", "UNRECOGNIZED", "Conversation", "Message", "Media",
     "NormalizeStats", "build_corpus_items", "detect_from_data", "load_export",
-    "to_corpus_items",
+    "to_corpus_items", "obsidian",
 ]
