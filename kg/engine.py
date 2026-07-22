@@ -123,6 +123,18 @@ class IngestResult:
     skipped: bool = False           # duplicate note (idempotent re-run)
 
 
+@dataclass
+class ImportReport:
+    """Result of a cold-start chat-history import (Engine.import_conversations)."""
+    source: str = ""                # resolved source ("chatgpt"|"claude"|"gemini")
+    conversations: int = 0          # canonical conversations mapped from the export
+    episodes_ingested: int = 0      # NEW session episodes written this run
+    skipped: int = 0                # session episodes already present (idempotent re-run)
+    images_perceived: int = 0       # inline images given a real vision description
+    errors: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+
+
 # --------------------------------------------------------------------------- #
 # Mock provider (§5): deterministic, offline, no LLM
 # --------------------------------------------------------------------------- #
@@ -320,6 +332,66 @@ class Engine:
         return IngestResult(episode_id=f"ep_{nid}", tasks=[],
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
+
+    def import_conversations(self, path: str, source: str = "auto") -> ImportReport:
+        """Cold-start bulk-import a chat-history export (ChatGPT / Claude / Gemini) into the
+        graph (BUILD BRIEF). `source` is a validated, closed set — "chatgpt" | "claude" |
+        "gemini" | "auto"; "auto" sniffs the export and resolves to one of the three or
+        raises. Any other value → InvalidInput. Per-source parsing lives in kg/imports/; the
+        export is normalized to session CorpusItems and pushed through the SAME ingest path a
+        live note uses, so it is idempotent + resumable (content-hash dedup skips already-
+        ingested sessions → a re-run after interruption resumes, ingesting nothing new).
+
+        Runs in flushed batches so progress is observable and a crash loses at most one batch;
+        the CueGated extractor keeps the bulk extraction cost bounded. Cold start is large and
+        slow — the daemon should invoke this as a background job (see the brainbrain follow-up
+        note below), not block on it.
+
+        FOLLOW-UP (deferred, not this repo): expose this over the wire by adding an
+        `import.conversations` verb to brainbrain/engine/daemon.py + bumping PROTOCOL_MINOR
+        with a capability-probe (mirrors the ingest.repo / media additive pattern), and run it
+        as an async background job with progress notifications (capture already went async)."""
+        import time
+        from .imports import SUPPORTED_SOURCES, build_corpus_items
+        self._check()
+        if source not in ("auto", *SUPPORTED_SOURCES):
+            raise InvalidInput(
+                f"source must be one of auto/{'/'.join(SUPPORTED_SOURCES)}, got {source!r}")
+        t0 = time.time()
+        report = ImportReport(source="" if source == "auto" else source)
+        try:
+            resolved, conversations, items, stats = build_corpus_items(
+                path, source, self._g.extractor)
+        except EngineError:
+            raise
+        except Exception as e:                  # noqa: BLE001 — taxonomy boundary (§7)
+            raise StoreError(f"import failed: {e}") from e
+        report.source = resolved
+        report.conversations = len(conversations)
+        report.images_perceived = stats.images_perceived
+
+        # Ingest in flushed batches: idempotent (hash-cache skips already-ingested sessions),
+        # resumable (a re-run after a crash resumes), and observable (progress is logged and
+        # the store is checkpointed per batch).
+        batch = max(1, int(getattr(self._g.config, "ingest_flush_every", 200)) or 200)
+        for start in range(0, len(items), batch):
+            chunk = items[start:start + batch]
+            try:
+                r = self._g.ingest(chunk)
+            except Exception as e:              # noqa: BLE001 — one bad batch must not lose the rest
+                report.errors.append(f"batch@{start}: {e!r}")
+                continue
+            report.episodes_ingested += r.ingested
+            report.skipped += r.skipped
+            if r.notes:
+                report.errors.extend(r.notes[:3])
+            self._g.save()
+            self._log("info", f"import {resolved}: {report.episodes_ingested} episodes "
+                              f"ingested, {report.skipped} skipped "
+                              f"({start + len(chunk)}/{len(items)} sessions)")
+        self._g.save()
+        report.seconds = round(time.time() - t0, 2)
+        return report
 
     def ingest_repo(self, path: str, since: str | None = None,
                     max_commits: int = 200) -> dict:
