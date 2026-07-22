@@ -42,3 +42,6 @@ results/
 *.egg-info/
 build/
 dist/
+
+# Evaluation datasets
+dataset/
