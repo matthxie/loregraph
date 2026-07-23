@@ -41,8 +41,10 @@ The codex/claude/anthropic/mock shims all duck-type the OpenAI SDK surface via
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -311,10 +313,11 @@ def _forced_tool_name(kw: dict) -> str | None:
 # --------------------------------------------------------------------------- #
 # Message flattening / JSON salvage — shared by the text-only shims (codex, claude)
 # --------------------------------------------------------------------------- #
-def _flatten_messages(messages: list) -> str:
+def _flatten_messages(messages: list,
+                      image_note: str = "[image omitted: CLI provider is text-only]") -> str:
     """Join an OpenAI ``messages`` array into one prompt string: system+user text in order,
-    with each ``image_url`` block replaced by a note (the CLI shims are text-only, an
-    accepted v0 limitation)."""
+    with each ``image_url`` block replaced by ``image_note`` — the omission placeholder by
+    default, or "[image attached]" when the CLI carries the bytes out-of-band (codex ``-i``)."""
     parts: list[str] = []
     for m in messages or []:
         content = m.get("content") if isinstance(m, dict) else None
@@ -329,8 +332,56 @@ def _flatten_messages(messages: list) -> str:
                 if block.get("type") == "text" and block.get("text", "").strip():
                     parts.append(block["text"])
                 elif block.get("type") == "image_url":
-                    parts.append("[image omitted: CLI provider is text-only]")
+                    parts.append(image_note)
     return "\n\n".join(parts)
+
+
+def _has_image_block(messages: list) -> bool:
+    for m in messages or []:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "image_url" for b in content):
+            return True
+    return False
+
+
+_DATA_URL_RE = re.compile(r"^data:(image/[\w.+-]+);base64,(.*)$", re.DOTALL)
+# codex attaches images as FILES (``-i``): map the data-URI MIME back to a file extension.
+# Exactly the formats the upstream vision models accept — anything else must error, not
+# reach the model as a silent placeholder.
+_MIME_EXT = {"image/jpeg": ".jpg", "image/png": ".png",
+             "image/webp": ".webp", "image/gif": ".gif"}
+
+
+def _decode_image_blocks(messages: list) -> list[tuple[str, bytes]]:
+    """Every ``image_url`` block decoded to ``(file extension, bytes)`` for a CLI that
+    attaches images as files. Raises ProviderError on a non-data-URI url, an image type
+    outside ``_MIME_EXT``, or undecodable base64 — a bad image fails the call loudly
+    instead of persisting a can't-see-the-image extraction."""
+    out: list[tuple[str, bytes]] = []
+    for m in messages or []:
+        content = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not (isinstance(block, dict) and block.get("type") == "image_url"):
+                continue
+            url = (block.get("image_url") or {}).get("url", "")
+            match = _DATA_URL_RE.match(url)
+            if not match:
+                raise ProviderError(
+                    "image block isn't a base64 data URI — the codex provider can only "
+                    "attach inline image bytes")
+            mime, b64 = match.groups()
+            ext = _MIME_EXT.get(mime)
+            if ext is None:
+                raise ProviderError(
+                    f"can't process image type {mime} — supported: JPEG, PNG, WebP, GIF")
+            try:
+                out.append((ext, base64.standard_b64decode(b64)))
+            except ValueError as e:   # binascii.Error subclasses ValueError
+                raise ProviderError(f"undecodable base64 image data ({mime}): {e}")
+    return out
 
 
 def _strip_fences(s: str) -> str:
@@ -522,10 +573,13 @@ def _codex_usage() -> dict:
 
 class CodexClient:
     """OpenAI-SDK-shaped client backed by ``codex exec`` — one guarded child per call, billed
-    to the user's ChatGPT subscription (the API-key vars are stripped from the child env). Text
-    only: images in the messages become placeholders. A forced tool becomes an instruction to
-    reply with ONLY the JSON matching the tool's schema, and the first balanced JSON object in
-    the reply is re-wrapped as a tool call so the call sites' tool-call path runs unchanged."""
+    to the user's ChatGPT subscription (the API-key vars are stripped from the child env).
+    Images ARE supported: each ``image_url`` data-URI block is decoded back to a file inside
+    the call's sandbox dir and attached with ``codex exec -i``, so the vision path works on
+    the subscription sign-in; an image the CLI can't carry raises instead of degrading to a
+    placeholder. A forced tool becomes an instruction to reply with ONLY the JSON matching
+    the tool's schema, and the first balanced JSON object in the reply is re-wrapped as a
+    tool call so the call sites' tool-call path runs unchanged."""
 
     EXEC_TIMEOUT = 300
 
@@ -534,7 +588,9 @@ class CodexClient:
         self.completions = self
 
     def create(self, **kw):
-        prompt = _flatten_messages(kw.get("messages") or [])
+        messages = kw.get("messages") or []
+        images = _decode_image_blocks(messages)
+        prompt = _flatten_messages(messages, image_note="[image attached]")
         name = _forced_tool_name(kw)
         schema = None
         if kw.get("tools"):
@@ -549,7 +605,7 @@ class CodexClient:
                            "no prose, no code fences:\n"
                            + json.dumps(schema if schema is not None else {}))
             prompt = f"{prompt}\n\n{instruction}" if prompt else instruction
-        text = self._exec(prompt, timeout=kw.get("timeout"))
+        text = self._exec(prompt, timeout=kw.get("timeout"), images=images)
         if name:
             span = _first_json_object(text)
             arguments = span if span is not None else "{}"
@@ -559,8 +615,11 @@ class CodexClient:
                 finish_reason="tool_calls")
         return _sdk_response(content=text, tool_calls=None, finish_reason="stop")
 
-    def _exec(self, prompt: str, timeout: float | None = None) -> str:
-        """Run one ``codex exec``, capturing the final assistant message. Raises
+    def _exec(self, prompt: str, timeout: float | None = None,
+              images: list[tuple[str, bytes]] | None = None) -> str:
+        """Run one ``codex exec``, capturing the final assistant message. ``images`` —
+        (extension, bytes) pairs from ``_decode_image_blocks`` — are written into the call
+        dir and attached with ``-i`` (removed with the dir afterwards). Raises
         ``ProviderUnavailable`` when the CLI is missing / not logged in and ``ProviderError`` on
         a non-zero exit or empty output. ``timeout`` tightens (never widens) the per-exec
         cap — the agent loop passes its remaining budget so one call can't blow the run's
@@ -573,8 +632,15 @@ class CodexClient:
         call_dir = os.path.join(tempfile.gettempdir(), "kg-codex-cwd", uuid.uuid4().hex)
         os.makedirs(call_dir, exist_ok=True)
         out_file = os.path.join(call_dir, "last-message.txt")
+        img_args: list[str] = []
+        for i, (ext, data) in enumerate(images or []):
+            img_path = os.path.join(call_dir, f"image-{i}{ext}")
+            with open(img_path, "wb") as f:
+                f.write(data)
+            img_args += ["-i", img_path]
         cmd = [bin_, "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
-               "-s", "read-only", "--color", "never", "-C", call_dir, "-o", out_file, "-"]
+               "-s", "read-only", "--color", "never", "-C", call_dir,
+               *img_args, "-o", out_file, "-"]
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                                   env=_codex_child_env(), cwd=call_dir,
@@ -678,7 +744,9 @@ def _claude_logout() -> dict:
 class ClaudeClient:
     """OpenAI-SDK-shaped client backed by ``claude -p`` (Claude Code, non-interactive) — one
     guarded child per call, billed to the user's Claude subscription (the API-key vars are
-    stripped from the child env). Text only: images in the messages become placeholders. A
+    stripped from the child env). Text only: ``claude -p`` has no image-attach flag, so a
+    message carrying an image block raises ProviderError — erroring beats silently sending
+    a placeholder and persisting the model's can't-see-the-image reply as an extraction. A
     forced tool becomes an instruction to reply with ONLY the JSON matching the tool's
     schema, and the first balanced JSON object in the reply is re-wrapped as a tool call so
     the call sites' tool-call path runs unchanged (the CodexClient recipe verbatim).
@@ -697,7 +765,12 @@ class ClaudeClient:
         self.completions = self
 
     def create(self, **kw):
-        prompt = _flatten_messages(kw.get("messages") or [])
+        messages = kw.get("messages") or []
+        if _has_image_block(messages):
+            raise ProviderError(
+                "the Claude CLI provider can't process images — connect ChatGPT (Codex) "
+                "or an API-key provider to ingest images")
+        prompt = _flatten_messages(messages)
         name = _forced_tool_name(kw)
         schema = None
         if kw.get("tools"):
