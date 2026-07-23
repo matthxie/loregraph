@@ -34,9 +34,10 @@ from dataclasses import dataclass, field
 from .config import Config
 from .corpus import CorpusItem
 from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
-                     ProviderUnavailable, StoreError)
+                     ProviderUnavailable, StoreError, UnsupportedMedia)
 from .ingest import _BARE_URL
-from .extractors import Extraction, ExtractedEntity, UsageMeter
+from .extractors import (SUPPORTED_IMAGE_EXTS, Extraction, ExtractedEntity,
+                         UsageMeter)
 from .llm_client import SUPPORTED_KINDS
 from .models import (Belief, Edge, EdgeType, EntityType, NodeType, Provenance,
                      entity_category_for_type)
@@ -350,6 +351,23 @@ class Engine:
             #   - text, no attachment      → a plain text note.
             if readable_media:
                 modality = _attachment_modality(readable_media[0])
+                # Fast-fail what the perception path can't serve, at the API boundary
+                # (clear UnsupportedMedia) rather than deep in extraction:
+                #   - an image in a format no vision provider accepts (.heic/.bmp/.tif…);
+                #   - a media-only non-image file (PDF/audio/…), which would otherwise be
+                #     routed through the vision path as bogus image bytes. A captioned
+                #     non-image file stays valid: the caption is extracted, the file is
+                #     stored-not-perceived (by design).
+                ext = os.path.splitext(readable_media[0])[1].lower()
+                if modality == "image" and ext not in SUPPORTED_IMAGE_EXTS:
+                    raise UnsupportedMedia(
+                        f"can't process image format {ext!r} — convert to JPEG, PNG, "
+                        "WebP, or GIF")
+                if modality == "file" and not has_text:
+                    raise UnsupportedMedia(
+                        f"can't extract content from a {ext or '(no extension)'!r} "
+                        "attachment — only images (JPEG, PNG, WebP, GIF) can be "
+                        "perceived; add a note text or convert the file")
             else:
                 modality = "text"
             item = CorpusItem(id=nid, modality=modality,

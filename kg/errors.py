@@ -18,6 +18,12 @@ class NotFound(EngineError):
     """Unknown episode / entity id."""
 
 
+class UnsupportedMedia(InvalidInput):
+    """A media attachment in a format no extraction path can process (e.g. a PDF or HEIC
+    routed at the perception path). Subclasses InvalidInput so the app router maps it to
+    the same invalid-params code without a protocol change."""
+
+
 class StoreError(EngineError):
     """Persistence layer failed (corrupt/unwritable store)."""
 
