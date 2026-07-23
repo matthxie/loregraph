@@ -53,7 +53,7 @@ import uuid
 
 from .errors import ProviderError, ProviderUnavailable
 
-SUPPORTED_KINDS = ("mock", "none", "openai", "codex", "anthropic", "claude")
+SUPPORTED_KINDS = ("mock", "none", "openai", "codex", "anthropic", "claude", "gemini")
 
 # Billing guard: either of these in codex's child env can route the call off the ChatGPT
 # subscription onto metered API billing.
@@ -74,7 +74,10 @@ _CLAUDE_CANDIDATES = ("~/.claude/local/claude", "~/.local/bin/claude",
 
 # Per-provider default models (see default_model). The CLI kinds deliberately map to None:
 # the subscription CLIs pick their own default and a foreign model id would be rejected.
-_DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
+# gemini serves Google's open Gemma models over the OpenAI-compatible endpoint; the default
+# is the 26B Gemma 4 the answerer is being trialled on (override per-role via Config.rag_model).
+_DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001",
+                   "gemini": "gemma-4-26b-a4b-it"}
 
 # the answerer's OpenAI default (extraction/L3 use the provider default above)
 RAG_OPENAI_DEFAULT = "gpt-5-mini"
@@ -141,6 +144,8 @@ def current_provider() -> dict:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
     elif kind == "openai":
         api_key = os.environ.get("OPENAI_API_KEY")
+    elif kind == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     else:
         api_key = None
     return {"kind": kind, "api_key": api_key}
@@ -160,6 +165,8 @@ def set_active_provider(provider: dict) -> None:
         os.environ["OPENAI_API_KEY"] = api_key
     elif kind == "anthropic" and api_key:
         os.environ["ANTHROPIC_API_KEY"] = api_key
+    elif kind == "gemini" and api_key:
+        os.environ["GEMINI_API_KEY"] = api_key
 
 
 def make_client(provider: dict | None = None):
@@ -179,6 +186,8 @@ def make_client(provider: dict | None = None):
         return CodexClient()
     if kind == "claude":
         return ClaudeClient()
+    if kind == "gemini":
+        return GeminiClient()
     if kind == "openai":
         try:
             import openai
@@ -207,6 +216,8 @@ def llm_available(provider: dict | None = None) -> bool:
         return bool(os.environ.get("OPENAI_API_KEY"))
     if kind == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if kind == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
     if kind == "codex":
         return _codex_login_status()[0]
     if kind == "claude":
@@ -232,6 +243,10 @@ def provider_status(provider: dict | None = None) -> dict:
         ok = bool(os.environ.get("ANTHROPIC_API_KEY"))
         return {"kind": kind, "connected": ok,
                 "detail": "ANTHROPIC_API_KEY set" if ok else "ANTHROPIC_API_KEY missing"}
+    if kind == "gemini":
+        ok = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+        return {"kind": kind, "connected": ok,
+                "detail": "GEMINI_API_KEY set" if ok else "GEMINI_API_KEY missing"}
     if kind == "codex":
         ok, detail = _codex_login_status()
         return {"kind": kind, "connected": ok, "detail": detail}
@@ -394,6 +409,52 @@ def _strip_fences(s: str) -> str:
         if t.endswith("```"):
             t = t[:-3].strip()
     return t
+
+
+def _describe_schema(schema: dict) -> str:
+    """A one-line prose description of a JSON-schema's top-level keys, e.g.
+    ``answer (string, required); citations (array of strings, required) — episode ids``.
+    Handed to a model that can't take a real ``tools`` schema (GeminiClient) INSTEAD of the
+    raw schema JSON — dumping the literal schema object invites the model to echo it back,
+    and the echoed schema (a valid JSON object) then wins the ``_first_json_object`` scan over
+    the real answer. Arrays of objects list their item keys one level deep."""
+    props = (schema or {}).get("properties") or {}
+    required = set((schema or {}).get("required") or [])
+    parts: list[str] = []
+    for key, spec in props.items():
+        spec = spec if isinstance(spec, dict) else {}
+        t = spec.get("type", "value")
+        if t == "array":
+            items = spec.get("items") or {}
+            item_t = items.get("type") or "value"
+            if item_t == "object":
+                sub = ", ".join((items.get("properties") or {}).keys())
+                desc_t = f"array of objects with keys ({sub})" if sub else "array of objects"
+            else:
+                desc_t = f"array of {item_t}s"
+        else:
+            desc_t = t
+        label = f"{key} ({desc_t}{', required' if key in required else ''})"
+        if spec.get("description"):
+            label += f" — {spec['description']}"
+        parts.append(label)
+    return "; ".join(parts)
+
+
+_THOUGHT_RE = re.compile(r"<(thought|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thought(s: str) -> str:
+    """Remove ``<thought>…</thought>`` / ``<thinking>…</thinking>`` reasoning blocks that some
+    models (Gemma 4) emit BEFORE the answer. The draft JSON a model muses over inside its
+    reasoning would otherwise be the first balanced object ``_first_json_object`` finds — so
+    strip the reasoning first. An unclosed opening tag drops everything from it onward."""
+    t = _THOUGHT_RE.sub("", s or "")
+    for tag in ("<thought>", "<thinking>"):
+        i = t.lower().find(tag)
+        if i != -1:
+            t = t[:i]
+    return t.strip()
 
 
 def _first_json_object(raw: str) -> str | None:
@@ -1021,3 +1082,81 @@ class AnthropicClient:
             tool_calls=tool_calls or None,
             finish_reason=finish,
             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+
+
+# --------------------------------------------------------------------------- #
+# GeminiClient — Google's Gemma models over the Gemini OpenAI-compatible endpoint
+# --------------------------------------------------------------------------- #
+class GeminiClient:
+    """OpenAI-SDK-shaped client backed by Google's Gemini OpenAI-compatible endpoint, billed
+    against ``GEMINI_API_KEY`` (or ``GOOGLE_API_KEY``). Used to run the open **Gemma** models
+    (default ``gemma-4-26b-a4b-it``) as the answerer.
+
+    The wrinkle is tool calling: Gemma on the Gemini API does NOT support OpenAI-style
+    ``tools``/``tool_choice`` function calling, but every answerer call forces a
+    ``submit_answer`` tool (kg/rag.py). So — exactly as CodexClient/ClaudeClient do for the
+    text-only CLIs — a forced tool is rewritten into an instruction to "reply with ONLY the
+    JSON matching this schema", the tool machinery is stripped from the request, and the
+    first balanced JSON object in the reply is re-wrapped as a ``message.tool_calls`` entry so
+    rag.py's tool-call path runs unchanged. Gemma 4 also emits a ``<thought>`` reasoning
+    block before the JSON, which ``_strip_thought`` peels off before the JSON scan.
+
+    Everything else (plain content, ``temperature``/``max_tokens``, ``usage``) passes straight
+    through the real ``openai`` SDK pointed at the Gemini base URL."""
+
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    def __init__(self):
+        try:
+            import openai
+        except ImportError as e:
+            raise ProviderUnavailable(f"openai sdk not installed: {e}")
+        key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not key:
+            raise ProviderUnavailable("GEMINI_API_KEY not set")
+        self._client = openai.OpenAI(api_key=key, base_url=self.BASE_URL)
+        self.chat = self
+        self.completions = self
+
+    def create(self, **kw):
+        messages = list(kw.get("messages") or [])
+        name = _forced_tool_name(kw)
+        schema = None
+        if kw.get("tools"):
+            try:
+                schema = kw["tools"][0]["function"]["parameters"]
+            except (KeyError, TypeError, IndexError):
+                schema = None
+        elif isinstance(kw.get("response_format"), dict):
+            schema = kw["response_format"]
+        # Gemma serves plain chat completions only — drop the tool machinery (and the
+        # per-request timeout, which the answerer never sends) before forwarding.
+        passthrough = {k: v for k, v in kw.items()
+                       if k not in ("tools", "tool_choice", "response_format", "timeout")}
+        if name or schema is not None:
+            fields = _describe_schema(schema) if schema else ""
+            instruction = "Reply with ONLY a single JSON object, no prose, no code fences."
+            if fields:
+                instruction += f" Keys: {fields}. Use only the provided context."
+            messages = messages + [{"role": "user", "content": instruction}]
+            # JSON mode keeps the reply to one object (no schema echo, no trailing prose).
+            passthrough["response_format"] = {"type": "json_object"}
+        passthrough["messages"] = messages
+        resp = self._client.chat.completions.create(**passthrough)
+        if not name:
+            return resp
+        content = _strip_thought(resp.choices[0].message.content or "")
+        span = _first_json_object(content)
+        usage = getattr(resp, "usage", None)
+        # When the JSON couldn't be recovered, propagate the REAL finish reason (not
+        # "tool_calls") — Gemma 4's <thought> block can exhaust the token budget before it
+        # reaches the JSON, and rag.py only fires its doubled-budget retry when it sees
+        # finish_reason == "length". Masking that as a successful tool call would strand the
+        # answer empty. On success, report "tool_calls" so the call sites' tool path runs.
+        real_finish = getattr(resp.choices[0], "finish_reason", None) or "stop"
+        return _sdk_response(
+            content=None,
+            tool_calls=[_tool_call(name, span if span is not None else "{}")],
+            finish_reason="tool_calls" if span is not None else real_finish,
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0,
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0)
