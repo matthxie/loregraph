@@ -288,14 +288,24 @@ class Ingestor:
         and would version-append an ep_X_v1 duplicate for every episode. Detect the legacy
         hash on the existing episode / the persisted cache, and on a match UPGRADE the stored
         hash + cache entry to the new formula so the item is treated as unchanged and this
-        fallback fires at most once per item (the next re-ingest hits new_h up front)."""
-        legacy = _sha256(item.modality, content)
-        if existing.content_hash != legacy and legacy not in self.store.hash_cache:
+        fallback fires at most once per item (the next re-ingest hits new_h up front).
+
+        LINK items have a second legacy formula: builds that set text=None on bare-URL
+        captures hashed them with EMPTY content (the salted formula, content=""). Now that
+        the URL is preserved in item.text, an unchanged re-capture computes a different
+        new_h — recognize the empty-content link hash too, or every such re-capture would
+        version-append a duplicate episode."""
+        legacies = [_sha256(item.modality, content)]
+        if item.modality == "link":
+            legacies.append(_sha256(item.modality, "", item.created_at or "", item.id))
+        hit = next((lg for lg in legacies
+                    if existing.content_hash == lg or lg in self.store.hash_cache), None)
+        if hit is None:
             return False
         existing.content_hash = new_h
         self.store.touch_node(existing.id)
         self.store.add_hash(new_h, existing.id)
-        self.store.hash_cache.pop(legacy, None)
+        self.store.hash_cache.pop(hit, None)
         return True
 
     # ------------------------------------------------------------------ chunking
@@ -420,6 +430,12 @@ class Ingestor:
         return Extraction()
 
     def _embed_surface(self, item: CorpusItem, ext: Extraction) -> str:
+        # LINK — item.text is the raw URL (preserved as raw_text); the URL string itself
+        # carries almost no semantic signal, so the surface is the resolved page title +
+        # subject description, with the URL only as a last-resort fallback.
+        if item.modality == "link":
+            page = "\n".join(p for p in (ext.page_title, ext.description) if p)
+            return page or (item.text or item.source_ref or "link")
         if item.text is None:  # described media — the extractor's description is the surface
             return ext.description or (item.label_hint or "media")
         # CAPTIONED IMAGE — the surface is the caption PLUS the vision description, so the

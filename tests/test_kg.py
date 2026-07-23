@@ -28,7 +28,8 @@ from kg.chunkers import (chunk_code, chunk_for, chunk_markdown, chunk_prose,
                          chunk_text, sniff_format)
 from kg.canonicalize import (Canonicalizer, char_entropy, normalize_key,
                              normalize_relation, predicate_cardinality, relation_merge_vetoed)
-from kg.corpus import CorpusItem, load_longmemeval, load_longmemeval_questions
+from kg.corpus import (LME_DIR, CorpusItem, load_longmemeval,
+                       load_longmemeval_questions)
 from kg.embedders import SentenceTransformerEmbedder, get_embedder
 from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation, OpenAIExtractor,
                           ScriptedExtractor, get_extractor)
@@ -732,8 +733,13 @@ def test_viz_payloads_and_html():
     assert "/*__DATA__*/" not in html and "<svg" in html
 
 
+@pytest.mark.skipif(
+    not os.path.exists(os.path.join(LME_DIR, "sample", "episodes.jsonl")),
+    reason="LongMemEval sample tier not built; run "
+           "`python scripts/build_longmemeval.py --tier sample`")
 def test_corpus_loads_from_disk():
-    # the committed `sample` LongMemEval tier (small, capped — ships its episode bodies)
+    # the `sample` LongMemEval tier (small, capped) — only runs where it has been built;
+    # dataset/ is no longer committed
     eps = load_longmemeval("sample", limit=5)
     assert len(eps) == 5
     assert all(e.modality == "text" and e.text and e.created_at for e in eps)
