@@ -22,7 +22,7 @@ import pytest
 
 from kg import Config, KnowledgeGraph
 from kg import dashboard, testrun
-from kg.corpus import CorpusItem
+from kg.corpus import LME_DIR, CorpusItem
 from kg.embedders import SentenceTransformerEmbedder, get_embedder
 from kg.evaluate import _mrr, _recall_at_k
 from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation,
@@ -31,6 +31,13 @@ from kg.metering import UsageMeter, empty_totals, price, totals_of
 from kg.models import EntityType, Provenance
 from kg.rag import RagAnswerer
 from kg.testrun import _article, _dedup, _query_totals, _triage, run_per_instance, run_testrun
+
+# The LongMemEval sample tier's episode bodies are no longer committed (dataset/ was
+# removed from the repo) — tests that ingest it only run where it has been built.
+needs_lme_sample = pytest.mark.skipif(
+    not os.path.exists(os.path.join(LME_DIR, "sample", "episodes.jsonl")),
+    reason="LongMemEval sample tier not built; run "
+           "`python scripts/build_longmemeval.py --tier sample`")
 
 
 def _cfg() -> Config:
@@ -373,6 +380,7 @@ def _patch_offline_extraction(monkeypatch):
     monkeypatch.setattr("kg.graph.get_extractor", lambda cfg: ScriptedExtractor({}))
 
 
+@needs_lme_sample
 def test_run_testrun_writes_artifact(monkeypatch):
     _patch_offline_extraction(monkeypatch)
     # Pin the provider: backends["agent"] reads current_provider()/llm_available() from the
@@ -456,6 +464,7 @@ def test_profiler_spans_and_ambient_activation():
     assert compact({"x": {"seconds": 0.5, "calls": 2}}) == {"x": 0.5}
 
 
+@needs_lme_sample
 def test_summarize_runs(monkeypatch):
     _patch_offline_extraction(monkeypatch)
     tmp = tempfile.mkdtemp()
@@ -472,6 +481,7 @@ def test_summarize_runs(monkeypatch):
 # --------------------------------------------------------------------------- #
 # per-instance LongMemEval protocol (fresh graph per question, no cross-user pooling)
 # --------------------------------------------------------------------------- #
+@needs_lme_sample
 def test_run_per_instance_isolated_and_reconciled(monkeypatch):
     import re
     _patch_offline_extraction(monkeypatch)
@@ -503,6 +513,7 @@ def test_run_per_instance_isolated_and_reconciled(monkeypatch):
     assert len(html) > 5000 and "per-instance" in html
 
 
+@needs_lme_sample
 def test_per_instance_queries_zero_means_none():
     from kg.corpus import iter_lme_instances
     assert list(iter_lme_instances("sample", limit=0)) == []
@@ -530,6 +541,7 @@ class _FakeOccurrenceClient:
         return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
+@needs_lme_sample
 def test_run_per_instance_completeness_tier1_only(monkeypatch):
     """tier 1 (regex capture rate) runs for free on the sample tier's aggregate-shaped
     questions even with tier 2 off; questions without a parseable quantity are skipped
@@ -560,6 +572,7 @@ def test_run_per_instance_completeness_tier1_only(monkeypatch):
     assert "extraction completeness" in html
 
 
+@needs_lme_sample
 def test_run_per_instance_completeness_tier2_runs_and_meters(monkeypatch):
     """tier 2 fires its LLM call for aggregate questions with gold evidence and records
     cost under the 'audit.completeness' site, even when it finds zero occurrences."""
@@ -578,6 +591,7 @@ def test_run_per_instance_completeness_tier2_runs_and_meters(monkeypatch):
     assert run["completeness"]["tier2"]["enabled"] is True
 
 
+@needs_lme_sample
 def test_completeness_none_when_no_aggregate_questions(monkeypatch):
     """A tier with no aggregate-shaped questions (or none with gold evidence) must show
     n/a (None), never a misleading 0 — exercised here via a --limit that starves the
