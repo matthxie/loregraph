@@ -38,8 +38,8 @@ from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
 from .ingest import _BARE_URL
 from .extractors import Extraction, ExtractedEntity, UsageMeter
 from .llm_client import SUPPORTED_KINDS
-from .models import (Belief, Edge, EdgeType, EntityType, NodeType, Provenance,
-                     entity_category_for_type)
+from .models import (Belief, Edge, EdgeType, EntityType, Modality, NodeType,
+                     Provenance, entity_category_for_type)
 
 _STUB = ("profile", "rebuild", "reingest", "maintain", "ensure_model")
 
@@ -291,6 +291,9 @@ class Engine:
             self._g.extractor = _MockExtractor()
         else:
             self._g = KnowledgeGraph.open(store_path, cfg)
+        # Open-boundary compatibility repair: link episodes written before the URL was
+        # preserved as raw_text recover it from source_ref (idempotent, no-op on new stores).
+        self.repair_link_raw_text()
         self._log("info", f"engine open: data_dir={self._data_dir} provider={kind}")
 
     # -------------------------------------------------------------- lifecycle
@@ -331,15 +334,17 @@ class Engine:
         nid = hashlib.sha256(
             f"{note.created_at}\n{note.text}\n{chr(0).join(media_paths)}"
             .encode("utf-8")).hexdigest()[:16]
-        # A note whose entire text is a bare URL (and carries no attachments) is described
-        # media of modality LINK: text=None routes through the extractor's extract_url path
-        # (fetch + subject-scoped extraction), and source_ref is the URL itself so the fetch
-        # and the SOURCE-node provenance both have it.
+        # A note whose entire text is a bare URL (and carries no attachments) is modality
+        # LINK: the modality routes through the extractor's extract_url path (fetch +
+        # subject-scoped extraction) and source_ref is the stripped URL so the fetch and
+        # the SOURCE-node provenance both have it. The byte-exact capture stays in text →
+        # raw_text: when title resolution fails-soft, clients still have the URL to render
+        # instead of an untitled empty card.
         stripped = note.text.strip()
         is_link = has_text and not readable_media and bool(_BARE_URL.match(stripped))
         if is_link:
             item = CorpusItem(id=nid, modality="link", source_ref=stripped,
-                              text=None, created_at=note.created_at)
+                              text=note.text, created_at=note.created_at)
         else:
             # Sniff the attachment's real type so an image attachment is labeled IMAGE — not
             # the blanket "image" for every attachment (which mislabels PDFs etc.), and not
@@ -658,6 +663,38 @@ class Engine:
                 json.dump(marker, f)
         except OSError as e:  # noqa: BLE001 — a marker write failure must not lose the ingest
             self._log("warn", f"code_sync marker write failed: {e}")
+
+    def repair_link_raw_text(self) -> int:
+        """Backfill raw_text on LINK episodes written by builds that stored bare-URL
+        captures with text=None. Such an episode whose page-title fetch also failed has
+        neither a title nor raw_text, so clients render it as an untitled empty card.
+        source_ref still holds the captured URL — copy it into raw_text.
+
+        Idempotent, and deliberately narrow: only valid LINK episodes with EMPTY raw_text
+        and an http(s) source_ref are touched; titles, descriptions, timestamps and any
+        non-empty raw_text are never overwritten. Runs at the engine-open boundary."""
+        store = self._g.store
+        repaired = 0
+        for node in store.nodes.values():
+            if node.ntype != NodeType.EPISODE or not node.valid:
+                continue
+            if node.modality is not Modality.LINK:
+                continue
+            if (node.raw_text or "").strip():
+                continue
+            ref = (node.source_ref or "").strip()
+            if not _BARE_URL.match(ref):
+                continue
+            node.raw_text = ref
+            store.touch_node(node.id)
+            repaired += 1
+        if repaired:
+            # the BM25 corpus is built over episode raw_text and cached against
+            # episode_version — bump it so the repaired text becomes searchable.
+            store.episode_version += 1
+            self._g.save()
+            self._log("info", f"link raw_text repair: {repaired} episode(s) recovered")
+        return repaired
 
     def repair_legacy_media_paths(self) -> int:
         """Reconnect media files to episodes written by the broken packaged drainer.

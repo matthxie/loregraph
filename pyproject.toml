@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "you-kg"
-version = "0.1.0"
+version = "0.1.1"
 description = "Temporal knowledge-graph memory engine: cue-gated extraction, bi-temporal facts, graph-first (PPR) retrieval, one-call RAG answers."
 readme = "README.md"
 authors = [{ name = "Matthew Xie" }]
