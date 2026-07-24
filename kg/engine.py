@@ -30,6 +30,12 @@ import os
 import re
 import types
 from dataclasses import dataclass, field
+from typing import Callable
+
+# Optional cold-import progress hook: called with (done, total) item counts at each batch
+# boundary (after the per-batch checkpoint). Lets a caller stream progress and, in the daemon,
+# pump queued reads between batches so a long import doesn't freeze the single-writer loop.
+ImportProgress = Callable[[int, int], None]
 
 from .config import Config
 from .corpus import CorpusItem
@@ -394,7 +400,8 @@ class Engine:
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
 
-    def import_conversations(self, path: str, source: str = "auto") -> ImportReport:
+    def import_conversations(self, path: str, source: str = "auto",
+                             progress: ImportProgress | None = None) -> ImportReport:
         """Cold-start bulk-import a chat-history export (ChatGPT / Claude / Gemini) into the
         graph (BUILD BRIEF). `source` is a validated, closed set — "chatgpt" | "claude" |
         "gemini" | "auto"; "auto" sniffs the export and resolves to one of the three or
@@ -450,11 +457,14 @@ class Engine:
             self._log("info", f"import {resolved}: {report.episodes_ingested} episodes "
                               f"ingested, {report.skipped} skipped "
                               f"({start + len(chunk)}/{len(items)} sessions)")
+            if progress:
+                progress(min(start + len(chunk), len(items)), len(items))
         self._g.save()
         report.seconds = round(time.time() - t0, 2)
         return report
 
-    def import_vault(self, path: str, extract: bool = True) -> VaultImportReport:
+    def import_vault(self, path: str, extract: bool = True,
+                     progress: ImportProgress | None = None) -> VaultImportReport:
         """Cold-import an Obsidian vault into the graph (BUILD BRIEF). A vault is ALREADY a
         personal knowledge graph — the author curated the links (`[[wikilinks]]`), the topics
         (`#tags` / frontmatter `tags:`), and the identity (`aliases:`) — so this leans on that
@@ -530,6 +540,8 @@ class Engine:
                 self._log("info", f"import vault: {report.episodes_ingested} notes ingested, "
                                   f"{report.skipped} skipped "
                                   f"({start + len(chunk)}/{len(items)})")
+                if progress:
+                    progress(min(start + len(chunk), len(items)), len(items))
 
             # PASS 2 — now every note's Episode exists, wire the human-authored structure:
             # deterministic tags (TAGGED_AS) + resolved wikilinks (HYPERLINKS_TO).

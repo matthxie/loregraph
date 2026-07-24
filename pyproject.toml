@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "you-kg"
-version = "0.1.1"
+version = "0.1.16"
 description = "Temporal knowledge-graph memory engine: cue-gated extraction, bi-temporal facts, graph-first (PPR) retrieval, one-call RAG answers."
 readme = "README.md"
 authors = [{ name = "Matthew Xie" }]
@@ -48,4 +48,6 @@ research = [
 kg = "kg.cli:main"
 
 [tool.setuptools]
-packages = ["kg"]
+# Include the cold-import subpackages — the 0.1.15 wheel shipped with only "kg", so
+# kg/code (repo ingest) and kg/imports (chat/vault) were missing and import_* crashed.
+packages = ["kg", "kg.code", "kg.imports"]
