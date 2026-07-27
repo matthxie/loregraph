@@ -30,13 +30,20 @@ import os
 import re
 import types
 from dataclasses import dataclass, field
+from typing import Callable
+
+# Optional cold-import progress hook: called with (done, total) item counts at each batch
+# boundary (after the per-batch checkpoint). Lets a caller stream progress and, in the daemon,
+# pump queued reads between batches so a long import doesn't freeze the single-writer loop.
+ImportProgress = Callable[[int, int], None]
 
 from .config import Config
 from .corpus import CorpusItem
 from .errors import (EngineError, InvalidInput, NotFound, ProviderError,
-                     ProviderUnavailable, StoreError)
+                     ProviderUnavailable, StoreError, UnsupportedMedia)
 from .ingest import _BARE_URL
-from .extractors import Extraction, ExtractedEntity, UsageMeter
+from .extractors import (SUPPORTED_IMAGE_EXTS, Extraction, ExtractedEntity,
+                         UsageMeter)
 from .llm_client import SUPPORTED_KINDS
 from .models import (Belief, Edge, EdgeType, EntityType, Modality, NodeType,
                      Provenance, entity_category_for_type)
@@ -355,6 +362,23 @@ class Engine:
             #   - text, no attachment      → a plain text note.
             if readable_media:
                 modality = _attachment_modality(readable_media[0])
+                # Fast-fail what the perception path can't serve, at the API boundary
+                # (clear UnsupportedMedia) rather than deep in extraction:
+                #   - an image in a format no vision provider accepts (.heic/.bmp/.tif…);
+                #   - a media-only non-image file (PDF/audio/…), which would otherwise be
+                #     routed through the vision path as bogus image bytes. A captioned
+                #     non-image file stays valid: the caption is extracted, the file is
+                #     stored-not-perceived (by design).
+                ext = os.path.splitext(readable_media[0])[1].lower()
+                if modality == "image" and ext not in SUPPORTED_IMAGE_EXTS:
+                    raise UnsupportedMedia(
+                        f"can't process image format {ext!r} — convert to JPEG, PNG, "
+                        "WebP, or GIF")
+                if modality == "file" and not has_text:
+                    raise UnsupportedMedia(
+                        f"can't extract content from a {ext or '(no extension)'!r} "
+                        "attachment — only images (JPEG, PNG, WebP, GIF) can be "
+                        "perceived; add a note text or convert the file")
             else:
                 modality = "text"
             item = CorpusItem(id=nid, modality=modality,
@@ -376,7 +400,8 @@ class Engine:
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
 
-    def import_conversations(self, path: str, source: str = "auto") -> ImportReport:
+    def import_conversations(self, path: str, source: str = "auto",
+                             progress: ImportProgress | None = None) -> ImportReport:
         """Cold-start bulk-import a chat-history export (ChatGPT / Claude / Gemini) into the
         graph (BUILD BRIEF). `source` is a validated, closed set — "chatgpt" | "claude" |
         "gemini" | "auto"; "auto" sniffs the export and resolves to one of the three or
@@ -432,11 +457,14 @@ class Engine:
             self._log("info", f"import {resolved}: {report.episodes_ingested} episodes "
                               f"ingested, {report.skipped} skipped "
                               f"({start + len(chunk)}/{len(items)} sessions)")
+            if progress:
+                progress(min(start + len(chunk), len(items)), len(items))
         self._g.save()
         report.seconds = round(time.time() - t0, 2)
         return report
 
-    def import_vault(self, path: str, extract: bool = True) -> VaultImportReport:
+    def import_vault(self, path: str, extract: bool = True,
+                     progress: ImportProgress | None = None) -> VaultImportReport:
         """Cold-import an Obsidian vault into the graph (BUILD BRIEF). A vault is ALREADY a
         personal knowledge graph — the author curated the links (`[[wikilinks]]`), the topics
         (`#tags` / frontmatter `tags:`), and the identity (`aliases:`) — so this leans on that
@@ -512,6 +540,8 @@ class Engine:
                 self._log("info", f"import vault: {report.episodes_ingested} notes ingested, "
                                   f"{report.skipped} skipped "
                                   f"({start + len(chunk)}/{len(items)})")
+                if progress:
+                    progress(min(start + len(chunk), len(items)), len(items))
 
             # PASS 2 — now every note's Episode exists, wire the human-authored structure:
             # deterministic tags (TAGGED_AS) + resolved wikilinks (HYPERLINKS_TO).

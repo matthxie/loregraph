@@ -34,6 +34,7 @@ from typing import Protocol
 from .backoff import call_with_backoff
 from .config import Config
 from .cues import cue_kinds, has_cue
+from .errors import UnsupportedMedia
 from .llm_client import llm_available, make_client, resolve_model
 from .metering import UsageMeter
 from .models import EntityCategory, EntityType, Provenance, entity_category_for_type
@@ -625,13 +626,43 @@ def _fallback_url_description(signals: dict) -> str:
 # Image ingest: MIME sniff + graph-aligned vision prompt
 # --------------------------------------------------------------------------- #
 # Sniff the real image type for the data URI: a PNG/webp/gif sent as image/jpeg can be
-# rejected or mis-decoded by the vision endpoint. Unknown extensions default to jpeg.
+# rejected or mis-decoded by the vision endpoint.
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                ".webp": "image/webp", ".gif": "image/gif"}
+# The image formats the vision path can actually serve (every provider — OpenAI/Anthropic
+# APIs and the codex CLI — accepts exactly these). The engine's fast-fail attachment
+# validation imports this so its answer can't drift from the extractor's.
+SUPPORTED_IMAGE_EXTS = frozenset(_IMAGE_MIME)
+
+# Content magic numbers: an import can hand us bytes in an extension-less tempfile
+# (kg/imports/normalize.py writes ".img"), so the header settles what the bytes are
+# when the extension doesn't.
+_IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"),
+                (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
 
 
 def _sniff_image_mime(path: str) -> str:
-    return _IMAGE_MIME.get(os.path.splitext(path or "")[1].lower(), "image/jpeg")
+    """The image's real MIME type, from the extension or (for unknown extensions) the file
+    header. A format outside _IMAGE_MIME raises UnsupportedMedia — sending it anyway (the
+    old default-to-jpeg) makes every provider fail or, worse, answer 'I can't see an image'
+    and have that junk persisted as the episode's retrieval surface."""
+    ext = os.path.splitext(path or "")[1].lower()
+    mime = _IMAGE_MIME.get(ext)
+    if mime:
+        return mime
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except OSError:
+        head = b""
+    for magic, m in _IMAGE_MAGIC:
+        if head.startswith(magic):
+            return m
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    raise UnsupportedMedia(
+        f"can't process media format {ext or '(no extension)'!r} — "
+        "supported image formats: JPEG, PNG, WebP, GIF")
 
 
 # Graph-aligned so an ingested image lands as the SAME shape of record a conversation
@@ -953,10 +984,11 @@ class OpenAIExtractor:
         """Perceive an image into a graph-aligned record (the SAME shape a conversation
         produces): a one-line `description` retrieval surface plus concept/work/person/place
         entities and me-anchored relations — never a catalog of literal visual objects. The
-        data URI's MIME is sniffed from the real extension (a PNG sent as image/jpeg fails)."""
+        data URI's MIME is sniffed from the real extension / file header (a PNG sent as
+        image/jpeg fails); an unsupported format raises UnsupportedMedia before any read."""
+        mime = _sniff_image_mime(image_path)
         with open(image_path, "rb") as f:
             data = base64.standard_b64encode(f.read()).decode()
-        mime = _sniff_image_mime(image_path)
         hint = f"\n\nThe image may contain: {label_hint}." if label_hint else ""
         blocks = [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}},

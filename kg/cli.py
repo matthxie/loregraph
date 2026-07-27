@@ -382,9 +382,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m kg")
     p.add_argument("--store", default=DEFAULT_STORE, help="path to the SQLite graph store")
     p.add_argument("--provider", default=None,
-                   choices=["mock", "none", "openai", "codex", "anthropic"],
+                   choices=["mock", "none", "openai", "codex", "anthropic", "claude", "gemini"],
                    help="LLM provider for this run; routes every LLM call site through it "
-                        "(e.g. --provider codex → ChatGPT-subscription codex shim). Default: "
+                        "(e.g. --provider codex → ChatGPT-subscription codex shim, "
+                        "--provider gemini → Gemma over the Gemini API). Default: "
                         "leave the env as-is (honours KG_LLM).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
