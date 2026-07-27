@@ -704,6 +704,7 @@ class CodexClient:
                *img_args, "-o", out_file, "-"]
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                  encoding="utf-8",
                                   env=_codex_child_env(), cwd=call_dir,
                                   timeout=cap)
         except subprocess.TimeoutExpired:
@@ -879,6 +880,7 @@ class ClaudeClient:
             cmd += ["--model", model]
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                  encoding="utf-8",
                                   env=_claude_child_env(), cwd=call_dir,
                                   timeout=cap)
         except subprocess.TimeoutExpired:
