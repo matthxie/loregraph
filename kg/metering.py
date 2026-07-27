@@ -18,9 +18,9 @@ Rates are USD per **million** tokens (input, output, cache-read ≈ 0.1×input,
 cache-write/5-min ≈ 1.25×input):
 
     gpt-4o-mini                   0.15 / 0.60  / 0.075 / 0.00  (legacy extractor default)
-    gpt-5.4-nano                  0.20 / 1.25  / 0.02  / 0.00  (app-key extractor pin)
-    gpt-5.6-luna                  1.00 / 6.00  / 0.10  / 0.00  (app-key RAG answerer pin)
-    gpt-5.6-terra                 2.50 / 15.00 / 0.25  / 0.00  (app-key agentic tier)
+    gpt-5.4-nano                  0.20 / 1.25  / 0.02  / 0.25  (app-key extractor pin)
+    gpt-5.6-luna                  1.00 / 6.00  / 0.10  / 1.25  (app-key RAG answerer pin)
+    gpt-5.6-terra                 2.50 / 15.00 / 0.25  / 3.125 (app-key agentic tier)
     claude-haiku-4-5(-20251001)   1.00 / 5.00  / 0.10 / 1.25   (legacy reference)
     claude-sonnet-4-6             3.00 / 15.00 / 0.30 / 3.75   (legacy reference)
     claude-opus-4-8               5.00 / 25.00 / 0.50 / 6.25   (legacy reference)
@@ -42,11 +42,12 @@ PRICING: dict[str, tuple[float, float, float, float]] = {
     "gpt-5":                     (1.25 / _M, 10.00 / _M, 0.125 / _M, 0.00),
     "gpt-5-mini":                (0.25 / _M, 2.00 / _M, 0.025 / _M, 0.00),
     "gpt-5-nano":                (0.05 / _M, 0.40 / _M, 0.005 / _M, 0.00),
-    # gpt-5.4/5.6 (July 2026 rates): same 10%-of-input cached read, no write surcharge.
-    "gpt-5.4-nano":              (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.00),
-    "gpt-5.4-nano-2026-03-17":   (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.00),
-    "gpt-5.6-luna":              (1.00 / _M, 6.00 / _M, 0.10 / _M, 0.00),
-    "gpt-5.6-terra":             (2.50 / _M, 15.00 / _M, 0.25 / _M, 0.00),
+    # gpt-5.4/5.6 (July 2026 rates): 10%-of-input cached reads, and cache WRITES at 1.25x
+    # input (nano's is derived from that family rule; luna/terra are published figures).
+    "gpt-5.4-nano":              (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.25 / _M),
+    "gpt-5.4-nano-2026-03-17":   (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.25 / _M),
+    "gpt-5.6-luna":              (1.00 / _M, 6.00 / _M, 0.10 / _M, 1.25 / _M),
+    "gpt-5.6-terra":             (2.50 / _M, 15.00 / _M, 0.25 / _M, 3.125 / _M),
     "claude-haiku-4-5-20251001": (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-haiku-4-5":          (1.00 / _M, 5.00 / _M, 0.10 / _M, 1.25 / _M),
     "claude-sonnet-4-6":         (3.00 / _M, 15.00 / _M, 0.30 / _M, 3.75 / _M),
@@ -99,6 +100,14 @@ def _usage_fields(usage) -> tuple[int, int, int, int]:
         if cached:
             cr = cached
             i = max(0, i - cached)
+        # Cache WRITES are a third rate (1.25x input on the gpt-5 families), reported in the
+        # same details object and — like cached — already counted inside prompt_tokens.
+        # Missing it under-bills every chained call, and the app now consumes these dollars
+        # as a real spend cap, so under-billing is the direction that actually hurts.
+        written = int(getattr(ptd, "cache_write_tokens", 0) or 0) if ptd is not None else 0
+        if written:
+            cw = written
+            i = max(0, i - written)
     return (i, o, cr, cw)
 
 
