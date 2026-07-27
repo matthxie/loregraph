@@ -4,8 +4,9 @@ This branch is **half of a two-repo experiment**. Its other half is the `new-app
 branch of [`foca-apps/brainbrain`](https://github.com/foca-apps/brainbrain), and the two
 only work together.
 
-**Not aimed at `main`.** Do not merge, rebase, or reconcile this branch with `main` by
-reflex — it may never land there. `main` moving on is expected and fine.
+**Not aimed at `main`.** Merging `main` INTO this branch is fine and expected — take
+upstream's fixes. What must not happen is the reverse: landing this branch on `main`, or
+undoing its shape to match main's. `main` moving on is expected and fine.
 
 ## What changed here, and why the app needs it
 
