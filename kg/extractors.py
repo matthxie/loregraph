@@ -876,18 +876,31 @@ class OpenAIExtractor:
         import json
         # explicit llm_model wins; unset resolves to the active provider's default
         model = resolve_model(self.config.llm_model)
+        kwargs: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": self._system},
+                {"role": "user", "content": content_blocks},
+            ],
+            "tools": [GRAPH_TOOL],
+            "tool_choice": {"type": "function", "function": {"name": "emit_graph"}},
+        }
+        # gpt-5 / o-series models reject `max_tokens` (they want max_completion_tokens) and
+        # any non-default temperature; 4o-era models keep the old params. Same split the RAG
+        # answerer carries (kg/rag.py) and for the same reason: getting it wrong turns every
+        # extraction into an invalid_request_error.
+        if (model or "").startswith(("gpt-5", "o1", "o3", "o4")):
+            kwargs["max_completion_tokens"] = self.config.extract_max_tokens
+            # Extraction is transcription, not deliberation — reasoning tokens bill as output
+            # and buy nothing here. The 5.4+/5.6 generation spells "off" as `none` (verified
+            # live 2026-07-26; the older gpt-5 `minimal` is rejected by these models).
+            if (model or "").startswith(("gpt-5.4", "gpt-5.5", "gpt-5.6")):
+                kwargs["reasoning_effort"] = "none"
+        else:
+            kwargs["max_tokens"] = self.config.extract_max_tokens
+            kwargs["temperature"] = 0
         with prof_span("extract.llm"):
-            msg = call_with_backoff(lambda: self.client.chat.completions.create(
-                model=model,
-                max_tokens=self.config.extract_max_tokens,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": self._system},
-                    {"role": "user", "content": content_blocks},
-                ],
-                tools=[GRAPH_TOOL],
-                tool_choice={"type": "function", "function": {"name": "emit_graph"}},
-            ))
+            msg = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs))
         self.meter.record("extract", model or "cli-default", msg)
         tc = getattr(msg.choices[0].message, "tool_calls", None) if msg.choices else None
         if tc and tc[0].function.name == "emit_graph":
@@ -896,6 +909,11 @@ class OpenAIExtractor:
 
     def _reflexion(self, text: str, first: Extraction) -> Extraction:
         if not self.config.reflexion:
+            return first
+        # A short note doesn't have enough surface to hide an omission: the recall pass on it
+        # doubles the per-entry LLM spend for near-zero found items, so it is gated to entries
+        # long enough to plausibly bury one.
+        if len(text) < self.config.reflexion_min_chars:
             return first
         tags = ", ".join(first.tags) or "(none)"
         ents = ", ".join(e.name for e in first.entities) or "(none)"

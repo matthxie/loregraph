@@ -948,6 +948,12 @@ class OpenAIAnswerer:
         }
         if (model or "").startswith(("gpt-5", "o1", "o3", "o4")):
             token_key = "max_completion_tokens"
+            # Grounded summarization needs no thinking budget, and reasoning tokens bill as
+            # output (they are also what makes finish_reason="length" eat the whole cap —
+            # see the retry below). The 5.4+/5.6 generation spells "off" as `none`; the
+            # older gpt-5 `minimal` is rejected by these models (verified live 2026-07-26).
+            if (model or "").startswith(("gpt-5.4", "gpt-5.5", "gpt-5.6")):
+                kwargs["reasoning_effort"] = "none"
         else:
             token_key = "max_tokens"
             kwargs["temperature"] = 0

@@ -65,6 +65,7 @@ class Config:
     extract_max_chars: int = 12000    # per-call input cap; MUST be >= long_doc_chars
     extract_max_tokens: int = 4000    # emit_graph output ceiling; too low truncates mid-JSON
     lead_chars: int = 2000            # embed the lead section for very long docs
+    reflexion_min_chars: int = 400    # skip the recall pass below this (halves short-note cost)
 
     # -- tag drift control: L1/L2 merge thresholds -----------------------------
     syn_link_threshold: float = 0.85  # ENTITY cosine > → SIMILAR_TO link (don't merge)
