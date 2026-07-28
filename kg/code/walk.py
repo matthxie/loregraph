@@ -22,15 +22,9 @@ _README_CAP = 8000
 _MANIFEST_CAP = 4000
 
 
-def _read(repo: str, name: str, cap: int) -> str | None:
-    full = os.path.join(repo, name)
-    if not os.path.isfile(full):
-        return None
-    try:
-        with open(full, encoding="utf-8", errors="ignore") as f:
-            return f.read(cap)
-    except OSError:
-        return None
+def _read(repo: str, name: str, cap: int, ref: str) -> str | None:
+    body = git.read_file(repo, name, ref)
+    return body[:cap] if body else None
 
 
 def _tree_sketch(files: list[str], max_lines: int = 60) -> str:
@@ -100,22 +94,22 @@ def _parse_libraries(manifests: dict[str, str]) -> list[str]:
     return libs[:40]
 
 
-def gather_repo_signals(repo: str) -> dict:
-    """Assemble the repo-summary signal block: {name, readme, manifests, libraries, tree}.
-    Purely deterministic; the LLM (extract_repo) turns it into the summary record."""
+def gather_repo_signals(repo: str, ref: str = "HEAD") -> dict:
+    """Assemble the repo-summary signal block: {name, readme, manifests, libraries, tree}, read
+    out of `ref`'s tree. Purely deterministic; the LLM (extract_repo) turns it into the summary."""
     name = git.repo_name(repo)
     readme = ""
     for rn in _README_NAMES:
-        got = _read(repo, rn, _README_CAP)
+        got = _read(repo, rn, _README_CAP, ref)
         if got:
             readme = got
             break
     manifests: dict[str, str] = {}
     for mn in _MANIFEST_NAMES:
-        got = _read(repo, mn, _MANIFEST_CAP)
+        got = _read(repo, mn, _MANIFEST_CAP, ref)
         if got:
             manifests[mn] = got
-    files = git.list_source_files(repo)
+    files = git.list_source_files(repo, ref)
     return {
         "name": name,
         "readme": readme,

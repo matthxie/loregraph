@@ -1,9 +1,13 @@
 """Thin subprocess wrapper over git — the oracle for codebase ingestion.
 
 Everything here is deterministic and offline: `git log`, `git show`, `git diff
---name-status`, `git ls-files`. No network, no state beyond the repo on disk. The
+--name-status`, `git ls-tree`. No network, no state beyond the repo on disk. The
 salience gate (skip merges / version bumps / chore / lockfile-only / whitespace-only)
 runs BEFORE any LLM call so the event layer stays a record of real work, not churn.
+
+Everything is REF-ANCHORED: the repo state is read out of a named ref's tree via plumbing
+(`ls-tree` / `show <ref>:<path>`), never off the working directory, so whatever branch
+happens to be checked out is irrelevant to what gets ingested.
 """
 from __future__ import annotations
 
@@ -91,8 +95,8 @@ class SalientCommit:
 
 def _run(repo: str, args: list[str], *, check: bool = True) -> str:
     try:
-        proc = subprocess.run(["git", "-C", repo, *args],
-                              capture_output=True, text=True, check=False)
+        proc = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", check=False)
     except FileNotFoundError as e:  # git not installed
         raise GitError("git executable not found") from e
     if check and proc.returncode != 0:
@@ -112,6 +116,32 @@ def head_sha(repo: str) -> str | None:
     return out or None
 
 
+def resolve_ref(repo: str, ref: str) -> str | None:
+    """The commit SHA a ref names, or None if it doesn't resolve (bad branch, empty repo)."""
+    out = _run(repo, ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], check=False)
+    return out.strip() or None
+
+
+def ref_label(repo: str, ref: str) -> str:
+    """The name to stamp episodes with. "HEAD" resolves to the checked-out branch when there
+    is one, so a manual import and a tracked sync of the same branch land on the same label."""
+    if ref and ref != "HEAD":
+        return ref
+    name = _run(repo, ["rev-parse", "--abbrev-ref", "HEAD"], check=False).strip()
+    return name if name and name != "HEAD" else "HEAD"
+
+
+def is_ancestor(repo: str, base: str, ref: str) -> bool:
+    """True when `base` is reachable from `ref` — i.e. `base..ref` is a sane commit range.
+    False after a rebase / force-push / branch swap (and for any unresolvable ref)."""
+    try:
+        proc = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", base, ref],
+                              capture_output=True, text=True, check=False)
+    except FileNotFoundError as e:
+        raise GitError("git executable not found") from e
+    return proc.returncode == 0
+
+
 def repo_name(path: str) -> str:
     """The repo's display name — the toplevel directory basename."""
     top = _run(path, ["rev-parse", "--show-toplevel"], check=False).strip()
@@ -124,19 +154,22 @@ def is_source_path(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in SOURCE_EXTS
 
 
-def get_commits(repo: str, *, since: str | None = None, after_sha: str | None = None,
-                max_count: int = 200) -> list[Commit]:
+def get_commits(repo: str, *, ref: str = "HEAD", base: str | None = None,
+                since: str | None = None, max_count: int = 200) -> list[Commit]:
     """Commits in CHRONOLOGICAL order (oldest→newest, so NEXT edges chain parent→child).
 
-    after_sha → only `after_sha..HEAD` (incremental re-sync). Else `since` (ISO date) or the
-    last `max_count` commits (bootstrap). `--reverse` orders the selected set oldest-first."""
+    base → only `base..ref` (incremental re-sync; the caller has already checked that base is
+    an ancestor). Else `since` (ISO date) or the last `max_count` commits reachable from ref.
+    `--reverse` orders the selected set oldest-first."""
     args = ["log", f"--format={_LOG_FMT}", "--reverse"]
-    if after_sha:
-        args.append(f"{after_sha}..HEAD")
-    elif since:
-        args += ["--since", since]
-    elif max_count:
-        args += ["-n", str(max_count)]
+    if base:
+        args.append(f"{base}..{ref}")
+    else:
+        if since:
+            args += ["--since", since]
+        elif max_count:
+            args += ["-n", str(max_count)]
+        args.append(ref)
     raw = _run(repo, args)
     commits: list[Commit] = []
     for rec in raw.split(_RS):
@@ -200,18 +233,40 @@ def salient_commit(repo: str, commit: Commit, *, diff_cap: int) -> SalientCommit
     return SalientCommit(commit=commit, changes=changes, diff=diff)
 
 
-def list_source_files(repo: str) -> list[str]:
-    """Source files tracked at HEAD, allowlisted + de-vendored, in sorted order."""
-    raw = _run(repo, ["ls-files"])
-    return sorted(p for p in (ln.strip() for ln in raw.splitlines())
+def list_source_files(repo: str, ref: str = "HEAD") -> list[str]:
+    """Source files in `ref`'s tree, allowlisted + de-vendored, sorted. Reads the ref's tree,
+    not the working directory, so the checked-out branch doesn't matter."""
+    raw = _run(repo, ["ls-tree", "-r", "--name-only", "-z", ref])
+    return sorted(p for p in (part.strip() for part in raw.split("\0"))
                   if p and is_source_path(p))
 
 
-def read_file(repo: str, path: str) -> str | None:
-    """The current on-disk content of a tracked file (HEAD working tree). None if unreadable."""
-    full = os.path.join(repo, path)
-    try:
-        with open(full, encoding="utf-8", errors="ignore") as f:
-            return f.read()
-    except OSError:
-        return None
+def read_file(repo: str, path: str, ref: str = "HEAD") -> str | None:
+    """The content of `path` as of `ref`. None if the blob doesn't exist there."""
+    out = _run(repo, ["show", f"{ref}:{path}"], check=False)
+    return out or None
+
+
+def changed_files(repo: str, base: str, ref: str) -> tuple[set[str], set[str]]:
+    """(changed_or_added, deleted) source-file paths over `base..ref`, following renames
+    (an R is a delete of old_path + a change at new_path)."""
+    changed: set[str] = set()
+    deleted: set[str] = set()
+    raw = _run(repo, ["diff", "--name-status", "-M", f"{base}..{ref}"])
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        code = parts[0].strip()
+        if code[:1] in ("R", "C") and len(parts) >= 3:
+            old, new = parts[1], parts[2]
+            if is_source_path(old):
+                deleted.add(old)
+            if is_source_path(new):
+                changed.add(new)
+        elif len(parts) >= 2:
+            path = parts[1]
+            if not is_source_path(path):
+                continue
+            (deleted if code[:1] == "D" else changed).add(path)
+    return changed, deleted

@@ -94,7 +94,7 @@ def _write(repo: str, rel: str, body: str) -> None:
 
 def _fixture_repo() -> str:
     repo = tempfile.mkdtemp(prefix="fixrepo_")
-    _git(repo, "init", "-q")
+    _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "commit.gpgsign", "false")
     # 1. feat commit (creates payments.py + a README so the summary has real signal)
     _write(repo, "README.md", "# payapp\n\nA tiny payments service.\n")
@@ -280,4 +280,73 @@ def test_repo_summary_and_modifies_edges():
     assert any(store.get_node(t).source_ref.endswith("/payments.py") for t in touched)
     # and NEXT chains the salient commits into a timeline
     assert rep["next_edges"] == 1
+    eng.close()
+
+
+# --------------------------------------------------------------------------- #
+# ref-anchoring (Phase 2a): what's ingested follows the REF, not the checkout
+# --------------------------------------------------------------------------- #
+def _file_text(eng, path_suffix: str) -> str:
+    """Concatenated text of the valid file episodes for a path (chunks joined)."""
+    eps = [n for n in _code_episodes(eng, "file:") if n.source_ref.endswith(path_suffix)]
+    return "\n".join(n.raw_text or "" for n in eps)
+
+
+def test_ingest_follows_the_ref_not_the_checked_out_branch():
+    eng = _engine()
+    repo = _fixture_repo()
+    # a divergent branch whose payments.py is DIFFERENT, and leave it checked out
+    _git(repo, "checkout", "-q", "-b", "side")
+    _write(repo, "payments.py", "def only_on_side():\n    return 'side-branch-marker'\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: side experiment", when="2026-07-10T10:00:00")
+
+    rep = eng.ingest_repo(repo, ref="main")
+    assert rep["ref"] == "main"
+    assert rep["head"] == _git(repo, "rev-parse", "main").strip()
+    # main's payments.py won, even though `side` is what's on disk
+    text = _file_text(eng, "/payments.py")
+    assert "idempotency_key" in text and "side-branch-marker" not in text
+    # and the episodes are keyed by (ref, path) so 2b can reconcile per branch
+    assert any(n.source_ref.startswith("file:") and "@main/" in n.source_ref
+               for n in _code_episodes(eng, "file:"))
+    eng.close()
+
+
+def test_base_ancestor_ingests_only_the_commit_range():
+    eng = _engine()
+    repo = _fixture_repo()
+    base = _git(repo, "rev-parse", "main").strip()
+    _write(repo, "payments.py", _PAY_V2 + "\n\ndef refund(charge_id):\n    return gateway.refund(charge_id)\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: add refund path", when="2026-07-04T10:00:00")
+
+    rep = eng.ingest_repo(repo, ref="main", base=base)
+    assert rep["full"] is False and rep["base"] == base
+    assert rep["commits_seen"] == 1 and rep["commits_ingested"] == 1
+    eng.close()
+
+
+def test_base_that_is_not_an_ancestor_falls_back_to_a_full_ingest():
+    eng = _engine()
+    repo = _fixture_repo()
+    # a commit on a branch that main never sees — a stand-in for a rebase / force-push / swap
+    _git(repo, "checkout", "-q", "-b", "orphan")
+    _write(repo, "orphan.py", "X = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: orphan work", when="2026-07-09T10:00:00")
+    stale_base = _git(repo, "rev-parse", "orphan").strip()
+
+    rep = eng.ingest_repo(repo, ref="main", base=stale_base)
+    assert rep["full"] is True and rep["base"] is None
+    assert any("not an ancestor" in note for note in rep["notes"])
+    assert rep["commits_seen"] == 3      # main's whole history, not a range
+    eng.close()
+
+
+def test_unresolvable_ref_is_invalid_input():
+    from kg.engine import InvalidInput
+    eng = _engine()
+    with pytest.raises(InvalidInput):
+        eng.ingest_repo(_fixture_repo(), ref="no-such-branch")
     eng.close()

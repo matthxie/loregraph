@@ -59,10 +59,10 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif
                ".tiff"}
 
 
-def _repo_marker_key(path: str) -> str:
-    """Sync-marker key for a repo: its absolute on-disk path (so two repos with the same
-    basename don't share a last-SHA)."""
-    return os.path.abspath(os.path.expanduser(path.rstrip("/")))
+def _repo_marker_key(path: str, ref: str = "HEAD") -> str:
+    """Sync-marker key for a repo + ref: the absolute on-disk path (so two repos with the same
+    basename don't share a last-SHA) plus the ref (so two branches don't either)."""
+    return f"{os.path.abspath(os.path.expanduser(path.rstrip('/')))}@{ref}"
 
 
 def _attachment_modality(path: str | None) -> str:
@@ -636,38 +636,40 @@ class Engine:
             resolved += 1
         return resolved, unresolved
 
-    def ingest_repo(self, path: str, since: str | None = None,
-                    max_commits: int = 200) -> dict:
-        """Ingest a git repo's memory: its commit history (event layer) + a repo summary
-        (bridge) + its current source files (thin state layer) into this graph, all
-        me-anchored. Idempotent per commit SHA; on a re-sync only `last..HEAD` new commits
-        and the changed-file set are processed (a stored last-SHA per repo is the marker).
+    def ingest_repo(self, path: str, since: str | None = None, max_commits: int = 200,
+                    ref: str = "HEAD", base: str | None = None) -> dict:
+        """Ingest a git repo's memory AS OF `ref`: its commit history (event layer) + a repo
+        summary (bridge) + that ref's source files (thin state layer) into this graph, all
+        me-anchored. The ref's tree is read via git plumbing, so whatever branch is checked
+        out doesn't affect what lands in the graph.
 
-        Returns a small report dict (repo, head, counts). Branches / history rewrites are
-        out of scope — linear history on the current branch is assumed.
+        Idempotent per commit SHA. `base` (the caller's last-synced commit) makes the run
+        incremental over `base..ref`; if base isn't an ancestor of ref (rebase, force-push,
+        branch swap) the engine falls back to a full ingest of ref on its own, so callers can
+        always just pass their marker. Omitting `base` falls back to this engine's own stored
+        per-(path, ref) marker.
 
-        FOLLOW-UP (deferred, not this repo): expose this over the wire by adding an
-        `ingest.repo` verb to brainbrain/engine/daemon.py and bumping PROTOCOL_MINOR with a
-        capability-probe, per the additive v1.1 pattern (mirrors how ingest of media/links
-        was surfaced). Nothing here needs to change for that."""
+        Returns a small report dict (repo, ref, head, counts)."""
         self._check()
         from .code import ingest_repo as _ingest_repo
         from .code.git import GitError
+        ref = ref or "HEAD"
         marker = self._code_sync_load()
+        key = _repo_marker_key(path, ref)
         try:
-            report = _ingest_repo(self._g, path, since=since,
-                                  after_sha=marker.get(_repo_marker_key(path)),
-                                  max_commits=max_commits)
+            report = _ingest_repo(self._g, path, ref=ref, base=base or marker.get(key),
+                                  since=since, max_commits=max_commits)
         except GitError as e:
             raise InvalidInput(str(e)) from e
         except Exception as e:  # noqa: BLE001 — taxonomy boundary (§7)
             raise StoreError(f"repo ingest failed: {e}") from e
-        if report.head_sha:                     # advance the sync marker to HEAD
-            marker[_repo_marker_key(path)] = report.head_sha
-            marker[report.repo] = report.head_sha
+        if report.head_sha:                     # advance the sync marker to the ref's sha
+            marker[key] = report.head_sha
+            marker[f"{report.repo}@{report.ref}"] = report.head_sha
             self._code_sync_save(marker)
         self._g.save()
-        return {"repo": report.repo, "head": report.head_sha,
+        return {"repo": report.repo, "ref": report.ref, "head": report.head_sha,
+                "base": report.base_sha, "full": report.full,
                 "summarized": report.summarized,
                 "commits_ingested": report.commits_ingested,
                 "commits_seen": report.commits_seen,
