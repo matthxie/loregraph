@@ -14,7 +14,9 @@ falls back to a full ingest (cheap: content-hash dedup means unchanged files don
 re-extract). Commits are immutable and never superseded.
 
 File Episodes are keyed by (ref, path) — `source_ref` is `file:<repo>@<ref>/<path>` — so
-multiple refs and a future (ref, path) reconciliation (Phase 2b tombstoning) are additive.
+every pass ends by RECONCILING that ref: any file Episode whose path is no longer in the
+ref's tree (deleted, renamed away, dropped by a force-push) is TOMBSTONED, per-ref, so
+retrieval only ever sees code that currently exists. Multiple refs stay independent.
 Commit Episodes stay ref-free (`commit:<repo>@<sha>`): a commit is the same commit on every
 branch, and SHA keying is what makes re-sync idempotent.
 
@@ -49,6 +51,7 @@ class CodeIngestReport:
     commits_ingested: int = 0       # salient commits that became Episodes
     files_ingested: int = 0         # file Episodes written (chunks)
     files_superseded: int = 0       # prior file Episodes marked invalid
+    files_removed: int = 0          # file Episodes tombstoned (path gone from ref's tree)
     next_edges: int = 0
     modifies_edges: int = 0
     notes: list[str] = field(default_factory=list)
@@ -58,6 +61,7 @@ class CodeIngestReport:
                 f"mode={'full' if self.full else 'incremental'} "
                 f"commits={self.commits_ingested}/{self.commits_seen} "
                 f"files=+{self.files_ingested}/-{self.files_superseded} "
+                f"removed={self.files_removed} "
                 f"summary={'yes' if self.summarized else 'no'} "
                 f"next={self.next_edges} modifies={self.modifies_edges}")
 
@@ -104,6 +108,24 @@ def _file_items(name: str, ref: str, path: str, content: str, ts: str, cfg) -> l
             id=f"file_{name}_{rk}_{pk}_{ver}#c{ordinal:03d}", modality="code",
             source_ref=sref, title=path, text=text, created_at=ts, embed_only=True))
     return items
+
+
+def _reconcile_ref(store, name: str, ref: str, tree_paths: set[str]) -> int:
+    """Phase 2b: tombstone every live file Episode of THIS ref whose path is no longer in the
+    ref's tree — deleted files, the old side of a rename, and whatever a rebase / force-push
+    dropped. Scoped by the `file:<name>@<ref>/` prefix, so another ref's copy of the same path
+    is untouched, and commit Episodes (ref-free) are never candidates. Tombstoning (kg/forget)
+    rather than supersession: the content is gone, not updated, so it must leave retrieval
+    entirely instead of surviving as history."""
+    from ..forget import forget
+    prefix = f"file:{name}@{ref}/"
+    stale = [n.id for n in store.nodes.values()
+             if n.ntype == NodeType.EPISODE and n.valid and n.modality == Modality.CODE
+             and (n.source_ref or "").startswith(prefix)
+             and (n.source_ref or "")[len(prefix):] not in tree_paths]
+    if not stale:
+        return 0
+    return len(forget(store, episode_ids=stale).episodes)
 
 
 def _plan_files(store, g, repo_path: str, name: str, ref: str, ref_sha: str,
@@ -188,14 +210,12 @@ def ingest_repo(g, repo_path: str, *, ref: str = "HEAD", base: str | None = None
     # 3. file state layer, as of ref
     if head_ts is None:
         head_ts = now_iso()
+    tree_paths = set(git.list_source_files(repo_path, ref_sha))
     if incremental:                      # only the base..ref changed set
-        changed, deleted = git.changed_files(repo_path, base, ref_sha)
-        for path in deleted:
-            report.files_superseded += _supersede(
-                store, _file_episodes(store, name, label, path), None)
-        paths = sorted(changed)
+        changed, _deleted = git.changed_files(repo_path, base, ref_sha)
+        paths = sorted(changed & tree_paths)
     else:                                # full: every source file in ref's tree
-        paths = git.list_source_files(repo_path, ref_sha)
+        paths = sorted(tree_paths)
     file_items, sup = _plan_files(store, g, repo_path, name, label, ref_sha, paths, head_ts)
     report.files_superseded += sup
     items += file_items
@@ -227,10 +247,14 @@ def ingest_repo(g, repo_path: str, *, ref: str = "HEAD", base: str | None = None
                                     provenance=Provenance.DERIVED, confidence=1.0, weight=mw))
                 report.modifies_edges += 1
 
+    # 7. reconcile (Phase 2b) — tombstone this ref's file Episodes whose path is gone from
+    # its tree. Runs on BOTH passes: a full-tree check covers deletes, renames and the
+    # rebase/force-push fallback uniformly, so no diff can be missed.
+    report.files_removed = _reconcile_ref(store, name, label, tree_paths)
+
     g.save()
     return report
 
-# TODO (Phase 2b): a FULL pass only adds/updates — file Episodes for paths that no longer
-# exist in ref's tree are left valid and keep answering retrievals. Reconcile by (ref, path):
-# supersede every valid `file:<name>@<ref>/…` Episode whose path isn't in list_source_files.
-# The incremental path already handles deletes it can see in the diff.
+# TODO (Phase 3): fs.watch of the working tree, opt-in git hooks, an MCP kg_sync_repo tool,
+# and multiple refs / worktrees per repo. All additive — everything here is keyed by
+# (ref, path), so a second tracked ref reconciles independently of the first.

@@ -344,6 +344,82 @@ def test_base_that_is_not_an_ancestor_falls_back_to_a_full_ingest():
     eng.close()
 
 
+# --------------------------------------------------------------------------- #
+# deletion reconciliation (Phase 2b): kg only ever holds files that exist on the ref
+# --------------------------------------------------------------------------- #
+def _delete_payments(repo: str) -> None:
+    _git(repo, "rm", "-q", "payments.py")
+    _git(repo, "commit", "-q", "-m", "refactor: drop payments module", when="2026-07-06T10:00:00")
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_deleted_file_is_tombstoned_on_both_passes(incremental):
+    eng = _engine()
+    repo = _fixture_repo()
+    eng.ingest_repo(repo, ref="main")
+    assert _file_text(eng, "/payments.py")
+    base = _git(repo, "rev-parse", "main").strip()
+    _delete_payments(repo)
+
+    if incremental:
+        rep = eng.ingest_repo(repo, ref="main", base=base)
+        assert rep["full"] is False
+        removed = rep["files_removed"]
+    else:
+        # straight through the ingest path so no stored sync marker turns it incremental
+        from kg.code import ingest_repo as _low
+        report = _low(eng._g, repo, ref="main")
+        assert report.full is True
+        removed = report.files_removed
+    assert removed >= 1
+    assert _file_text(eng, "/payments.py") == ""
+    # tombstoned, not superseded — nothing points at a replacement
+    store = eng._g.store
+    dead = [n for n in store.nodes.values()
+            if (n.source_ref or "").endswith("@main/payments.py")]
+    assert dead and all(not n.valid and not n.superseded_by for n in dead)
+    eng.close()
+
+
+def test_rename_tombstones_old_path_and_ingests_new():
+    eng = _engine()
+    repo = _fixture_repo()
+    eng.ingest_repo(repo, ref="main")
+    _git(repo, "mv", "payments.py", "billing.py")
+    _git(repo, "commit", "-q", "-m", "refactor: rename payments to billing", when="2026-07-07T10:00:00")
+
+    eng.ingest_repo(repo, ref="main")
+    assert _file_text(eng, "/payments.py") == ""
+    assert "idempotency_key" in _file_text(eng, "/billing.py")
+    eng.close()
+
+
+def test_delete_on_one_ref_leaves_another_refs_copy_alone():
+    eng = _engine()
+    repo = _fixture_repo()
+    _git(repo, "branch", "side")
+    eng.ingest_repo(repo, ref="main")
+    eng.ingest_repo(repo, ref="side")
+    _delete_payments(repo)                       # on main only
+    eng.ingest_repo(repo, ref="main")
+
+    live = {n.source_ref for n in _code_episodes(eng, "file:")
+            if n.source_ref.endswith("/payments.py")}
+    assert live == {"file:%s@side/payments.py" % os.path.basename(repo)}
+    eng.close()
+
+
+def test_unchanged_file_is_not_spuriously_tombstoned():
+    eng = _engine()
+    repo = _fixture_repo()
+    eng.ingest_repo(repo, ref="main")
+    before = {n.id for n in _code_episodes(eng, "file:")}
+    rep = eng.ingest_repo(repo, ref="main")
+    assert rep["files_removed"] == 0 and rep["files_superseded"] == 0
+    assert {n.id for n in _code_episodes(eng, "file:")} == before
+    eng.close()
+
+
 def test_unresolvable_ref_is_invalid_input():
     from kg.engine import InvalidInput
     eng = _engine()

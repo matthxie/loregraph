@@ -647,7 +647,8 @@ class Engine:
         incremental over `base..ref`; if base isn't an ancestor of ref (rebase, force-push,
         branch swap) the engine falls back to a full ingest of ref on its own, so callers can
         always just pass their marker. Omitting `base` falls back to this engine's own stored
-        per-(path, ref) marker.
+        per-(path, ref) marker. Every run reconciles the ref: files no longer in its tree are
+        tombstoned (`files_removed`), so retrieval never returns deleted code.
 
         Returns a small report dict (repo, ref, head, counts)."""
         self._check()
@@ -675,6 +676,7 @@ class Engine:
                 "commits_seen": report.commits_seen,
                 "files_ingested": report.files_ingested,
                 "files_superseded": report.files_superseded,
+                "files_removed": report.files_removed,
                 "next_edges": report.next_edges, "modifies_edges": report.modifies_edges,
                 "notes": report.notes}
 
