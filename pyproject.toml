@@ -8,8 +8,10 @@ name = "you-kg"
 # brainbrain's `new-approach` branch, NOT a release cut from main. It keeps the two apart
 # forever — a 0.1.17 released from main can never collide with this wheel, so pip cannot
 # silently keep one when the other was meant (the exact failure engine/requirements.txt's
-# RELEASE RULE warns about). Bump the base version only if this line of work merges.
-version = "0.1.17+new.approach"
+# RELEASE RULE warns about). Bump the base version only if this line of work merges;
+# paired-wheel iterations bump the local segment's trailing number (.2, .3, …) instead,
+# giving pip a new version per wheel without claiming a number main could release.
+version = "0.1.17+new.approach.2"
 description = "Temporal knowledge-graph memory engine: cue-gated extraction, bi-temporal facts, graph-first (PPR) retrieval, one-call RAG answers."
 readme = "README.md"
 authors = [{ name = "Matthew Xie" }]
