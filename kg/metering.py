@@ -48,10 +48,11 @@ PRICING: dict[str, tuple[float, float, float, float]] = {
     "gpt-5":                     (1.25 / _M, 10.00 / _M, 0.125 / _M, 1.25 / _M),
     "gpt-5-mini":                (0.25 / _M, 2.00 / _M, 0.025 / _M, 0.25 / _M),
     "gpt-5-nano":                (0.05 / _M, 0.40 / _M, 0.005 / _M, 0.05 / _M),
-    # gpt-5.4/5.6 (July 2026 rates): 10%-of-input cached reads, and cache WRITES at 1.25x
-    # input (nano's and mini's are derived from that family rule; luna/terra are published
-    # figures). These rows mirror brainbrain's electron/src/main/pricing.ts MODEL_RATES;
-    # the app trusts this table for engine-side calls — keep the two in lockstep.
+    # gpt-5.4/5.6 families (July 2026 list): cached input at 10% of input; cache WRITES bill
+    # at 1.25x input — a real third rate, not ordinary input (nano's and mini's are derived
+    # from that family rule; luna/terra are published figures). These rows mirror brainbrain's
+    # electron/src/main/pricing.ts MODEL_RATES; the app trusts this table for engine-side
+    # calls, so keep the two in lockstep when either changes.
     "gpt-5.4-nano":              (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.25 / _M),
     "gpt-5.4-nano-2026-03-17":   (0.20 / _M, 1.25 / _M, 0.02 / _M, 0.25 / _M),
     "gpt-5.4-mini":              (0.75 / _M, 4.50 / _M, 0.075 / _M, 0.9375 / _M),

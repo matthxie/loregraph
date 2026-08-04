@@ -39,15 +39,7 @@ from .config import Config
 from .graph import KnowledgeGraph
 from .rag import RagAnswer, SearchHit, SearchResult
 
-#: Which line of development this code is, carried IN THE CODE rather than in package
-#: metadata. The paired app shows it in Settings so you can tell at a glance which engine is
-#: loaded (see BRANCH-NOTES.md). Metadata cannot answer that: an editable dev install keeps
-#: whatever version it was first installed with (0.1.0 here), so `importlib.metadata` reports
-#: a stale number while the paired code is what actually runs. A module constant travels with
-#: the source in every install mode. Absent on main — readers must use getattr(..., None).
-BRANCH = "staging"
-
-__all__ = ["BRANCH", "Config", "KnowledgeGraph", "RagAnswer", "SearchHit", "SearchResult"]
+__all__ = ["Config", "KnowledgeGraph", "RagAnswer", "SearchHit", "SearchResult"]
 
 # The single source of truth for the version is the installed package metadata,
 # stamped into the wheel by the release pipeline (never hardcode a number here —
