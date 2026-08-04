@@ -561,9 +561,11 @@ _URL_INSTRUCTION = (
     "   page is fundamentally about. The domain, title, og:title, and H1 are the strongest\n"
     "   signals; the body confirms. For a company's or product's own site, the subject is that\n"
     "   company/product.\n\n"
-    "2. Write `description`: ONE specific, self-contained sentence stating what the primary\n"
-    "   subject is. This is the page's only retrieval surface — a reader who never sees the\n"
-    "   page must understand what it is from this line alone.\n\n"
+    "2. Write `description`: a specific, self-contained SUMMARY of 2-4 sentences (under ~100\n"
+    "   words). The FIRST sentence must state what the primary subject is and stand alone (it\n"
+    "   becomes the display title); the rest should capture what the page actually says about\n"
+    "   it — key claims, offerings, findings. This is the page's only retrieval surface — a\n"
+    "   reader who never sees the page must understand it from this summary alone.\n\n"
     "3. ENTITIES. Emit the primary subject as an entity, then the subject's salient DOMAIN\n"
     "   CONCEPTS, topics, and features as `concept`-typed entities (category 'thing') — e.g.\n"
     "   'corporate card', 'spend management', 'finance automation', 'receipt capture'. Type\n"
@@ -572,7 +574,8 @@ _URL_INSTRUCTION = (
     "   canonical names ('corporate card', not 'unlimited virtual + physical corporate cards').\n"
     "   Be reasonably COMPLETE about the subject: what it is, its category, what it does, its\n"
     "   features / products / offerings, and where it operates.\n\n"
-    "4. TAGS. Emit 5-12 lowercase topical themes describing what the page is about.\n\n"
+    "4. TAGS. Emit lowercase topical themes describing what the page is about — as many as are\n"
+    "   genuinely distinct, typically 8-20. Don't pad with near-duplicates.\n\n"
     "5. RELATIONS. Connect the primary subject to the concepts / entities above. EVERY relation\n"
     "   endpoint MUST be a `name` you already listed under entities or tags — never coin a new\n"
     "   phrase as a relation target (that mints junk nodes). Put stated amounts / counts /\n"
@@ -677,9 +680,12 @@ _IMAGE_INSTRUCTION = (
     "  names, and claims it states — exactly as if that text had been typed as a note.\n"
     "- PHOTOGRAPHIC (a scene, object, place, person, meal, whiteboard): describe what is depicted\n"
     "  and identify everything meaningful in it.\n\n"
-    "1. `description`: ONE specific, self-contained sentence saying what the image is/shows. This\n"
-    "   is the image's retrieval surface — a reader who never sees it must understand it from\n"
-    "   this line alone.\n\n"
+    "1. `description`: a specific, self-contained SUMMARY of 2-4 sentences (under ~100 words).\n"
+    "   The FIRST sentence must say what the image is/shows and stand alone (it becomes the\n"
+    "   display title); the rest should capture the meaningful detail — for text-heavy images,\n"
+    "   the actual content of the text; for photos, what is depicted and anything identifiable.\n"
+    "   This is the image's retrieval surface — a reader who never sees it must understand it\n"
+    "   from this summary alone.\n\n"
     "2. ENTITIES — extract everything identifiable: named things, objects, people, places,\n"
     "   products. Use the graph's types: person, place, org, work (a named product / brand /\n"
     "   creative work / food / item), concept (an activity, topic, field, or idea), event, date.\n\n"
@@ -691,7 +697,8 @@ _IMAGE_INSTRUCTION = (
     "   is welcome; concepts are required.\n\n"
     "   Use short canonical names ('Greek yogurt', not 'a plastic tub of yogurt on a table') so a\n"
     "   thing RESOLVES to one shared node when it recurs elsewhere.\n\n"
-    "3. TAGS — 4-10 lowercase topical themes describing what the image is about.\n\n"
+    "3. TAGS — lowercase topical themes describing what the image is about — as many as are\n"
+    "   genuinely distinct, typically 6-16. Don't pad with near-duplicates.\n\n"
     "4. RELATIONS — connect the subjects to their concepts/entities. EVERY relation endpoint\n"
     "   MUST be a name you already listed under entities or tags — never coin a new phrase as a\n"
     "   relation target (that mints junk nodes). Put stated amounts / counts / prices in `facts`.\n\n"
@@ -1145,6 +1152,15 @@ class CueGatedExtractor:
         return local
 
     def extract_image(self, image_path: str, label_hint: str | None = None) -> Extraction:
+        """Image ingest on the keyless floor: vision has NO local substitute (the NLP floor
+        can only tag the label hint), so a live provider is always worth escalating to —
+        the modality gate, not the cue gate, decides this path. Keyless, the local floor is
+        the honest fallback: a hint-tagged stub episode rather than a failed ingest."""
+        if self.escalate:
+            try:
+                return self._llm_ext().extract_image(image_path, label_hint)
+            except Exception:  # noqa: BLE001 — never sink ingest on one API error
+                pass
         return self.local.extract_image(image_path, label_hint)
 
     def extract_url(self, url: str) -> Extraction:
