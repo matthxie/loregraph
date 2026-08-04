@@ -8,14 +8,15 @@ docs/ARCHITECTURE.md.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 
 @dataclass
 class Config:
     # ══════════ TIER 1 — primary ══════════════════════════════════════════════
-    llm_model: str | None = None                  # extraction LLM
-    rag_model: str | None = None                  # answerer used by `kg ask`
+    llm_model: str | None = None                  # extraction LLM; None → $KG_LLM_MODEL → provider default
+    rag_model: str | None = None                  # answerer used by `kg ask`; None → $KG_RAG_MODEL → provider default
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384                          # must match embed_model's output dim
     extractor_backend: str = "auto"               # "auto" = LLM on every entry when a signed-in
@@ -65,6 +66,7 @@ class Config:
     extract_max_chars: int = 12000    # per-call input cap; MUST be >= long_doc_chars
     extract_max_tokens: int = 4000    # emit_graph output ceiling; too low truncates mid-JSON
     lead_chars: int = 2000            # embed the lead section for very long docs
+    reflexion_min_chars: int = 400    # skip the recall pass below this (halves short-note cost)
 
     # -- tag drift control: L1/L2 merge thresholds -----------------------------
     syn_link_threshold: float = 0.85  # ENTITY cosine > → SIMILAR_TO link (don't merge)
@@ -144,6 +146,16 @@ class Config:
     directed: bool = True             # graph direction
     random_seed: int = 42
     extra: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Host-app model pins (brainbrain sets these in the daemon child's env —
+        # electron config.ts engineEnvForProvider). An explicit Config value always wins;
+        # the env fills only a None so library callers keep full control. Empty/whitespace
+        # values are ignored so a blank export can't pin a nameless model.
+        if self.llm_model is None:
+            self.llm_model = (os.environ.get("KG_LLM_MODEL") or "").strip() or None
+        if self.rag_model is None:
+            self.rag_model = (os.environ.get("KG_RAG_MODEL") or "").strip() or None
 
     @classmethod
     def default(cls) -> "Config":
