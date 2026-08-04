@@ -4,7 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "you-kg"
-version = "0.1.19"
+# The `+staging` local segment is deliberate: this is the app-integration branch the
+# brainbrain wheel is built from (it absorbed the retired `new-approach` experiment,
+# 2026-08-04), NOT a release cut from main. It keeps the two apart — a bare 0.1.19
+# released from main can never collide with this wheel, so pip cannot silently keep one
+# when the other was meant (the exact failure engine/requirements.txt's RELEASE RULE
+# warns about). The BASE version tracks the last main merged IN (so the number says which
+# mainline this build contains); wheel iterations between merges bump the local segment's
+# trailing number (.2, .3, …) — a new version per wheel either way.
+version = "0.1.19+staging"
 description = "Temporal knowledge-graph memory engine: cue-gated extraction, bi-temporal facts, graph-first (PPR) retrieval, one-call RAG answers."
 readme = "README.md"
 authors = [{ name = "Matthew Xie" }]
