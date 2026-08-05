@@ -23,7 +23,7 @@ from .extractors import get_extractor
 from .ingest import IngestReport, Ingestor
 from .models import NodeType
 from .rag import RagAnswer, SearchResult, Searcher, get_answerer
-from .retrieval import RetrievalResult, get_retriever
+from .retrieval import RetrievalResult, get_retriever, rrf_fuse
 from .store import GraphStore
 
 
@@ -142,6 +142,25 @@ class KnowledgeGraph:
                                          self.config)
             seeder = self._kw_seeder
         return seeder.bm25_search(terms, k=k, normalized=False)
+
+    def search_nl(self, text: str, *, k: int = 10, as_of: str | None = None
+                  ) -> list[tuple[str, float, tuple[str, ...]]]:
+        """Blended natural-language search for a search page: the hybrid walk
+        (embedding+BM25-seeded PPR, cross-encoder forced on every lane) and the raw
+        BM25 keyword ranking run side by side over the same query, then merge by
+        reciprocal-rank fusion — so an exact name/phrase the walk ranked out and a
+        graph-only semantic hit both surface in ONE ranked list. Each row is
+        (episode_id, fused_score, sources) with sources ⊆ ("semantic", "keyword")
+        naming the signals that found it. Fully offline: no LLM, no API key."""
+        if not text or not text.strip():
+            return []
+        if self._searcher is None:
+            self._searcher = Searcher(self.store, self.embedder, self.canon,
+                                      self.config)
+        walk = self._searcher.retriever.retrieve(text, k=k, as_of=as_of, rerank=True)
+        lex = self.keyword_search(text, k=k)   # reuses the searcher's warm seeder
+        return rrf_fuse({"semantic": walk.object_ids,
+                         "keyword": [eid for eid, _ in lex]}, k=k)
 
     # ------------------------------------------------------------------- ask
     def ask(self, text: str, *, backend: str | None = None, k: int | None = None,
