@@ -1,5 +1,15 @@
-# Release pipeline: on every push to main, build the you-kg wheel, tag this repo,
-# and open/update the vendored-wheel bump PR against foca-apps/brainbrain.
+# Release pipeline: build the you-kg wheel, tag this repo, and open/update the
+# vendored-wheel bump PR against foca-apps/brainbrain.
+#
+# Two release channels, keyed off the pushed branch (workflow_dispatch adopts the
+# channel of the ref it is dispatched from):
+#   * main    — the normal release line. PR branch `engine-bump`, base branch from the
+#     BRAINBRAIN_BASE_BRANCH variable.
+#   * staging — the pairing line: wheels built from this repo's staging branch carry a
+#     `+staging` PEP 440 local-version marker (in the version, wheel filename, tag, and
+#     pin line), use their own PR branch `engine-bump-staging`, and always target the
+#     app repo's staging branch. Both channels share one run-number counter, so
+#     versions never collide across channels.
 #
 # Versioning contract:
 #   * Humans own major.minor — bump them by editing `version` in pyproject.toml
@@ -16,16 +26,14 @@
 #     RELEASE_BOT_PRIVATE_KEY; the workflow mints a short-lived token per run.
 #   * fallback (rotates every ≤366 days): secret BRAINBRAIN_PAT, a fine-grained PAT
 #     with the same two permissions on foca-apps/brainbrain.
-# Optional: variable BRAINBRAIN_BASE_BRANCH — base branch for the bump PR in the app
-# repo; defaults to main when unset.
+# Optional: variable BRAINBRAIN_BASE_BRANCH — base branch for the main-channel bump PR
+# in the app repo; defaults to main when unset. The staging channel ignores it.
 
 name: release
 
 on:
   push:
-    # TEMPORARY: 'pipeline' is listed only to test the workflow end-to-end before it
-    # lands on main — remove it (leaving just main) before merging.
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch: {}
 
 # Serialize releases so two quick merges can't interleave tag/PR steps.
@@ -41,7 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_REPO: foca-apps/brainbrain
-      APP_BASE_BRANCH: ${{ vars.BRAINBRAIN_BASE_BRANCH || 'main' }}
+      RELEASE_CHANNEL: ${{ github.ref_name == 'staging' && 'staging' || 'main' }}
+      APP_BASE_BRANCH: ${{ github.ref_name == 'staging' && 'staging' || (vars.BRAINBRAIN_BASE_BRANCH || 'main') }}
+      BUMP_PR_BRANCH: ${{ github.ref_name == 'staging' && 'engine-bump-staging' || 'engine-bump' }}
     steps:
       - name: Checkout engine
         uses: actions/checkout@v4
@@ -66,6 +76,8 @@ jobs:
           if not m:
               sys.exit("pyproject.toml: could not find a version = \"X.Y[.Z]\" line to stamp")
           version = f"{m.group(1)}.{m.group(2)}.{os.environ['GITHUB_RUN_NUMBER']}"
+          if os.environ.get("RELEASE_CHANNEL") == "staging":
+              version += "+staging"
           p.write_text(src[:m.start()] + f'version = "{version}"' + src[m.end():], encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"version={version}\n")
@@ -144,12 +156,12 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token || secrets.BRAINBRAIN_PAT }}
           path: brainbrain
-          branch: engine-bump
+          branch: ${{ env.BUMP_PR_BRANCH }}
           base: ${{ env.APP_BASE_BRANCH }}
           commit-message: "engine: bump you-kg to ${{ steps.version.outputs.version }}"
           title: "engine: bump you-kg to ${{ steps.version.outputs.version }}"
           body: |
-            Automated engine bump from foca-apps/loregraph.
+            Automated engine bump from foca-apps/loregraph (built from `${{ github.ref_name }}`).
 
             * version: `${{ steps.version.outputs.version }}`
             * source commit: `${{ github.sha }}` (tag `v${{ steps.version.outputs.version }}`)
