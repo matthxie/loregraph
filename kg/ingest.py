@@ -51,6 +51,11 @@ class IngestReport:
     extractor: str = ""
     embedder: str = ""
     notes: list[str] = field(default_factory=list)
+    # Resolution detail per item, so callers (Engine.ingest → the app daemon's receipts)
+    # can name the episode that now answers for their content instead of guessing the
+    # base id — which is wrong whenever the write version-appended (ep_X_v1).
+    episode_ids: list[str] = field(default_factory=list)   # episodes written this call
+    skipped_ids: list[str] = field(default_factory=list)   # store node each skip matched
 
     def __str__(self) -> str:
         warn = (f"  ⚠ {self.extraction_failures} extraction failures"
@@ -168,7 +173,7 @@ class Ingestor:
         #    (two same-content items dedup; two same-id, different-content items version)
         #    instead of silently colliding on add_node.
         pending: list[tuple[CorpusItem, str, str]] = []  # item, hash, episode_id
-        batch_hashes: set[str] = set()
+        batch_hashes: dict[str, str] = {}                # hash -> this batch's episode_id
         batch_ep_ids: set[str] = set()
         for item in items:
             # TEXT-surfaced items hash on their text; described media (no raw_text) hash on
@@ -178,24 +183,45 @@ class Ingestor:
             # episodes, while a true re-ingest reuses the same id and still skips.
             content = item.text if item.text is not None else (item.image_path or "")
             h = _sha256(item.modality, content, item.created_at or "", item.id)
-            if h in self.store.hash_cache or h in batch_hashes:
+            if h in batch_hashes:
                 report.skipped += 1
+                report.skipped_ids.append(batch_hashes[h])
                 continue
+            if h in self.store.hash_cache:
+                # A hash hit on a TOMBSTONED episode is not a duplicate of anything the
+                # user can still see. A deliberate re-capture (item.revive — single notes,
+                # never bulk paths) falls through to version-append a fresh live episode:
+                # deleting a note and then restoring it, or editing one back to text it
+                # previously held, must re-create the note. Non-revive items keep the
+                # historic skip so re-ingesting a session log cannot resurrect erased
+                # content (kg/forget.py retains the hash cache for exactly that reason).
+                cached_id = self.store.hash_cache[h]
+                cached = self.store.get_node(cached_id)
+                if not (item.revive and (cached is None or not cached.valid)):
+                    report.skipped += 1
+                    report.skipped_ids.append(cached_id)
+                    continue
             base_id = f"ep_{item.id}"
             ep_id = base_id
             if self.store.has_node(base_id) or base_id in batch_ep_ids:
                 existing = self.store.get_node(base_id)
-                if existing is not None and existing.content_hash == h:
+                # Same guard as the cache probe: an unchanged-content match on a tombstone
+                # is revivable, so only a LIVE match may dedup a revive item.
+                revivable = (item.revive and existing is not None and not existing.valid)
+                if existing is not None and existing.content_hash == h and not revivable:
                     report.skipped += 1          # identical episode already in the store
+                    report.skipped_ids.append(existing.id)
                     continue
-                if existing is not None and self._legacy_unchanged(item, content, existing, h):
+                if (existing is not None and not revivable
+                        and self._legacy_unchanged(item, content, existing, h)):
                     report.skipped += 1          # unchanged content under the OLD hash formula
+                    report.skipped_ids.append(existing.id)
                     continue
                 v = 1                            # same id, new content → append a version
                 while self.store.has_node(f"{base_id}_v{v}") or f"{base_id}_v{v}" in batch_ep_ids:
                     v += 1
                 ep_id = f"{base_id}_v{v}"
-            batch_hashes.add(h)
+            batch_hashes[h] = ep_id
             batch_ep_ids.add(ep_id)
             pending.append((item, h, ep_id))
 
@@ -257,6 +283,7 @@ class Ingestor:
                     m, f, qf = self._write_episode(item, h, ep_id, ext, vec, ment_vecs,
                                                    report)
                     new_eps.append(ep_id)
+                    report.episode_ids.append(ep_id)
                     report.ingested += 1
                     report.mentions += m
                     report.facts += f
@@ -343,7 +370,8 @@ class Ingestor:
                 cid = f"{item.id}#c{c.ordinal:03d}"
                 out.append(CorpusItem(id=cid, modality="text",
                                       source_ref=item.source_ref, title=item.title,
-                                      text=c.text, created_at=item.created_at))
+                                      text=c.text, created_at=item.created_at,
+                                      revive=item.revive))
                 kids.append(f"ep_{cid}")
             parents.append((f"src_{item.id}", item, kids))
         return out, parents
