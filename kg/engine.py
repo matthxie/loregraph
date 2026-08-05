@@ -878,6 +878,30 @@ class Engine:
                 "episodes": [self._episode_ref(eid, score=score)
                              for eid, score in hits]}
 
+    def search_nl(self, query: str, k: int = 10, as_of: str | None = None) -> dict:
+        """Blended natural-language search for the UI search box: the §3.3 hybrid walk
+        (route → PPR → cross-encoder, forced on every lane) and the §3.4 raw-BM25
+        keyword ranking run side by side, fused by reciprocal rank — rank-based, so
+        the two score scales never mix. Each hit carries `sources` ⊆ ["semantic",
+        "keyword"] naming the signals that found it; `score` is the fused RRF mass
+        (higher = better; a both-signals top hit ≈ 0.033, a single-signal tail hit
+        ≈ 0.014 at k=10). Offline like retrieve/search: no LLM, no provider needed.
+
+        FOLLOW-UP (deferred, not this repo): expose as a `search.nl` verb in
+        brainbrain/engine/daemon.py (PUMP_SAFE — read-only) + PROTOCOL_MINOR bump
+        with a capability-probe, mirroring the ingest.repo additive pattern; the
+        History page then blends this list in place of its client-side field match
+        for sentence-shaped queries."""
+        self._check()
+        if not query or not query.strip():
+            raise InvalidInput("query must be non-empty")
+        k = max(1, min(int(k), 100))    # same clamp as search: k=0/-1 would misbehave
+        hits = self._g.search_nl(query, k=k, as_of=as_of)
+        return {"query": query,
+                "episodes": [dict(self._episode_ref(eid, score=score),
+                                  sources=list(srcs))
+                             for eid, score, srcs in hits]}
+
     def answer(self, question: str, k: int = 8, as_of: str | None = None,
                rerank: bool = False, mmr_lambda: float | None = None,
                since: str | None = None, until: str | None = None) -> dict:
