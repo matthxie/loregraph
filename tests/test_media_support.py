@@ -137,10 +137,28 @@ def engine():
     e.close()
 
 
-def test_engine_rejects_media_only_pdf(engine, tmp_path):
+def _minimal_pdf(path, text: str) -> None:
+    import fitz
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), text, fontsize=11)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_engine_ingests_media_only_pdf(engine, tmp_path):
+    # a PDF is always processable (kg/pdf.py per-page classify+extract), unlike a generic
+    # non-image file — no caption required.
     p = tmp_path / "resume.pdf"
+    _minimal_pdf(p, "Five years of backend engineering experience at Acme Corp.")
+    res = engine.ingest(NoteInput(text="", created_at="2026-07-22T09:00:00Z",
+                                  attachments=[str(p)]))
+    assert res.episode_id and not res.skipped
+
+
+def test_engine_rejects_corrupt_pdf(engine, tmp_path):
+    p = tmp_path / "broken.pdf"
     p.write_bytes(b"%PDF-1.7")
-    with pytest.raises(UnsupportedMedia, match="pdf"):
+    with pytest.raises(UnsupportedMedia, match="PDF"):
         engine.ingest(NoteInput(text="", created_at="2026-07-22T09:00:00Z",
                                 attachments=[str(p)]))
 
@@ -154,11 +172,20 @@ def test_engine_rejects_unsupported_image_format(engine, tmp_path):
 
 
 def test_engine_captioned_file_still_stored_not_perceived(engine, tmp_path):
-    # a non-image attachment WITH a caption stays valid by design: the caption is
-    # extracted, the file rides along un-perceived.
-    p = tmp_path / "notes.pdf"
-    p.write_bytes(b"%PDF-1.7")
+    # a non-image, non-pdf attachment WITH a caption stays valid by design: the caption
+    # is extracted, the file rides along un-perceived.
+    p = tmp_path / "notes.docx"
+    p.write_bytes(b"PK\x03\x04")
     res = engine.ingest(NoteInput(text="Meeting notes from the Q3 planning session.",
+                                  created_at="2026-07-22T09:00:00Z",
+                                  attachments=[str(p)]))
+    assert res.episode_id and not res.skipped
+
+
+def test_engine_captioned_pdf_ingests_pages(engine, tmp_path):
+    p = tmp_path / "handout.pdf"
+    _minimal_pdf(p, "Roadmap for next quarter.")
+    res = engine.ingest(NoteInput(text="Handout from the planning meeting.",
                                   created_at="2026-07-22T09:00:00Z",
                                   attachments=[str(p)]))
     assert res.episode_id and not res.skipped

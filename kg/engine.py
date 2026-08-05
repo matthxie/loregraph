@@ -67,9 +67,12 @@ def _repo_marker_key(path: str, ref: str = "HEAD") -> str:
 
 def _attachment_modality(path: str | None) -> str:
     """Sniff an attachment's extension to a CorpusItem modality label. Image types →
-    'image' (perceived by the VLM); everything else → 'file' (out of scope, stored not
-    perceived) so it lands as FILE via _modality_of rather than being mislabeled IMAGE."""
+    'image' (perceived by the VLM); '.pdf' → 'pdf' (per-page classify+chunk, kg/pdf.py);
+    everything else → 'file' (out of scope, stored not perceived) so it lands as FILE via
+    _modality_of rather than being mislabeled IMAGE."""
     ext = os.path.splitext(path or "")[1].lower()
+    if ext == ".pdf":
+        return "pdf"
     return "image" if ext in _IMAGE_EXTS else "file"
 
 
@@ -365,10 +368,12 @@ class Engine:
                 # Fast-fail what the perception path can't serve, at the API boundary
                 # (clear UnsupportedMedia) rather than deep in extraction:
                 #   - an image in a format no vision provider accepts (.heic/.bmp/.tif…);
-                #   - a media-only non-image file (PDF/audio/…), which would otherwise be
-                #     routed through the vision path as bogus image bytes. A captioned
+                #   - a media-only non-image, non-pdf file (audio/…), which would otherwise
+                #     be routed through the vision path as bogus image bytes. A captioned
                 #     non-image file stays valid: the caption is extracted, the file is
-                #     stored-not-perceived (by design).
+                #     stored-not-perceived (by design). PDFs are always processable
+                #     (modality "pdf" clears both checks below) — kg/pdf.py classifies and
+                #     extracts every page whether or not a caption was given.
                 ext = os.path.splitext(readable_media[0])[1].lower()
                 if modality == "image" and ext not in SUPPORTED_IMAGE_EXTS:
                     raise UnsupportedMedia(
@@ -387,6 +392,11 @@ class Engine:
                               image_path=readable_media[0] if readable_media else None,
                               created_at=note.created_at)
         item.media_paths = media_paths
+        # A note is a deliberate single capture, so it may revive content whose only match
+        # in the store is a tombstoned episode (restore-from-trash, edit-back-to-previous-
+        # text). Bulk paths (import_conversations, corpus runs) never set this — re-ingesting
+        # a session log must not resurrect erased content (kg/ingest.py step 1, kg/forget.py).
+        item.revive = True
         try:
             report = self._g.ingest([item])
             self._g.save()                      # durability: on disk before we return
@@ -396,7 +406,17 @@ class Engine:
             raise StoreError(f"ingest failed: {e}") from e
         if report.extraction_failures:
             raise ProviderError(f"extraction failed: {report.notes[:1]}")
-        return IngestResult(episode_id=f"ep_{nid}", tasks=[],
+        # The episode that now answers for this note: the id actually written (a revive
+        # version-appends ep_<nid>_v1, not ep_<nid>), or on a dedup skip the live episode
+        # the content matched. The base-id fallback covers a failed write (report.failed),
+        # preserved as the historic behaviour.
+        if report.episode_ids:
+            ep_id = report.episode_ids[0]
+        elif report.skipped_ids:
+            ep_id = report.skipped_ids[0]
+        else:
+            ep_id = f"ep_{nid}"
+        return IngestResult(episode_id=ep_id, tasks=[],
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
 

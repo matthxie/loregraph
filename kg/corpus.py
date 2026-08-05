@@ -33,6 +33,12 @@ class CorpusItem:
     # kinds: a commit item → {"message", "diff"}; a repo item → {"signals": {...}}.
     embed_only: bool = False
     meta: dict = field(default_factory=dict)
+    # A deliberate single-note capture (Engine.ingest) may re-create content whose only
+    # match in the store is a TOMBSTONED episode — the user deleted a note and is now
+    # restoring it, or edited one back to text it previously held. Bulk paths (imports,
+    # corpus runs) leave this False so re-ingesting a session log can never resurrect
+    # erased content (kg/forget.py keeps the hash cache for exactly that reason).
+    revive: bool = False
 
 
 def _lme_tier_dir(tier: str) -> str:

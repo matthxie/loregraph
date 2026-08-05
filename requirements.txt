@@ -17,6 +17,7 @@ scikit-learn>=1.5     # cosine helpers / label-propagation fallbacks
 openai>=1.0           # GPT-4o mini structured-output extraction + vision
 python-dotenv>=1.0    # load OPENAI_API_KEY (and friends) from a .env file
 trafilatura>=1.8      # main-text extraction from fetched URLs (strips page boilerplate; fail-soft)
+pymupdf>=1.24         # PDF page text/layout/image extraction + rasterization (kg/pdf.py)
 
 # Local embeddings (required at runtime — the hashing fallback was removed)
 sentence-transformers>=5.0  # BAAI/bge-small-en-v1.5
