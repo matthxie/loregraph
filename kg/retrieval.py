@@ -113,6 +113,24 @@ class RetrievalResult:
         return [oid for oid, _ in self.objects]
 
 
+def rrf_fuse(ranked_lists: dict[str, list[str]], *, k: int,
+             rrf_k: int = 60) -> list[tuple[str, float, tuple[str, ...]]]:
+    """Reciprocal-rank fusion over named rankings: score(id) = Σ 1/(rrf_k + rank).
+    Rank-based, so the inputs' score scales (raw BM25 vs the hybrid ranking's
+    rank-derived scores) never need to be commensurable; an id present in several
+    lists sums its terms, so cross-signal agreement outranks a single strong signal.
+    Returns top-k (id, fused_score, sources) rows where `sources` names the lists
+    that carried the id, in the caller's dict order; ties break on (-score, id)."""
+    scores: dict[str, float] = {}
+    sources: dict[str, list[str]] = {}
+    for name, ids in ranked_lists.items():
+        for rank, oid in enumerate(ids, start=1):
+            scores[oid] = scores.get(oid, 0.0) + 1.0 / (rrf_k + rank)
+            sources.setdefault(oid, []).append(name)
+    order = sorted(scores, key=lambda oid: (-scores[oid], oid))
+    return [(oid, scores[oid], tuple(sources[oid])) for oid in order[:k]]
+
+
 # --------------------------------------------------------------------------- #
 # Seeding (shared by every mode)
 # --------------------------------------------------------------------------- #

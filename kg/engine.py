@@ -392,6 +392,11 @@ class Engine:
                               image_path=readable_media[0] if readable_media else None,
                               created_at=note.created_at)
         item.media_paths = media_paths
+        # A note is a deliberate single capture, so it may revive content whose only match
+        # in the store is a tombstoned episode (restore-from-trash, edit-back-to-previous-
+        # text). Bulk paths (import_conversations, corpus runs) never set this — re-ingesting
+        # a session log must not resurrect erased content (kg/ingest.py step 1, kg/forget.py).
+        item.revive = True
         try:
             report = self._g.ingest([item])
             self._g.save()                      # durability: on disk before we return
@@ -401,7 +406,17 @@ class Engine:
             raise StoreError(f"ingest failed: {e}") from e
         if report.extraction_failures:
             raise ProviderError(f"extraction failed: {report.notes[:1]}")
-        return IngestResult(episode_id=f"ep_{nid}", tasks=[],
+        # The episode that now answers for this note: the id actually written (a revive
+        # version-appends ep_<nid>_v1, not ep_<nid>), or on a dedup skip the live episode
+        # the content matched. The base-id fallback covers a failed write (report.failed),
+        # preserved as the historic behaviour.
+        if report.episode_ids:
+            ep_id = report.episode_ids[0]
+        elif report.skipped_ids:
+            ep_id = report.skipped_ids[0]
+        else:
+            ep_id = f"ep_{nid}"
+        return IngestResult(episode_id=ep_id, tasks=[],
                             entities=report.mentions, relations=report.facts,
                             skipped=bool(report.skipped))
 
@@ -862,6 +877,30 @@ class Engine:
         return {"terms": terms,
                 "episodes": [self._episode_ref(eid, score=score)
                              for eid, score in hits]}
+
+    def search_nl(self, query: str, k: int = 10, as_of: str | None = None) -> dict:
+        """Blended natural-language search for the UI search box: the §3.3 hybrid walk
+        (route → PPR → cross-encoder, forced on every lane) and the §3.4 raw-BM25
+        keyword ranking run side by side, fused by reciprocal rank — rank-based, so
+        the two score scales never mix. Each hit carries `sources` ⊆ ["semantic",
+        "keyword"] naming the signals that found it; `score` is the fused RRF mass
+        (higher = better; a both-signals top hit ≈ 0.033, a single-signal tail hit
+        ≈ 0.014 at k=10). Offline like retrieve/search: no LLM, no provider needed.
+
+        FOLLOW-UP (deferred, not this repo): expose as a `search.nl` verb in
+        brainbrain/engine/daemon.py (PUMP_SAFE — read-only) + PROTOCOL_MINOR bump
+        with a capability-probe, mirroring the ingest.repo additive pattern; the
+        History page then blends this list in place of its client-side field match
+        for sentence-shaped queries."""
+        self._check()
+        if not query or not query.strip():
+            raise InvalidInput("query must be non-empty")
+        k = max(1, min(int(k), 100))    # same clamp as search: k=0/-1 would misbehave
+        hits = self._g.search_nl(query, k=k, as_of=as_of)
+        return {"query": query,
+                "episodes": [dict(self._episode_ref(eid, score=score),
+                                  sources=list(srcs))
+                             for eid, score, srcs in hits]}
 
     def answer(self, question: str, k: int = 8, as_of: str | None = None,
                rerank: bool = False, mmr_lambda: float | None = None,
