@@ -321,6 +321,14 @@ class Ingestor:
         out: list[CorpusItem] = []
         parents: list[tuple[str, CorpusItem, list[str]]] = []
         for item in items:
+            if item.modality == "pdf" and item.image_path:
+                kids = self._expand_pdf_item(item)
+                if not kids:
+                    out.append(item)
+                    continue
+                out.extend(ci for ci, _ in kids)
+                parents.append((f"src_{item.id}", item, [eid for _, eid in kids]))
+                continue
             if item.modality != "text" or not item.text:
                 out.append(item)
                 continue
@@ -339,6 +347,26 @@ class Ingestor:
                 kids.append(f"ep_{cid}")
             parents.append((f"src_{item.id}", item, kids))
         return out, parents
+
+    def _expand_pdf_item(self, item: CorpusItem) -> list[tuple[CorpusItem, str]]:
+        """One PDF attachment → its packed page units (kg/pdf.py), each becoming a
+        modality="pdf" CorpusItem: image_path set → routed like an image (scanned page /
+        mixed page's figure), no image_path → routed like plain text (text/slide page)."""
+        from .pdf import extract_pdf
+        stem = os.path.splitext(os.path.basename(item.image_path))[0]
+        out_dir = os.path.join(os.path.dirname(item.image_path), f".{stem}_pages")
+        pages = extract_pdf(item.image_path, out_dir=out_dir,
+                            target=int(self.config.chunk_target_chars),
+                            max_chars=int(self.config.chunk_max_chars))
+        kids: list[tuple[CorpusItem, str]] = []
+        for p in pages:
+            cid = f"{item.id}#p{p.ordinal:03d}"
+            ci = CorpusItem(id=cid, modality="pdf",
+                            source_ref=f"{item.source_ref}#{p.breadcrumb}",
+                            title=item.title, text=p.text, image_path=p.image_path,
+                            created_at=item.created_at)
+            kids.append((ci, f"ep_{cid}"))
+        return kids
 
     def _write_parents(self, parents: list[tuple[str, CorpusItem, list[str]]]) -> None:
         """One SOURCE node per chunked entry (full original text, provenance) +
@@ -377,8 +405,10 @@ class Ingestor:
                     return self._extract_code(item), None  # source_ref kind / embed_only
                 if item.modality == "link":  # a saved URL: fetch + subject-scoped extraction
                     return self.extractor.extract_url(item.source_ref or item.text or ""), None
-                if item.modality == "image" and item.image_path and item.text is not None:
-                    # CAPTIONED IMAGE — co-perception: run BOTH the caption text pass and the
+                if item.modality in ("image", "pdf") and item.image_path and item.text is not None:
+                    # CAPTIONED IMAGE (or a PDF "mixed" page: page text = caption, its
+                    # biggest figure = the image) — co-perception: run BOTH the caption
+                    # text pass and the
                     # vision pass, then merge into one episode. The caption is the merge BASE
                     # (it carries the user's own words + first-person/temporal signal); the
                     # vision extraction unions in for recall — the same base/union policy
@@ -440,7 +470,7 @@ class Ingestor:
             return ext.description or (item.label_hint or "media")
         # CAPTIONED IMAGE — the surface is the caption PLUS the vision description, so the
         # image's visual content is retrievable, not just the user's caption words.
-        if item.modality == "image" and item.image_path and ext.description:
+        if item.modality in ("image", "pdf") and item.image_path and ext.description:
             caption = (item.text or "").strip()
             return f"{caption}\n{ext.description}" if caption else ext.description
         text = item.text or ""

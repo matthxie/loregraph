@@ -67,9 +67,12 @@ def _repo_marker_key(path: str, ref: str = "HEAD") -> str:
 
 def _attachment_modality(path: str | None) -> str:
     """Sniff an attachment's extension to a CorpusItem modality label. Image types →
-    'image' (perceived by the VLM); everything else → 'file' (out of scope, stored not
-    perceived) so it lands as FILE via _modality_of rather than being mislabeled IMAGE."""
+    'image' (perceived by the VLM); '.pdf' → 'pdf' (per-page classify+chunk, kg/pdf.py);
+    everything else → 'file' (out of scope, stored not perceived) so it lands as FILE via
+    _modality_of rather than being mislabeled IMAGE."""
     ext = os.path.splitext(path or "")[1].lower()
+    if ext == ".pdf":
+        return "pdf"
     return "image" if ext in _IMAGE_EXTS else "file"
 
 
@@ -365,10 +368,12 @@ class Engine:
                 # Fast-fail what the perception path can't serve, at the API boundary
                 # (clear UnsupportedMedia) rather than deep in extraction:
                 #   - an image in a format no vision provider accepts (.heic/.bmp/.tif…);
-                #   - a media-only non-image file (PDF/audio/…), which would otherwise be
-                #     routed through the vision path as bogus image bytes. A captioned
+                #   - a media-only non-image, non-pdf file (audio/…), which would otherwise
+                #     be routed through the vision path as bogus image bytes. A captioned
                 #     non-image file stays valid: the caption is extracted, the file is
-                #     stored-not-perceived (by design).
+                #     stored-not-perceived (by design). PDFs are always processable
+                #     (modality "pdf" clears both checks below) — kg/pdf.py classifies and
+                #     extracts every page whether or not a caption was given.
                 ext = os.path.splitext(readable_media[0])[1].lower()
                 if modality == "image" and ext not in SUPPORTED_IMAGE_EXTS:
                     raise UnsupportedMedia(
