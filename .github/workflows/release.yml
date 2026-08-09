@@ -67,6 +67,7 @@ concurrency:
 
 permissions:
   contents: write # push the v<version> tag to this repo
+  actions: write # delete the transient wheel artifact once every bump leg is done with it
 
 jobs:
   build:
@@ -172,7 +173,10 @@ jobs:
         with:
           name: you-kg-wheel
           path: engine-src/dist/${{ steps.version.outputs.wheel }}
-          retention-days: 7
+          # 1 is the lowest GitHub accepts (0 isn't valid) — this is just the
+          # fallback ceiling; the cleanup job below deletes it explicitly right
+          # after every bump leg is done downloading it.
+          retention-days: 1
 
   bump:
     needs: build
@@ -250,3 +254,30 @@ jobs:
             * wheel: `engine/vendor/${{ env.WHEEL }}`
 
             Before merging: `KG_SMOKE_FULL=1 engine/tests/daemon_smoke.py` from `engine/` in the app repo.
+
+  cleanup:
+    needs: [build, bump]
+    # Runs even if a bump leg failed, so a broken vendor step never leaks the
+    # artifact past this run — the wheel is only ever needed within this run.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete wheel artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            for (const artifact of data.artifacts) {
+              if (artifact.name === 'you-kg-wheel') {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                });
+                console.log(`deleted artifact ${artifact.id} (${artifact.name})`);
+              }
+            }
