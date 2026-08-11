@@ -14,6 +14,9 @@ import pytest
 from kg.engine import Engine, NoteInput
 from kg.errors import (EngineError, InvalidInput, NotFound,
                        ProviderUnavailable)
+from kg.extractors import (Extraction, ExtractedEntity, ExtractedRelation,
+                           ScriptedExtractor)
+from kg.models import EntityType, Provenance
 
 
 def _open(tmp=None, kind="mock", logs=None):
@@ -107,8 +110,6 @@ def test_invalid_input_and_stubs():
         eng.retrieve("")
     with pytest.raises(EngineError, match="not implemented"):
         eng.rebuild()
-    with pytest.raises(EngineError, match="not implemented"):
-        eng.profile()
     eng.close()
 
 
@@ -154,3 +155,85 @@ def test_engine_writes_nothing_to_stdout(capsys):
     eng.answer("where is Becky?")
     eng.close()
     assert capsys.readouterr().out == ""                   # stdout is the app's channel
+
+
+# --------------------------------------------------------------------------- #
+# profile() — the self anchor's facts plus the graph's vocabulary
+# --------------------------------------------------------------------------- #
+_MOVE = "I moved to Berlin and started at Foca."
+_READ = "I keep reading about distributed systems with Becky."
+
+_PROFILE_SCRIPT = {
+    _MOVE: Extraction(
+        entities=[ExtractedEntity("Berlin", EntityType.PLACE),
+                  ExtractedEntity("Foca", EntityType.ORG)],
+        tags=["relocation"],
+        relations=[ExtractedRelation(source="I", target="Berlin", labels=["lives_in"],
+                                     provenance=Provenance.EXTRACTED, confidence=0.9),
+                   ExtractedRelation(source="I", target="Foca", labels=["works_at"],
+                                     provenance=Provenance.EXTRACTED, confidence=0.9)],
+    ),
+    _READ: Extraction(
+        entities=[ExtractedEntity("Becky", EntityType.PERSON),
+                  ExtractedEntity("distributed systems", EntityType.CONCEPT)],
+        tags=["reading"],
+    ),
+}
+
+
+def _profile_engine():
+    eng = _open()
+    eng._g.extractor = ScriptedExtractor(_PROFILE_SCRIPT)   # no LLM, known extractions
+    eng.ingest(NoteInput(text=_MOVE, created_at="2026-07-01T10:00:00Z"))
+    eng.ingest(NoteInput(text=_READ, created_at="2026-07-02T10:00:00Z"))
+    return eng
+
+
+def test_profile_summarizes_self_facts_entities_and_themes():
+    eng = _profile_engine()
+    p = eng.profile()
+
+    assert p["as_of"] is None
+    rendered = {f["rendered"] for f in p["facts"]}
+    assert any("Berlin" in r for r in rendered) and any("Foca" in r for r in rendered)
+    assert all(f["status"] == "asserted" for f in p["facts"])
+    assert all(f["source"] == "me" for f in p["facts"])     # the self anchor, not a copy
+
+    names = {t: [r["name"] for r in rows] for t, rows in p["entities_by_type"].items()}
+    assert names["person"] == ["Becky"]                     # 'me' is the subject, not an entity
+    assert names["place"] == ["Berlin"]
+    assert "Foca" in names["org"]                           # grouped by entity type, not glyph
+    assert "date" not in names and "quantity" not in names  # extraction artifacts stay out
+    themes = [t["name"] for t in p["themes"]]
+    assert "distributed systems" in themes                  # concept entity reads as a theme
+    assert {"relocation", "reading"} <= set(themes)         # …so do tags
+    assert all(t["doc_frequency"] >= 1 for t in p["themes"])
+
+    eps = {e["id"] for e in eng.episodes_list()["episodes"]}
+    assert p["episode_ids"] and set(p["episode_ids"]) <= eps
+    assert p["episode_ids"][0] == p["facts"][0]["episode_id"]   # provenance first
+
+    text = p["rendered_text"]
+    assert "Known about the user:" in text and "Berlin" in text
+    assert "Recurring themes:" in text and "distributed systems" in text
+    eng.close()
+
+
+def test_profile_top_caps_each_section_and_as_of_is_echoed():
+    eng = _profile_engine()
+    p = eng.profile(as_of="2026-07-01T12:00:00Z", top=1)
+    assert p["as_of"] == "2026-07-01T12:00:00Z"
+    assert len(p["facts"]) == 1 and len(p["themes"]) == 1
+    assert len(p["episode_ids"]) == 1
+    assert all(len(rows) == 1 for rows in p["entities_by_type"].values())
+    eng.close()
+
+
+def test_profile_on_empty_graph_is_not_an_error():
+    eng = _open()
+    p = eng.profile()
+    assert p == {"as_of": None, "facts": [], "entities_by_type": {}, "themes": [],
+                 "episode_ids": [], "rendered_text": "No profile information yet."}
+    eng.close()
+    with pytest.raises(EngineError):
+        eng.profile()                                       # closed engine still guards

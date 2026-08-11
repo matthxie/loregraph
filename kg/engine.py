@@ -48,7 +48,10 @@ from .llm_client import SUPPORTED_KINDS
 from .models import (Belief, Edge, EdgeType, EntityType, Modality, NodeType,
                      Provenance, entity_category_for_type)
 
-_STUB = ("profile", "rebuild", "reingest", "maintain", "ensure_model")
+_STUB = ("rebuild", "reingest", "maintain", "ensure_model")
+
+# Dates and quantities are per-occurrence extraction nodes, never profile subjects.
+_PROFILE_SKIP_TYPES = (EntityType.DATE, EntityType.QUANTITY)
 
 _DATE10 = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _BARE_YEAR = re.compile(r"^\d{4}$")
@@ -1056,6 +1059,96 @@ class Engine:
                 rows.append(self._fact_row(src_id, dst_id, data))
         rows.sort(key=lambda r: (r["valid_from"] or "", r["recorded_at"] or ""))
         return rows
+
+    def profile(self, as_of: str | None = None, top: int = 12) -> dict:
+        """Who the user is, read straight off the graph: the self anchor's currently-held
+        facts, the entities they mention most (grouped by glyph category), their recurring
+        themes, the notes this is grounded in, and a plain-text rendering of all of it.
+
+        `as_of` reads the facts as they stood at that instant; with no `as_of` closed
+        windows are dropped — a profile is the current picture, not a history. Retracted
+        facts never appear (same view rules as facts()). `top` caps each list.
+
+        A store with no self anchor (nothing first-person ingested yet) is NOT an error:
+        facts come back empty and the vocabulary sections still describe the graph."""
+        self._check()
+        from .models import SELF_ENTITY_ID
+        top = max(1, int(top))
+        store = self._g.store
+        facts: list[dict] = []
+        if store.get_node(SELF_ENTITY_ID) is not None:
+            rows = self._entity_fact_rows(SELF_ENTITY_ID, as_of=as_of,
+                                          include_closed=False)
+            # Cut newest-first (a trimmed profile should keep the most recent picture),
+            # then restore chronological order so it reads as a timeline.
+            key = lambda r: (r["valid_from"] or "", r["recorded_at"] or "")  # noqa: E731
+            facts = sorted(sorted(rows, key=key, reverse=True)[:top], key=key)
+        entities_by_type, themes = self._profile_vocabulary(top)
+        # Fact provenance first, then recent notes as padding, so a graph whose self anchor
+        # has no facts yet still hands the caller somewhere to read.
+        episode_ids = list(dict.fromkeys(
+            [f["episode_id"] for f in facts if f["episode_id"]]
+            + [n.id for n in sorted(store.nodes_of_type(NodeType.EPISODE),
+                                    key=lambda n: (n.created_at, n.id), reverse=True)
+               if n.valid]))[:top]
+        prof = {"as_of": as_of, "facts": facts, "entities_by_type": entities_by_type,
+                "themes": themes, "episode_ids": episode_ids}
+        prof["rendered_text"] = self._render_profile(prof)
+        return prof
+
+    def _profile_vocabulary(self, top: int) -> tuple[dict[str, list[dict]], list[dict]]:
+        """The graph's vocabulary about its owner: named entities grouped by entity type,
+        and themes (concept entities + tags, which are the same thing to a reader). Ranked by
+        `doc_frequency` — the number of episodes referencing the node (kg/canonicalize.py),
+        i.e. the graph's own answer to what this person keeps coming back to. The self anchor
+        is excluded: it is the subject, not one of its own entities."""
+        from .models import SELF_ENTITY_ID
+        store = self._g.store
+        by_type: dict[str, list[dict]] = {}
+        themes: dict[str, dict] = {}
+
+        def theme(name: str, df: int) -> None:
+            # A concept entity and a tag can carry the same surface; keep the stronger count.
+            cur = themes.get(name.strip().lower())
+            if cur is None or df > cur["doc_frequency"]:
+                themes[name.strip().lower()] = {"name": name, "doc_frequency": df}
+
+        for n in store.nodes_of_type(NodeType.ENTITY):
+            if not n.valid or n.id == SELF_ENTITY_ID or not (n.name or "").strip():
+                continue
+            if n.entity_type is EntityType.CONCEPT:
+                theme(n.name, n.doc_frequency)
+                continue
+            if n.entity_type in _PROFILE_SKIP_TYPES:
+                continue                       # extraction artifacts, not recurring subjects
+            kind = n.entity_type.value if n.entity_type else "other"
+            by_type.setdefault(kind, []).append(
+                {"name": n.name, "doc_frequency": n.doc_frequency})
+        for n in store.nodes_of_type(NodeType.TAG):
+            if n.valid and (n.name or "").strip():
+                theme(n.name, n.doc_frequency)
+
+        rank = lambda r: (-r["doc_frequency"], r["name"].lower())   # noqa: E731
+        return ({k: sorted(rows, key=rank)[:top] for k, rows in sorted(by_type.items())},
+                sorted(themes.values(), key=rank)[:top])
+
+    @staticmethod
+    def _render_profile(prof: dict) -> str:
+        """The profile as prose — what the app pastes into a model's system prompt, so no
+        caller has to reshape the structured fields itself."""
+        lines: list[str] = []
+        if prof["as_of"]:
+            lines.append(f"Profile as of {prof['as_of']}.")
+        if prof["facts"]:
+            lines.append("Known about the user:")
+            lines.extend(f"- {f['rendered']}" for f in prof["facts"])
+        for cat, rows in prof["entities_by_type"].items():
+            lines.append(f"{cat.capitalize()}s they mention: "
+                         + ", ".join(r["name"] for r in rows))
+        if prof["themes"]:
+            lines.append("Recurring themes: "
+                         + ", ".join(r["name"] for r in prof["themes"]))
+        return "\n".join(lines) if lines else "No profile information yet."
 
     def episode(self, episode_id: str) -> dict | None:
         self._check()
