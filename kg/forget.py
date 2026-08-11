@@ -69,10 +69,11 @@ class ForgetReport:
     mentions: list[str] = field(default_factory=list)       # orphaned mention nodes
     entities: list[str] = field(default_factory=list)       # orphaned entity anchors
     tags: list[str] = field(default_factory=list)           # orphaned tags
+    sources: list[str] = field(default_factory=list)        # orphaned SOURCE parents
 
     def total(self) -> int:
         return (len(self.episodes) + len(self.facts) + len(self.mentions)
-                + len(self.entities) + len(self.tags))
+                + len(self.entities) + len(self.tags) + len(self.sources))
 
 
 def _expand_targets(store: GraphStore, episode_ids, match) -> set[str]:
@@ -121,9 +122,12 @@ def _cascade_orphans(store: GraphStore, report: ForgetReport) -> None:
                 return False
         return True
 
+    # SOURCE last: it holds the full original text, and episode() can now read it by id,
+    # so an orphaned parent must leave with its chunks.
     for layer, bucket in ((NodeType.MENTION, report.mentions),
                           (NodeType.ENTITY, report.entities),
-                          (NodeType.TAG, report.tags)):
+                          (NodeType.TAG, report.tags),
+                          (NodeType.SOURCE, report.sources)):
         for nid in sorted(store.nodes):
             n = store.nodes[nid]
             if n.ntype == layer and n.valid and _orphaned(nid):

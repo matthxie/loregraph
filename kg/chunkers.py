@@ -39,6 +39,10 @@ _SENT = re.compile(r"(?<=[.!?])\s+")
 class Chunk:
     text: str
     ordinal: int = 0
+    # 1-based inclusive line span in the original text; code only, 0 when unknown. Valid
+    # for the ingested revision alone — pair with its ref before trusting it.
+    start_line: int = 0
+    end_line: int = 0
 
 
 def _split_oversized(unit: str, max_chars: int) -> list[str]:
@@ -265,16 +269,20 @@ def chunk_prose(text: str, *, target: int, max_chars: int) -> list[Chunk]:
     return [Chunk(text=c, ordinal=i) for i, c in enumerate(packed)]
 
 
-def _code_units(text: str) -> list[str]:
-    """Top-level blank-line-delimited blocks: a blank-line run closes a block only when
-    the next non-blank line starts at column 0, so a function/class body's internal
-    blank lines never split it and top-level definitions fall out naturally."""
+def _code_units(text: str) -> list[tuple[str, int, int]]:
+    """Top-level blank-line-delimited blocks as (block, start_line, end_line), 1-based and
+    inclusive: a blank-line run closes a block only when the next non-blank line starts at
+    column 0, so a function/class body's internal blank lines never split it and top-level
+    definitions fall out naturally."""
     lines = text.split("\n")
-    blocks: list[str] = []
+    blocks: list[tuple[str, int, int]] = []
     buf: list[str] = []
+    start = 0                          # 0-based index of buf's first line
     i = 0
     while i < len(lines):
         if lines[i].strip():
+            if not buf:
+                start = i
             buf.append(lines[i])
             i += 1
             continue
@@ -284,26 +292,49 @@ def _code_units(text: str) -> list[str]:
         if j >= len(lines):
             break
         if buf and not lines[j][0].isspace():
-            blocks.append("\n".join(buf))
+            blocks.append(("\n".join(buf), start + 1, start + len(buf)))
             buf = []
         elif buf:
             buf.extend(lines[i:j])     # blank line(s) inside an indented body
         i = j
     if buf:
-        blocks.append("\n".join(buf))
-    return [b for b in blocks if b.strip()]
+        blocks.append(("\n".join(buf), start + 1, start + len(buf)))
+    return [b for b in blocks if b[0].strip()]
 
 
 def chunk_code(text: str, *, target: int, max_chars: int) -> list[Chunk]:
     """Minimal v1 code chunker: pack top-level blank-line-delimited blocks to budget
-    (no AST). Blocks are re-joined with a blank line to keep definitions readable."""
-    text = (text or "").strip("\n")
+    (no AST). Blocks are re-joined with a blank line to keep definitions readable, and
+    each chunk carries the line span of the blocks it covers. An oversized block split by
+    _split_oversized gives its pieces the whole block's span — a superset, never a span
+    pointing outside the block."""
+    raw = text or ""
+    lead = len(raw) - len(raw.lstrip("\n"))         # stripped newlines still cost line numbers
+    text = raw.strip("\n")
     if len(text.strip()) <= max_chars:
         return []
-    packed = _pack(_code_units(text), target, max_chars, sep="\n\n")
-    if len(packed) <= 1:
+
+    chunks: list[Chunk] = []
+    buf, lo, hi = "", 0, 0
+
+    def flush() -> None:
+        if buf:
+            chunks.append(Chunk(text=buf, ordinal=len(chunks),
+                                start_line=lo + lead, end_line=hi + lead))
+
+    for block, s, e in _code_units(text):
+        for piece in _split_oversized(block, max_chars):
+            if buf and len(buf) + len(piece) + 2 > target:
+                flush()
+                buf, lo, hi = piece, s, e
+            else:
+                lo = lo or s
+                buf = f"{buf}\n\n{piece}".strip() if buf else piece
+                hi = e
+    flush()
+    if len(chunks) <= 1:
         return []
-    return [Chunk(text=c, ordinal=i) for i, c in enumerate(packed)]
+    return chunks
 
 
 _CHUNKERS = {"turns": chunk_text, "markdown": chunk_markdown,

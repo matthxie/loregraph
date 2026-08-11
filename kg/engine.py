@@ -53,6 +53,8 @@ _STUB = ("rebuild", "reingest", "maintain", "ensure_model")
 # Dates and quantities are per-occurrence extraction nodes, never profile subjects.
 _PROFILE_SKIP_TYPES = (EntityType.DATE, EntityType.QUANTITY)
 
+_PAYLOAD_MODES = ("full", "refs", "context")
+
 _DATE10 = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _BARE_YEAR = re.compile(r"^\d{4}$")
 
@@ -832,40 +834,67 @@ class Engine:
     # ------------------------------------------------------------------ query
     def retrieve(self, query: str, k: int = 8, as_of: str | None = None,
                  rerank: bool = False, mmr_lambda: float | None = None,
-                 since: str | None = None, until: str | None = None) -> dict:
+                 since: str | None = None, until: str | None = None,
+                 payload: str = "full") -> dict:
         """Full retrieval pipeline (route → PPR → augment → rerank), no LLM: the same
         evidence answer() would hand its model, structured for direct display.
         `rendered_text` is the exact prompt blob, for callers running their own LLM.
         `facts` are structured §3 Fact objects (rendered line included on each row).
         Per-call knobs per PROTOCOL §3.3/§7.3: rerank blends the cross-encoder into
         every lane; mmr_lambda dials the MMR stage; since/until bound episodes to an
-        event-time window (inputs only — the result shape is unchanged)."""
+        event-time window (inputs only — the result shape is unchanged).
+
+        `payload` trades completeness for size. "full" (default) carries episode bodies
+        AND the rendered blob — the same content twice, which is what a caller wants only
+        when it is both displaying hits and prompting a model. "refs" drops the bodies and
+        the blob, leaving ranked ids/titles/facts to drill into with episode(). "context"
+        keeps just the blob. Keys are always present; only values are emptied."""
         self._check()
         if not query or not query.strip():
             raise InvalidInput("query must be non-empty")
+        if payload not in _PAYLOAD_MODES:
+            raise InvalidInput(f"payload must be one of {', '.join(_PAYLOAD_MODES)}")
         res = self._g.search(query, k=k, as_of=as_of,
                              rerank=True if rerank else None,
                              mmr_lambda=_norm_mmr_lambda(mmr_lambda),
                              since=_norm_event_date(since, "since"),
                              until=_norm_event_date(until, "until"))
+        episodes = ([] if payload == "context" else
+                    [self._episode_ref(h.episode_id, score=h.score, when=h.when,
+                                       text=h.text, include_text=payload == "full")
+                     for h in res.hits])
         return {"query": query, "as_of": as_of, "lane": res.lane,
-                "episodes": [self._episode_ref(h.episode_id, score=h.score,
-                                               when=h.when, text=h.text)
-                             for h in res.hits],
-                "facts": res.fact_rows,
-                "rendered_text": res.context}
+                "episodes": episodes,
+                "facts": [] if payload == "context" else res.fact_rows,
+                "rendered_text": "" if payload == "refs" else res.context}
 
     def _episode_ref(self, episode_id: str, *, score: float, when: str = "",
-                     text: str = "") -> dict:
+                     text: str = "", include_text: bool = True) -> dict:
         """One ranked hit (retrieve/search), joined with the episode node's projection
         fields so the wire layer can serve EpisodeRef.title and fall back to the media
-        description for the snippet (PROTOCOL §3/§7.2)."""
+        description for the snippet (PROTOCOL §3/§7.2). `source_id` points at the
+        un-rankable parent holding the full original text, when there is one."""
         n = self._g.store.get_node(episode_id)
         return {"id": episode_id, "score": score,
                 "when": when or (n.created_at if n else ""),
-                "text": text or ((n.raw_text or "") if n else ""),
+                "text": (text or ((n.raw_text or "") if n else "")) if include_text else "",
                 "title": (n.title if n else None) or None,
-                "description": (n.description if n else None) or None}
+                "description": (n.description if n else None) or None,
+                "source_id": self._source_id(episode_id),
+                # Only meaningful together: the span is lines in source_ref's revision.
+                "line_span": list(n.line_span) if n and n.line_span else None,
+                "source_ref": (n.source_ref if n else None) or None}
+
+    def _source_id(self, episode_id: str) -> str | None:
+        """The un-rankable SOURCE parent holding this episode's full original text — a
+        chunked entry's parent, or a link/commit's raw body. None when there is none."""
+        store = self._g.store
+        for sid, _d in store.neighbors(episode_id, etypes={EdgeType.PART_OF},
+                                       direction="out"):
+            n = store.get_node(sid)
+            if n is not None and n.ntype is NodeType.SOURCE and n.valid:
+                return sid
+        return None
 
     def search(self, terms: str, k: int = 10) -> dict:
         """Keyword/BM25 lookup (PROTOCOL §3.4): exact phrases, names, file types over
@@ -1062,7 +1091,7 @@ class Engine:
 
     def profile(self, as_of: str | None = None, top: int = 12) -> dict:
         """Who the user is, read straight off the graph: the self anchor's currently-held
-        facts, the entities they mention most (grouped by glyph category), their recurring
+        facts, the entities they mention most (grouped by entity type), their recurring
         themes, the notes this is grounded in, and a plain-text rendering of all of it.
 
         `as_of` reads the facts as they stood at that instant; with no `as_of` closed
@@ -1151,10 +1180,22 @@ class Engine:
         return "\n".join(lines) if lines else "No profile information yet."
 
     def episode(self, episode_id: str) -> dict | None:
+        """One note in full. Also resolves a SOURCE id (the un-rankable parent carrying a
+        chunked entry's original text, or a link/commit's raw body), so a caller that got
+        `source_id` from a ranked hit can read the untruncated original. SOURCE nodes are
+        never extracted, so their entity/fact lists are empty; they stay unrankable."""
         self._check()
         n = self._g.store.get_node(episode_id)
-        if n is None or n.ntype is not NodeType.EPISODE or not n.valid:
+        if n is None or not n.valid:
             return None                        # tombstoned episodes are gone from this view
+        if n.ntype is NodeType.SOURCE:
+            return {"id": n.id, "text": n.raw_text or "", "created_at": n.created_at,
+                    "ingested_at": n.ingested_at, "source": n.name,
+                    "title": n.title or None, "description": None,
+                    "media_paths": [], "modality": "source",
+                    "entities": [], "entity_categories": {}, "concepts": [], "facts": []}
+        if n.ntype is not NodeType.EPISODE:
+            return None
         entities, categories, concepts = self._episode_entities(episode_id)
         return {"id": n.id, "text": n.raw_text or "", "created_at": n.created_at,
                 "ingested_at": n.ingested_at, "source": n.name,

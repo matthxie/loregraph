@@ -108,7 +108,7 @@ def test_engine_search_nl_wire_shape():
     assert out["episodes"]
     top = out["episodes"][0]
     assert set(top) == {"id", "score", "when", "text", "title", "description",
-                        "sources"}
+                        "sources", "source_id", "line_span", "source_ref"}
     assert isinstance(top["sources"], list) and top["sources"]
     assert "zanzibar" in top["text"]
     with pytest.raises(InvalidInput):

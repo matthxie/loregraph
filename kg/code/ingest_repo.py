@@ -98,15 +98,18 @@ def _file_items(name: str, ref: str, path: str, content: str, ts: str, cfg) -> l
     from ..ingest import _sha256
     chunks = chunk_code(content, target=int(cfg.chunk_target_chars),
                         max_chars=int(cfg.chunk_max_chars))
-    texts = [c.text for c in chunks] if chunks else [content]
+    # (text, line span) — an unchunked file is the whole file, so its span is every line.
+    pieces = ([(c.text, [c.start_line, c.end_line]) for c in chunks] if chunks
+              else [(content, [1, len(content.split("\n"))])])
     ver = _sha256("file", content)[:8]
     sref = _file_source_ref(name, ref, path)
     rk, pk = _pathkey(ref), _pathkey(path)
     items: list[CorpusItem] = []
-    for ordinal, text in enumerate(texts):
+    for ordinal, (text, span) in enumerate(pieces):
         items.append(CorpusItem(
             id=f"file_{name}_{rk}_{pk}_{ver}#c{ordinal:03d}", modality="code",
-            source_ref=sref, title=path, text=text, created_at=ts, embed_only=True))
+            source_ref=sref, title=path, text=text, created_at=ts, embed_only=True,
+            meta={"line_span": span}))
     return items
 
 

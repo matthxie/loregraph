@@ -540,6 +540,9 @@ class Ingestor:
                             media_paths=media,
                             title=derive_title(item, ext))
         node.name = item.title or item.id
+        span = (item.meta or {}).get("line_span")
+        if span:
+            node.line_span = list(span)     # code chunks: where this sits in the file
         self.store.add_node(node)
         self.store.vectors.add("episode", ep_id, vec)
         self.store.add_hash(h, ep_id)

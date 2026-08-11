@@ -426,3 +426,31 @@ def test_unresolvable_ref_is_invalid_input():
     with pytest.raises(InvalidInput):
         eng.ingest_repo(_fixture_repo(), ref="no-such-branch")
     eng.close()
+
+
+def test_code_chunks_carry_true_line_spans():
+    """Spans must index the ORIGINAL file, so an agent can jump straight to the code."""
+    from kg.chunkers import chunk_code
+
+    src = "\n\n".join(f"def f{i}():\n    x = {i}\n    return x * {i}" for i in range(80))
+    chunks = chunk_code(src, target=400, max_chars=800)
+    assert len(chunks) > 1
+    lines = src.split("\n")
+
+    for c in chunks:
+        assert 1 <= c.start_line <= c.end_line <= len(lines)
+        # the chunk's first line is exactly where it claims to start
+        assert c.text.split("\n")[0] == lines[c.start_line - 1]
+    assert chunks[0].start_line == 1
+    assert chunks[-1].end_line == len(lines)
+    # consecutive and non-overlapping
+    for a, b in zip(chunks, chunks[1:]):
+        assert b.start_line > a.end_line
+
+
+def test_leading_blank_lines_do_not_shift_spans():
+    from kg.chunkers import chunk_code
+
+    body = "\n\n".join(f"def g{i}():\n    return {i}" for i in range(60))
+    chunks = chunk_code("\n\n\n" + body, target=300, max_chars=600)
+    assert chunks and chunks[0].start_line == 4      # 3 blank lines still cost line numbers

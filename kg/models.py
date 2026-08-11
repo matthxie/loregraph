@@ -168,6 +168,8 @@ class Node:
     # ---- Mention ----
     episode_id: str | None = None         # back-pointer to the asserting episode
     char_span: list[int] | None = None    # [start, end] in the episode text (best-effort)
+    line_span: list[int] | None = None    # code episode: [start, end] 1-based lines in the
+    #                                       file AT source_ref's revision — stale off it
 
     # ---- Entity / Tag / Relation (canonical anchors) ----
     entity_type: EntityType | None = None

@@ -54,6 +54,59 @@ def test_open_ingest_retrieve_answer_close(monkeypatch):
         eng.stats()
 
 
+def test_retrieve_payload_modes_trade_size_for_completeness():
+    eng = _open()
+    # A realistic body, so the comparison measures content rather than fixed keys.
+    eng.ingest(NoteInput(text=NOTE.text + " " + ("Details about the Berlin flat, the "
+                                                 "movers, and the lease. " * 40),
+                         created_at="2026-07-01T10:00:00Z"))
+    q = "where is Becky moving?"
+    full, refs, ctx = (eng.retrieve(q, k=3, payload=m)
+                       for m in ("full", "refs", "context"))
+
+    assert full == eng.retrieve(q, k=3)                     # default is unchanged "full"
+    assert set(refs) == set(ctx) == set(full)               # keys always present
+
+    assert refs["episodes"] and all(e["text"] == "" for e in refs["episodes"])
+    assert [e["id"] for e in refs["episodes"]] == [e["id"] for e in full["episodes"]]
+    assert refs["facts"] == full["facts"]                   # facts are cheap, keep them
+    assert refs["rendered_text"] == ""
+
+    assert ctx["episodes"] == [] and ctx["facts"] == []
+    assert ctx["rendered_text"] == full["rendered_text"]
+
+    # the point of the exercise: refs must be materially smaller than full
+    assert len(str(refs)) < len(str(full)) / 2
+    with pytest.raises(InvalidInput):
+        eng.retrieve(q, payload="tiny")
+    eng.close()
+
+
+def test_episode_reads_the_source_parent_and_erasure_takes_it():
+    eng = _open()
+    long_text = "\n\n".join(f"Paragraph {i} about the Berlin move with Becky. " * 20
+                            for i in range(12))             # over chunk_max_chars, so it splits
+    ep_id = eng.ingest(NoteInput(text=long_text,
+                                 created_at="2026-07-01T10:00:00Z")).episode_id
+    src_id = eng._source_id(ep_id)
+    assert src_id is not None                               # chunked, so a SOURCE parent exists
+
+    src = eng.episode(src_id)                               # drill-down now resolves
+    assert src is not None and src["modality"] == "source"
+    assert len(src["text"]) >= len(eng.episode(ep_id)["text"])
+    assert src["entities"] == [] and src["facts"] == []      # SOURCE is never extracted
+
+    chunks = [e["id"] for e in eng.episodes_list()["episodes"]
+              if eng._source_id(e["id"]) == src_id]
+    assert len(chunks) > 1
+    eng.delete_episode(chunks[0])
+    assert eng.episode(src_id) is not None                   # siblings still need the parent
+    for cid in chunks[1:]:
+        eng.delete_episode(cid)
+    assert eng.episode(src_id) is None                       # last chunk gone, parent follows
+    eng.close()
+
+
 def test_ingest_is_idempotent_by_content_and_created_at():
     eng = _open()
     first = eng.ingest(NOTE)
