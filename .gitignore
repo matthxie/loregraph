@@ -45,3 +45,9 @@ dist/
 
 # Evaluation datasets
 dataset/
+
+# Claude
+.claude/
+
+# Agent hooks
+.agents/
