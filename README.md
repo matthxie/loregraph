@@ -1,4 +1,4 @@
-# you
+# LoreGraph
 
 A **temporal knowledge-graph memory engine**. Ingest a stream of dated content (chat
 sessions, notes, documents, images) and query it as it is now — or as it was at any point
