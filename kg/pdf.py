@@ -77,7 +77,9 @@ def extract_pdf(path: str, *, out_dir: str, target: int, max_chars: int) -> list
         import fitz  # lazy import: a non-pdf install never pays this cost
     except ImportError as e:
         raise UnsupportedMedia(
-            "PDF ingestion requires the 'pymupdf' package (pip install pymupdf)") from e
+            "PDF ingestion requires the optional 'pdf' extra "
+            "(pip install 'loregraph[pdf]'). It is not installed by default because "
+            "PyMuPDF is AGPL-3.0-or-commercial.") from e
 
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(path))[0]

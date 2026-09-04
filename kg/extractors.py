@@ -525,7 +525,7 @@ def fetch_page(url: str, timeout: float = 4.0, max_bytes: int = 2_000_000) -> di
     if os.environ.get("KG_LINK_FETCH", "1") == "0":
         return signals
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "you-kg/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "loregraph/0.2"})
         deadline = time.monotonic() + 2 * timeout
         raw = b""
         with urllib.request.urlopen(req, timeout=timeout) as resp:

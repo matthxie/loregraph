@@ -49,6 +49,6 @@ __all__ = ["Config", "KnowledgeGraph", "RagAnswer", "SearchHit", "SearchResult"]
 try:
     from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-    __version__ = _pkg_version("you-kg")
+    __version__ = _pkg_version("loregraph")
 except PackageNotFoundError:
     __version__ = "0.0.0.dev0"

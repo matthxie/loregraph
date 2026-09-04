@@ -104,7 +104,7 @@ def _resolve_link_title(url: str, timeout: float = 4.0) -> str | None:
         return None
     try:
         import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": "you-kg/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "loregraph/0.2"})
         # The socket timeout is PER read — a tarpit dripping one byte per few seconds
         # would keep a single resp.read(65536) alive for hours inside the sequential
         # ingest loop. Chunked reads under a wall-clock deadline cap the whole fetch.

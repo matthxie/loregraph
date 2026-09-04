@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "you-kg"
+name = "loregraph"
 # Humans own major.minor; the release pipeline stamps the patch digit per run
 # (see .github/workflows/release.yml). 0.2 marks the new-approach line landing on main:
 # gpt-5-family request params, usage.cost_usd on results, and host-app model-pin envs.
@@ -25,7 +25,6 @@ dependencies = [
     "openai>=1.0",             # default LLM provider (KG_LLM=openai); mock/none/codex need no SDK
     "python-dotenv>=1.0",      # optional .env loading (import-guarded, but cheap and expected)
     "trafilatura>=1.8",        # main-text extraction from fetched URLs (strips page boilerplate)
-    "pymupdf>=1.24",           # PDF page text/layout/image extraction + rasterization (kg/pdf.py)
     # The default `cue_gated` extractor's local floor is gliner_yake_cooccur
     # (kg/nlp_extractors.py): with any real provider (KG_LLM=codex/openai) the daemon
     # imports these at drain time — they ARE the serving path, not eval tooling.
@@ -38,6 +37,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PDF ingestion. Kept OUT of the core dependencies on purpose: PyMuPDF is
+# AGPL-3.0-or-commercial, and pulling it into the default install would push that
+# obligation onto everyone who only ever ingests text. kg/pdf.py imports it lazily
+# and raises UnsupportedMedia with an install hint when it is absent, so the rest
+# of the engine runs unaffected without it.
+pdf = ["pymupdf>=1.24"]
+
 # Corpus/eval tooling + alternative extractor backends not used by the default
 # serving path (the cue_gated floor's gliner/yake/spacy live in core, above).
 research = [
