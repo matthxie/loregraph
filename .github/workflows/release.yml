@@ -1,4 +1,4 @@
-# Release pipeline: manually triggered. Builds the you-kg wheel, tags this repo,
+# Release pipeline: manually triggered. Builds the loregraph wheel, tags this repo,
 # and uploads the wheel as a workflow artifact for manual download.
 #
 # Versioning contract:
@@ -69,7 +69,7 @@ jobs:
           p.write_text(src[:m.start()] + f'version = "{version}"' + src[m.end():], encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"version={version}\n")
-              out.write(f"wheel=you_kg-{version}-py3-none-any.whl\n")
+              out.write(f"wheel=loregraph-{version}-py3-none-any.whl\n")
           print(f"stamped version {version}")
           EOF
 
@@ -102,5 +102,5 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: you-kg-wheel
+          name: loregraph-wheel
           path: dist/${{ steps.version.outputs.wheel }}
