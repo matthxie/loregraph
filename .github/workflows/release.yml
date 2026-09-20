@@ -1,6 +1,5 @@
-# Release pipeline: on every push to main, build the you-kg wheel once, tag this
-# repo, then fan out to N downstream app repos and open/update a vendored-wheel
-# bump PR in each.
+# Release pipeline: manually triggered. Builds the loregraph wheel, tags this repo,
+# and uploads the wheel as a workflow artifact for manual download.
 #
 # Versioning contract:
 #   * Humans own major.minor — bump them by editing `version` in pyproject.toml
@@ -9,36 +8,9 @@
 #     unique by construction; the stamped pyproject is never committed back (no
 #     write-back commits, no skip-ci loops). pip treats a same-version wheel as
 #     already-installed and silently keeps old code, so versions are never reused.
-#   * Versioning is per-PUSH, not per-target: the `build` job stamps one version and
-#     every target in the `bump` matrix vendors that same wheel/tag.
 #
-# Adding a target repo: append an entry to ALL_TARGETS in the build job's "Resolve
-# manual-run inputs" step (repo name under APP_OWNER + the base branch to PR
-# against) — that list, not a plain matrix key, is the source of truth because the
-# bump job's matrix is generated from it (filtered by the `targets` input) rather
-# than written out statically, so a scoped manual run can drop targets from the
-# matrix entirely instead of merely skipping them. Every target is assumed to
-# vendor the wheel the same way brainbrain does:
-# `<repo>/engine/vendor/you_kg-*.whl` pinned from `<repo>/engine/requirements.txt`.
-# If a future target uses a different layout or lives outside APP_OWNER, this job
-# will need per-target vendor-path/owner fields, not just repo + base_branch.
-#
-# Setup this workflow needs (one-time) — a cross-repo credential for the app repos
-# (the default GITHUB_TOKEN cannot cross repos), via ONE of:
-#   * preferred (never expires): a GitHub App installed on every target repo under
-#     APP_OWNER with Contents + Pull requests read/write. Set variable
-#     RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY; each matrix leg mints a
-#     short-lived token scoped to just that leg's repo.
-#   * fallback (rotates every ≤366 days): secret APP_REPOS_PAT, a fine-grained PAT
-#     with the same two permissions on every repo in the matrix. (If migrating from
-#     the old single-repo setup, this replaces the former BRAINBRAIN_PAT secret —
-#     re-scope it to cover all target repos, or add it fresh under this name.)
-#
-# Manual runs (Actions tab -> Run workflow) accept two optional inputs, for
-# onboarding a target without dragging every other target through a fresh release:
-#   * targets: comma-separated repo names (matching `target.repo` in the bump
-#     matrix, e.g. "ceb-backend") to run against. Blank = every target.
-#   * version: an existing engine version to vendor (must match a `vX.Y.Z` tag
+# Manual runs (Actions tab -> Run workflow) accept one optional input:
+#   * version: an existing engine version to rebuild (must match a `vX.Y.Z` tag
 #     already on this repo, e.g. "0.2.21") instead of cutting a new one. Blank =
 #     stamp a fresh <major.minor>.<run_number> as usual. Reusing a version skips
 #     the tag-push step (the tag already exists) and checks out that tag's tree
@@ -47,70 +19,32 @@
 name: release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      targets:
-        description: "Comma-separated target repo names to run (blank = all)"
-        required: false
-        default: ""
       version:
-        description: "Existing vX.Y.Z version to vendor instead of cutting a new one (blank = new release)"
+        description: "Existing vX.Y.Z version to rebuild instead of cutting a new one (blank = new release)"
         required: false
         default: ""
 
-# Serialize releases so two quick merges can't interleave tag/PR steps.
+# Serialize releases so two manual runs can't interleave tag-push steps.
 concurrency:
   group: engine-release
   cancel-in-progress: false
 
 permissions:
   contents: write # push the v<version> tag to this repo
-  actions: write # delete the transient wheel artifact once every bump leg is done with it
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      wheel: ${{ steps.version.outputs.wheel }}
-      matrix: ${{ steps.inputs.outputs.matrix }}
     steps:
-      - name: Resolve manual-run inputs
-        id: inputs
-        env:
-          TARGETS_INPUT: ${{ github.event.inputs.targets }}
-          VERSION_INPUT: ${{ github.event.inputs.version }}
-        run: |
-          python - <<'EOF'
-          import json, os
-
-          # Source of truth for release targets — see the top-of-file comment.
-          ALL_TARGETS = [
-              {"repo": "brainbrain", "base_branch": "main"},
-              {"repo": "ceb-backend", "base_branch": "main"},
-          ]
-
-          wanted = [t.strip() for t in os.environ.get("TARGETS_INPUT", "").split(",") if t.strip()]
-          selected = [t for t in ALL_TARGETS if not wanted or t["repo"] in wanted]
-          missing = sorted(set(wanted) - {t["repo"] for t in selected})
-          if missing:
-              raise SystemExit(f"unknown target repo(s) in `targets` input: {', '.join(missing)}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"matrix={json.dumps(selected)}\n")
-              out.write("reuse_version=" + os.environ.get("VERSION_INPUT", "") + "\n")
-          EOF
-
       - name: Checkout engine
         uses: actions/checkout@v4
         with:
-          path: engine-src
           # Reusing a version pins the checkout to that tag's tree so the rebuilt
-          # wheel matches what already shipped; otherwise checkout its default (the
-          # commit that triggered this run).
-          ref: ${{ steps.inputs.outputs.reuse_version != '' && format('v{0}', steps.inputs.outputs.reuse_version) || '' }}
+          # wheel matches what already shipped; otherwise checkout the commit that
+          # triggered this run.
+          ref: ${{ github.event.inputs.version != '' && format('v{0}', github.event.inputs.version) || '' }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -119,9 +53,8 @@ jobs:
 
       - name: Compute and stamp version
         id: version
-        working-directory: engine-src
         env:
-          REUSE_VERSION: ${{ steps.inputs.outputs.reuse_version }}
+          REUSE_VERSION: ${{ github.event.inputs.version }}
         run: |
           python - <<'EOF'
           import os, pathlib, re, sys
@@ -136,12 +69,11 @@ jobs:
           p.write_text(src[:m.start()] + f'version = "{version}"' + src[m.end():], encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"version={version}\n")
-              out.write(f"wheel=you_kg-{version}-py3-none-any.whl\n")
+              out.write(f"wheel=loregraph-{version}-py3-none-any.whl\n")
           print(f"stamped version {version}")
           EOF
 
       - name: Build wheel
-        working-directory: engine-src
         run: |
           pip install --quiet build
           python -m build --wheel --outdir dist
@@ -152,8 +84,7 @@ jobs:
 
       - name: Tag source commit
         # Skipped when reusing an existing version — the tag already exists.
-        if: ${{ steps.inputs.outputs.reuse_version == '' }}
-        working-directory: engine-src
+        if: ${{ github.event.inputs.version == '' }}
         run: |
           set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
@@ -171,113 +102,5 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: you-kg-wheel
-          path: engine-src/dist/${{ steps.version.outputs.wheel }}
-          # 1 is the lowest GitHub accepts (0 isn't valid) — this is just the
-          # fallback ceiling; the cleanup job below deletes it explicitly right
-          # after every bump leg is done downloading it.
-          retention-days: 1
-
-  bump:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      # Built by the build job's "Resolve manual-run inputs" step: every target on
-      # a push/full manual run, or just the ones named in the `targets` input.
-      matrix:
-        target: ${{ fromJSON(needs.build.outputs.matrix) }}
-    env:
-      APP_OWNER: foca-apps
-      WHEEL: ${{ needs.build.outputs.wheel }}
-      VERSION: ${{ needs.build.outputs.version }}
-    steps:
-      - name: Download wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: you-kg-wheel
-          path: dist
-
-      # Mint a short-lived installation token from the org's GitHub App (nothing to
-      # rotate), scoped to just this leg's target repo. Skipped when the app isn't
-      # configured; the steps below then fall back to the APP_REPOS_PAT secret.
-      - name: Mint app token
-        id: app-token
-        if: ${{ vars.RELEASE_BOT_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ env.APP_OWNER }}
-          repositories: ${{ matrix.target.repo }}
-
-      - name: Checkout app repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.APP_OWNER }}/${{ matrix.target.repo }}
-          token: ${{ steps.app-token.outputs.token || secrets.APP_REPOS_PAT }}
-          ref: ${{ matrix.target.base_branch }}
-          path: app
-
-      - name: Vendor wheel into app repo
-        run: |
-          set -euo pipefail
-          VENDOR=app/engine/vendor
-          REQS=app/engine/requirements.txt
-          PIN="./vendor/$WHEEL"
-
-          mkdir -p "$VENDOR"
-          rm -f "$VENDOR"/you_kg-*.whl
-          cp "dist/$WHEEL" "$VENDOR/"
-
-          # Replace the existing pin line, or append one if this is the first vendoring.
-          if grep -q '^\./vendor/you_kg-.*\.whl$' "$REQS"; then
-            sed -i "s|^\./vendor/you_kg-.*\.whl$|$PIN|" "$REQS"
-          else
-            printf '%s\n' "$PIN" >> "$REQS"
-          fi
-
-      - name: Open or update bump PR
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ steps.app-token.outputs.token || secrets.APP_REPOS_PAT }}
-          path: app
-          branch: engine-bump
-          base: ${{ matrix.target.base_branch }}
-          commit-message: "engine: bump you-kg to ${{ env.VERSION }}"
-          title: "engine: bump you-kg to ${{ env.VERSION }}"
-          body: |
-            Automated engine bump from foca-apps/loregraph.
-
-            * version: `${{ env.VERSION }}`
-            * source commit: `${{ github.sha }}` (tag `v${{ env.VERSION }}`)
-            * wheel: `engine/vendor/${{ env.WHEEL }}`
-
-            Before merging: `KG_SMOKE_FULL=1 engine/tests/daemon_smoke.py` from `engine/` in the app repo.
-
-  cleanup:
-    needs: [build, bump]
-    # Runs even if a bump leg failed, so a broken vendor step never leaks the
-    # artifact past this run — the wheel is only ever needed within this run.
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete wheel artifact
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-            });
-            for (const artifact of data.artifacts) {
-              if (artifact.name === 'you-kg-wheel') {
-                await github.rest.actions.deleteArtifact({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  artifact_id: artifact.id,
-                });
-                console.log(`deleted artifact ${artifact.id} (${artifact.name})`);
-              }
-            }
+          name: loregraph-wheel
+          path: dist/${{ steps.version.outputs.wheel }}
